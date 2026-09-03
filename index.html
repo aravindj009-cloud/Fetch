@@ -57,7 +57,7 @@
     }
 
     h1 {
-      margin-bottom: 5px;
+      margin: 0 0 5px;
       font-size: 30px;
     }
 
@@ -187,6 +187,7 @@
       border-radius: 10px;
       padding: 15px;
       margin-bottom: 20px;
+      line-height: 1.5;
     }
 
     .refresh {
@@ -245,6 +246,7 @@
 <main>
 
   <h1>Orders</h1>
+
   <div class="subtitle">
     Manage customer requests and human shoppers.
   </div>
@@ -272,7 +274,10 @@
 
   <div class="section-header">
     <h2>Live Orders</h2>
-    <button class="refresh" onclick="loadData()">↻ Refresh</button>
+
+    <button class="refresh" onclick="loadData()">
+      ↻ Refresh
+    </button>
   </div>
 
   <div id="orders" class="loading">
@@ -283,17 +288,22 @@
 
 <script>
 
+  /*
+    ==========================================
+    FETCH + SUPABASE CONNECTION
+    ==========================================
+  */
+
   const SUPABASE_URL =
     "https://skfxzagxlxputwpxwbe.supabase.co";
 
-  /*
-    IMPORTANT:
-    Replace YOUR_PUBLISHABLE_KEY_HERE below with the
-    sb_publishable_... key you copied from Supabase.
-  */
-
   const SUPABASE_PUBLISHABLE_KEY =
     "sb_publishable_zQueXzNbRTTsdV5xjn398Q_nSB4njep";
+
+
+  /*
+    CREATE SUPABASE CLIENT
+  */
 
   const supabaseClient =
     window.supabase.createClient(
@@ -302,70 +312,172 @@
     );
 
 
+  /*
+    ==========================================
+    LOAD DATA
+    ==========================================
+  */
+
   async function loadData() {
 
-    const ordersBox = document.getElementById("orders");
-    const errorBox = document.getElementById("error");
+    const ordersBox =
+      document.getElementById("orders");
+
+    const errorBox =
+      document.getElementById("error");
 
     errorBox.innerHTML = "";
-    ordersBox.innerHTML = '<div class="loading">Loading orders...</div>';
+
+    ordersBox.innerHTML =
+      '<div class="loading">Loading orders...</div>';
+
 
     try {
 
-      const { data: orders, error: ordersError } =
-        await supabaseClient
-          .from("orders")
-          .select("id, store_name, items, budget, status, created_at")
-          .order("created_at", { ascending: false });
+      /*
+        --------------------------------------
+        GET ORDERS
+        --------------------------------------
+      */
 
-      if (ordersError) throw ordersError;
+      const {
+        data: orders,
+        error: ordersError
+      } = await supabaseClient
+        .from("orders")
+        .select(
+          "id, store_name, items, budget, status, created_at"
+        )
+        .order(
+          "created_at",
+          {
+            ascending: false
+          }
+        );
 
 
-      const { data: shoppers, error: shoppersError } =
-        await supabaseClient
-          .from("shoppers")
-          .select("id, available");
+      if (ordersError) {
+        throw ordersError;
+      }
 
-      if (shoppersError) throw shoppersError;
 
+      /*
+        --------------------------------------
+        GET SHOPPERS
+        --------------------------------------
+      */
+
+      const {
+        data: shoppers,
+        error: shoppersError
+      } = await supabaseClient
+        .from("shoppers")
+        .select(
+          "id, available"
+        );
+
+
+      if (shoppersError) {
+        throw shoppersError;
+      }
+
+
+      /*
+        --------------------------------------
+        ACTIVE ORDERS
+        --------------------------------------
+      */
 
       const activeOrders =
-        orders.filter(order =>
-          order.status !== "completed"
+        orders.filter(
+          order =>
+            order.status !== "completed"
         ).length;
+
+
+      /*
+        --------------------------------------
+        AVAILABLE SHOPPERS
+        --------------------------------------
+      */
 
       const availableShoppers =
-        shoppers.filter(shopper =>
-          shopper.available === true
+        shoppers.filter(
+          shopper =>
+            shopper.available === true
         ).length;
 
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      /*
+        --------------------------------------
+        TODAY'S ORDERS
+        --------------------------------------
+      */
+
+      const today =
+        new Date();
+
+      today.setHours(
+        0,
+        0,
+        0,
+        0
+      );
+
 
       const todayOrders =
-        orders.filter(order =>
-          new Date(order.created_at) >= today
+        orders.filter(
+          order =>
+            new Date(
+              order.created_at
+            ) >= today
         ).length;
 
 
-      document.getElementById("activeOrders").textContent =
+      /*
+        --------------------------------------
+        UPDATE DASHBOARD NUMBERS
+        --------------------------------------
+      */
+
+      document.getElementById(
+        "activeOrders"
+      ).textContent =
         activeOrders;
 
-      document.getElementById("availableShoppers").textContent =
+
+      document.getElementById(
+        "availableShoppers"
+      ).textContent =
         availableShoppers;
 
-      document.getElementById("todayOrders").textContent =
+
+      document.getElementById(
+        "todayOrders"
+      ).textContent =
         todayOrders;
 
+
+      /*
+        --------------------------------------
+        NO ORDERS
+        --------------------------------------
+      */
 
       if (!orders.length) {
 
         ordersBox.innerHTML = `
           <div class="empty">
-            <strong>No orders yet.</strong>
+
+            <strong>
+              No orders yet.
+            </strong>
+
             <br><br>
-            New Fetch requests will appear here.
+
+            New Fetch requests
+            will appear here.
+
           </div>
         `;
 
@@ -373,135 +485,264 @@
       }
 
 
-      ordersBox.innerHTML = orders.map((order, index) => {
+      /*
+        --------------------------------------
+        DISPLAY ORDERS
+        --------------------------------------
+      */
 
-        const items = order.items
-          .split(",")
-          .map(item => item.trim())
-          .filter(Boolean);
+      ordersBox.innerHTML =
+        orders.map(
+          (order, index) => {
 
-
-        return `
-          <div class="order">
-
-            <div class="order-top">
-
-              <div class="order-id">
-                Order #${String(index + 1).padStart(3, "0")}
-              </div>
-
-              <div class="status">
-                ${(order.status || "finding_shopper")
-                  .replaceAll("_", " ")
-                  .toUpperCase()}
-              </div>
-
-            </div>
+            const items =
+              String(
+                order.items || ""
+              )
+                .split(",")
+                .map(
+                  item =>
+                    item.trim()
+                )
+                .filter(Boolean);
 
 
-            <div class="order-grid">
+            return `
 
-              <div>
+              <div class="order">
 
-                <div class="label">
-                  Store
-                </div>
+                <div class="order-top">
 
-                <div class="store">
-                  ${escapeHtml(order.store_name)}
-                </div>
-
-                <div class="label">
-                  Shopping List
-                </div>
-
-                ${items.map(item => `
-                  <div class="item">
-                    <span>${escapeHtml(item)}</span>
+                  <div class="order-id">
+                    Order #${String(
+                      index + 1
+                    ).padStart(3, "0")}
                   </div>
-                `).join("")}
 
-                <div class="budget">
-                  Budget:
-                  ₹${Number(order.budget || 0).toLocaleString("en-IN")}
+                  <div class="status">
+                    ${(order.status ||
+                      "finding_shopper")
+                      .replaceAll(
+                        "_",
+                        " "
+                      )
+                      .toUpperCase()}
+                  </div>
+
+                </div>
+
+
+                <div class="order-grid">
+
+                  <div>
+
+                    <div class="label">
+                      Store
+                    </div>
+
+                    <div class="store">
+                      ${escapeHtml(
+                        order.store_name
+                      )}
+                    </div>
+
+
+                    <div class="label">
+                      Shopping List
+                    </div>
+
+
+                    ${items.map(
+                      item => `
+
+                        <div class="item">
+
+                          <span>
+                            ${escapeHtml(
+                              item
+                            )}
+                          </span>
+
+                        </div>
+
+                      `
+                    ).join("")}
+
+
+                    <div class="budget">
+
+                      Budget:
+
+                      ₹${Number(
+                        order.budget || 0
+                      ).toLocaleString(
+                        "en-IN"
+                      )}
+
+                    </div>
+
+                  </div>
+
+
+                  <div>
+
+                    <div class="label">
+                      Order Status
+                    </div>
+
+                    <div class="status-text">
+                      ${getStatusMessage(
+                        order.status
+                      )}
+                    </div>
+
+                  </div>
+
                 </div>
 
               </div>
 
+            `;
 
-              <div>
-
-                <div class="label">
-                  Order Status
-                </div>
-
-                <div class="status-text">
-                  ${getStatusMessage(order.status)}
-                </div>
-
-              </div>
-
-            </div>
-
-          </div>
-        `;
-
-      }).join("");
+          }
+        ).join("");
 
 
     } catch (error) {
 
-      console.error(error);
+      /*
+        --------------------------------------
+        SHOW REAL ERROR
+        --------------------------------------
+      */
 
-    errorBox.innerHTML =
-  "Could not load Fetch data: " +
-  (error.message || error);
-        </div>
+      console.error(
+        "FETCH ERROR:",
+        error
+      );
+
+
+      errorBox.innerHTML = `
+
+        <strong>
+          Fetch could not load the database.
+        </strong>
+
+        <br><br>
+
+        <strong>
+          Error:
+        </strong>
+
+        ${escapeHtml(
+          error.message ||
+          String(error)
+        )}
+
       `;
 
+
       ordersBox.innerHTML = "";
+
     }
 
   }
 
+
+  /*
+    ==========================================
+    ORDER STATUS MESSAGES
+    ==========================================
+  */
 
   function getStatusMessage(status) {
 
-    switch(status) {
+    switch (status) {
 
       case "finding_shopper":
-        return "Finding an available shopper...";
+
+        return
+          "Finding an available shopper...";
+
 
       case "shopper_assigned":
-        return "Shopper assigned.";
+
+        return
+          "Shopper assigned.";
+
 
       case "shopping":
-        return "Shopper is shopping.";
+
+        return
+          "Shopper is shopping.";
+
 
       case "delivering":
-        return "Order is being delivered.";
+
+        return
+          "Order is being delivered.";
+
 
       case "completed":
-        return "Order completed.";
+
+        return
+          "Order completed.";
+
 
       default:
-        return status || "Processing order...";
+
+        return
+          status ||
+          "Processing order...";
+
     }
 
   }
 
+
+  /*
+    ==========================================
+    SECURITY — ESCAPE DATABASE CONTENT
+    ==========================================
+  */
 
   function escapeHtml(value) {
 
     return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+
+      .replaceAll(
+        "&",
+        "&amp;"
+      )
+
+      .replaceAll(
+        "<",
+        "&lt;"
+      )
+
+      .replaceAll(
+        ">",
+        "&gt;"
+      )
+
+      .replaceAll(
+        '"',
+        "&quot;"
+      )
+
+      .replaceAll(
+        "'",
+        "&#039;"
+      );
 
   }
 
+
+  /*
+    ==========================================
+    START FETCH
+    ==========================================
+  */
 
   loadData();
 
