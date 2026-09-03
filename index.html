@@ -453,10 +453,9 @@
 
       console.error(error);
 
-      errorBox.innerHTML = `
-        <div class="error">
-          Could not load Fetch data.
-          Please check the Supabase publishable key.
+    errorBox.innerHTML =
+  "Could not load Fetch data: " +
+  (error.message || error);
         </div>
       `;
 
