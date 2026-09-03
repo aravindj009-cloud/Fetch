@@ -1,9 +1,9 @@
-export default async function handler(req, res) {
+export default function handler(req, res) {
   // ---------------------------------------------------------
   // FETCH WHATSAPP WEBHOOK
   // ---------------------------------------------------------
 
-  // Meta uses GET to verify that this webhook belongs to Fetch.
+  // Meta uses GET to verify the webhook.
   if (req.method === "GET") {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
@@ -33,8 +33,6 @@ export default async function handler(req, res) {
 
     console.log(JSON.stringify(req.body, null, 2));
 
-    // We acknowledge the message immediately.
-    // Later we will process it with AI and create the order.
     return res.status(200).json({
       success: true,
       message: "Fetch webhook received the message"
