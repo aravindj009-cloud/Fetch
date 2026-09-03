@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Fetch — Operations</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f6f7f9;
+      color: #111827;
+    }
+
+    .header {
+      height: 72px;
+      background: white;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 40px;
+    }
+
+    .logo {
+      font-size: 25px;
+      font-weight: 800;
+      letter-spacing: -1px;
+    }
+
+    .logo span {
+      font-size: 13px;
+      font-weight: 600;
+      color: #6b7280;
+      margin-left: 8px;
+    }
+
+    .status {
+      background: #ecfdf5;
+      color: #047857;
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 40px auto;
+      padding: 0 24px;
+    }
+
+    .page-title {
+      margin-bottom: 28px;
+    }
+
+    .page-title h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+    }
+
+    .page-title p {
+      margin: 0;
+      color: #6b7280;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      margin-bottom: 28px;
+    }
+
+    .stat {
+      background: white;
+      padding: 22px;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+    }
+
+    .stat-label {
+      color: #6b7280;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 750;
+    }
+
+    .order-card {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .order-header {
+      padding: 22px 24px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .order-number {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .badge {
+      background: #fff7ed;
+      color: #c2410c;
+      padding: 8px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .order-body {
+      padding: 24px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: 12px;
+    }
+
+    .store {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 18px;
+    }
+
+    .items {
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+
+    .items li {
+      padding: 12px 0;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .customer-box {
+      background: #f9fafb;
+      padding: 18px;
+      border-radius: 12px;
+    }
+
+    .customer-box div {
+      margin-bottom: 10px;
+    }
+
+    .customer-box div:last-child {
+      margin-bottom: 0;
+    }
+
+    .actions {
+      margin-top: 28px;
+      padding-top: 22px;
+      border-top: 1px solid #e5e7eb;
+      display: flex;
+      gap: 12px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 9px;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .primary {
+      background: #111827;
+      color: white;
+    }
+
+    .secondary {
+      background: #f3f4f6;
+      color: #374151;
+    }
+
+    @media (max-width: 700px) {
+      .stats,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .header {
+        padding: 0 20px;
+      }
+
+      .container {
+        margin-top: 25px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <header class="header">
+    <div class="logo">
+      FETCH <span>Operations</span>
+    </div>
+
+    <div class="status">
+      ● System Online
+    </div>
+  </header>
+
+  <main class="container">
+
+    <div class="page-title">
+      <h1>Orders</h1>
+      <p>Manage customer requests and human shoppers.</p>
+    </div>
+
+    <div class="stats">
+
+      <div class="stat">
+        <div class="stat-label">Active Orders</div>
+        <div class="stat-value">1</div>
+      </div>
+
+      <div class="stat">
+        <div class="stat-label">Available Shoppers</div>
+        <div class="stat-value">1</div>
+      </div>
+
+      <div class="stat">
+        <div class="stat-label">Today's Orders</div>
+        <div class="stat-value">1</div>
+      </div>
+
+    </div>
+
+    <div class="order-card">
+
+      <div class="order-header">
+        <div class="order-number">
+          Order #001
+        </div>
+
+        <div class="badge">
+          FINDING SHOPPER
+        </div>
+      </div>
+
+      <div class="order-body">
+
+        <div class="grid">
+
+          <div>
+
+            <div class="section-title">
+              Store
+            </div>
+
+            <div class="store">
+              🏪 Lulu Hypermarket
+            </div>
+
+            <div class="section-title">
+              Shopping List
+            </div>
+
+            <ul class="items">
+              <li>
+                <span>Nescafé Gold 200g</span>
+                <strong>× 2</strong>
+              </li>
+
+              <li>
+                <span>Eggs</span>
+                <strong>× 12</strong>
+              </li>
+
+              <li>
+                <span>Bread</span>
+                <strong>× 1</strong>
+              </li>
+            </ul>
+
+          </div>
+
+          <div>
+
+            <div class="section-title">
+              Customer
+            </div>
+
+            <div class="customer-box">
+              <div><strong>Aravind</strong></div>
+              <div>📍 Trivandrum</div>
+              <div>💰 Budget: ₹2,000</div>
+            </div>
+
+            <br>
+
+            <div class="section-title">
+              Order Status
+            </div>
+
+            <strong>Finding an available shopper...</strong>
+
+          </div>
+
+        </div>
+
+        <div class="actions">
+
+          <button class="primary"
+                  onclick="alert('Shopper assignment will be connected next.')">
+            Assign Shopper
+          </button>
+
+          <button class="secondary"
+                  onclick="alert('Order details will be connected next.')">
+            View Details
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+</body>
+</html>
