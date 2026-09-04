@@ -20,6 +20,11 @@ const OPENAI_API_KEY =
 const OPENAI_MODEL =
   "gpt-5.6-luna";
 
+
+/* =========================================================
+   STATUS LISTS
+========================================================= */
+
 const ACTIVE_ORDER_STATUSES = [
   "collecting_details",
   "awaiting_confirmation",
@@ -47,7 +52,8 @@ function jsonResponse(body, status = 200) {
     {
       status,
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type":
+          "application/json",
       },
     }
   );
@@ -59,7 +65,8 @@ function textResponse(body, status = 200) {
     {
       status,
       headers: {
-        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Type":
+          "text/plain; charset=utf-8",
       },
     }
   );
@@ -67,11 +74,13 @@ function textResponse(body, status = 200) {
 
 
 /* =========================================================
-   PHONE HELPERS
+   PHONE
 ========================================================= */
 
 function normalizePhone(phone) {
-  if (!phone) return "";
+  if (!phone) {
+    return "";
+  }
 
   return String(phone).replace(
     /[^\d]/g,
@@ -95,7 +104,8 @@ async function supabaseRequest(
   }
 
   const headers = {
-    apikey: SUPABASE_KEY,
+    apikey:
+      SUPABASE_KEY,
 
     Authorization:
       `Bearer ${SUPABASE_KEY}`,
@@ -122,7 +132,8 @@ async function supabaseRequest(
 
   if (text) {
     try {
-      data = JSON.parse(text);
+      data =
+        JSON.parse(text);
     } catch {
       data = text;
     }
@@ -162,11 +173,20 @@ async function sendWhatsAppMessage(
   const normalizedTo =
     normalizePhone(to);
 
+  console.log(
+    "FETCH WHATSAPP SEND:",
+    JSON.stringify({
+      to: normalizedTo,
+      message,
+    })
+  );
+
   const response =
     await fetch(
       `https://graph.facebook.com/v26.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Authorization:
@@ -183,13 +203,18 @@ async function sendWhatsAppMessage(
           recipient_type:
             "individual",
 
-          to: normalizedTo,
+          to:
+            normalizedTo,
 
-          type: "text",
+          type:
+            "text",
 
           text: {
-            preview_url: false,
-            body: message,
+            preview_url:
+              false,
+
+            body:
+              message,
           },
         }),
       }
@@ -216,12 +241,16 @@ async function sendWhatsAppMessage(
 
 
 /* =========================================================
-   CUSTOMER FUNCTIONS
+   CUSTOMERS
 ========================================================= */
 
-async function getCustomer(phone) {
+async function getCustomer(
+  phone
+) {
   const encodedPhone =
-    encodeURIComponent(phone);
+    encodeURIComponent(
+      phone
+    );
 
   const data =
     await supabaseRequest(
@@ -241,7 +270,8 @@ async function createCustomer(
     await supabaseRequest(
       "customers",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Prefer:
@@ -263,7 +293,9 @@ async function getOrCreateCustomer(
   phone
 ) {
   let customer =
-    await getCustomer(phone);
+    await getCustomer(
+      phone
+    );
 
   if (customer) {
     return customer;
@@ -275,7 +307,9 @@ async function getOrCreateCustomer(
     );
   } catch (error) {
     customer =
-      await getCustomer(phone);
+      await getCustomer(
+        phone
+      );
 
     if (customer) {
       return customer;
@@ -287,17 +321,24 @@ async function getOrCreateCustomer(
 
 
 /* =========================================================
-   SHOPPER FUNCTIONS
+   SHOPPERS
 ========================================================= */
 
 async function getShopperByPhone(
   phone
 ) {
   const normalizedPhone =
-    normalizePhone(phone);
+    normalizePhone(
+      phone
+    );
+
+  console.log(
+    "FETCH SHOPPER LOOKUP:",
+    normalizedPhone
+  );
 
   /*
-   * First try the exact normalized phone.
+   * First try exact database match.
    */
   const exact =
     await supabaseRequest(
@@ -310,17 +351,18 @@ async function getShopperByPhone(
     Array.isArray(exact) &&
     exact.length > 0
   ) {
+    console.log(
+      "FETCH SHOPPER FOUND EXACT:",
+      JSON.stringify(
+        exact[0]
+      )
+    );
+
     return exact[0];
   }
 
   /*
-   * For MVP robustness, also check
-   * all shoppers and normalize both sides.
-   *
-   * This handles database values such as:
-   * +91 90745 59146
-   * 919074559146
-   * 9074595146
+   * Then normalize all shopper phone numbers.
    */
   const shoppers =
     await supabaseRequest(
@@ -336,8 +378,16 @@ async function getShopperByPhone(
       (shopper) =>
         normalizePhone(
           shopper.phone
-        ) === normalizedPhone
+        ) ===
+        normalizedPhone
     );
+
+  if (match) {
+    console.log(
+      "FETCH SHOPPER FOUND NORMALIZED:",
+      JSON.stringify(match)
+    );
+  }
 
   return match || null;
 }
@@ -346,13 +396,16 @@ async function createShopper(
   phone
 ) {
   const normalizedPhone =
-    normalizePhone(phone);
+    normalizePhone(
+      phone
+    );
 
   const data =
     await supabaseRequest(
       "shoppers",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Prefer:
@@ -368,7 +421,8 @@ async function createShopper(
           phone:
             normalizedPhone,
 
-          available: true,
+          available:
+            true,
 
           whatsapp_opted_in:
             true,
@@ -424,16 +478,18 @@ async function updateShopper(
         shopperId
       )}`,
       {
-        method: "PATCH",
+        method:
+          "PATCH",
 
         headers: {
           Prefer:
             "return=representation",
         },
 
-        body: JSON.stringify(
-          updates
-        ),
+        body:
+          JSON.stringify(
+            updates
+          ),
       }
     );
 
@@ -449,7 +505,8 @@ async function activateShopper(
   return await updateShopper(
     shopper.id,
     {
-      available: true,
+      available:
+        true,
 
       whatsapp_opted_in:
         true,
@@ -465,18 +522,17 @@ async function activateShopper(
 
 
 /* =========================================================
-   ORDER FUNCTIONS
+   ORDERS
 ========================================================= */
 
 async function getActiveOrder(
   customerId
 ) {
-  const statusList =
+  /*
+   * Use a clean PostgREST IN query.
+   */
+  const statuses =
     ACTIVE_ORDER_STATUSES
-      .map(
-        (status) =>
-          `"${status}"`
-      )
       .join(",");
 
   const data =
@@ -484,14 +540,22 @@ async function getActiveOrder(
       `orders?customer_id=eq.${encodeURIComponent(
         customerId
       )}&status=in.(${encodeURIComponent(
-        statusList
+        statuses
       )})&select=*&order=created_at.desc&limit=1`
     );
 
-  return Array.isArray(data) &&
+  const order =
+    Array.isArray(data) &&
     data.length > 0
-    ? data[0]
-    : null;
+      ? data[0]
+      : null;
+
+  console.log(
+    "FETCH ACTIVE ORDER:",
+    JSON.stringify(order)
+  );
+
+  return order;
 }
 
 async function getLatestOrder(
@@ -522,7 +586,8 @@ async function createOrder({
     await supabaseRequest(
       "orders",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Prefer:
@@ -548,38 +613,68 @@ async function createOrder({
       }
     );
 
-  return Array.isArray(data)
-    ? data[0]
-    : data;
+  const order =
+    Array.isArray(data)
+      ? data[0]
+      : data;
+
+  console.log(
+    "FETCH ORDER CREATED:",
+    JSON.stringify(
+      order
+    )
+  );
+
+  return order;
 }
 
 async function updateOrder(
   orderId,
   updates
 ) {
+  console.log(
+    "FETCH ORDER UPDATE:",
+    JSON.stringify({
+      orderId,
+      updates,
+    })
+  );
+
   const data =
     await supabaseRequest(
       `orders?id=eq.${encodeURIComponent(
         orderId
       )}`,
       {
-        method: "PATCH",
+        method:
+          "PATCH",
 
         headers: {
           Prefer:
             "return=representation",
         },
 
-        body: JSON.stringify(
-          updates
-        ),
+        body:
+          JSON.stringify(
+            updates
+          ),
       }
     );
 
-  return Array.isArray(data) &&
+  const order =
+    Array.isArray(data) &&
     data.length > 0
-    ? data[0]
-    : null;
+      ? data[0]
+      : null;
+
+  console.log(
+    "FETCH ORDER UPDATED:",
+    JSON.stringify(
+      order
+    )
+  );
+
+  return order;
 }
 
 async function getOrderById(
@@ -640,7 +735,8 @@ async function saveMessage({
     await supabaseRequest(
       "messages",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Prefer:
@@ -652,7 +748,8 @@ async function saveMessage({
             customerId,
 
           order_id:
-            orderId || null,
+            orderId ||
+            null,
 
           phone,
 
@@ -674,7 +771,9 @@ async function updateCustomerAddress(
   customerId,
   address
 ) {
-  if (!address) return;
+  if (!address) {
+    return;
+  }
 
   try {
     await supabaseRequest(
@@ -682,7 +781,8 @@ async function updateCustomerAddress(
         customerId
       )}`,
       {
-        method: "PATCH",
+        method:
+          "PATCH",
 
         headers: {
           Prefer:
@@ -696,7 +796,7 @@ async function updateCustomerAddress(
     );
   } catch (error) {
     console.error(
-      "FETCH CUSTOMER ADDRESS UPDATE ERROR:",
+      "FETCH ADDRESS UPDATE ERROR:",
       error
     );
   }
@@ -704,8 +804,23 @@ async function updateCustomerAddress(
 
 
 /* =========================================================
-   SHOPPER JOB FUNCTIONS
+   SHOPPER JOBS
 ========================================================= */
+
+async function getShopperJobsForOrder(
+  orderId
+) {
+  const data =
+    await supabaseRequest(
+      `shopper_jobs?order_id=eq.${encodeURIComponent(
+        orderId
+      )}&select=*&order=created_at.asc`
+    );
+
+  return Array.isArray(data)
+    ? data
+    : [];
+}
 
 async function getOpenShopperJob(
   shopperId
@@ -743,11 +858,20 @@ async function createShopperJob({
   orderId,
   shopperId,
 }) {
+  console.log(
+    "FETCH CREATING SHOPPER JOB:",
+    JSON.stringify({
+      orderId,
+      shopperId,
+    })
+  );
+
   const data =
     await supabaseRequest(
       "shopper_jobs",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Prefer:
@@ -770,31 +894,51 @@ async function createShopperJob({
       }
     );
 
-  return Array.isArray(data)
-    ? data[0]
-    : data;
+  const job =
+    Array.isArray(data)
+      ? data[0]
+      : data;
+
+  console.log(
+    "FETCH SHOPPER JOB CREATED:",
+    JSON.stringify(
+      job
+    )
+  );
+
+  return job;
 }
 
 async function updateShopperJob(
   jobId,
   updates
 ) {
+  console.log(
+    "FETCH SHOPPER JOB UPDATE:",
+    JSON.stringify({
+      jobId,
+      updates,
+    })
+  );
+
   const data =
     await supabaseRequest(
       `shopper_jobs?id=eq.${encodeURIComponent(
         jobId
       )}`,
       {
-        method: "PATCH",
+        method:
+          "PATCH",
 
         headers: {
           Prefer:
             "return=representation",
         },
 
-        body: JSON.stringify(
-          updates
-        ),
+        body:
+          JSON.stringify(
+            updates
+          ),
       }
     );
 
@@ -803,6 +947,11 @@ async function updateShopperJob(
     ? data[0]
     : null;
 }
+
+
+/* =========================================================
+   AVAILABLE SHOPPERS
+========================================================= */
 
 async function getAvailableShoppers(
   excludedShopperIds = []
@@ -816,29 +965,67 @@ async function getAvailableShoppers(
     return [];
   }
 
-  return data.filter(
-    (shopper) =>
-      !excludedShopperIds.includes(
-        shopper.id
-      ) &&
-      !shopper.current_order_id
+  const available =
+    data.filter(
+      (shopper) =>
+        !excludedShopperIds.includes(
+          shopper.id
+        ) &&
+        !shopper.current_order_id
+    );
+
+  console.log(
+    "FETCH AVAILABLE SHOPPERS:",
+    JSON.stringify(
+      available
+    )
   );
+
+  return available;
 }
 
 
 /* =========================================================
-   SHOPPER DISPATCH
+   OFFER ORDER TO SHOPPER
 ========================================================= */
 
 async function offerOrderToShopper(
   order,
   excludedShopperIds = []
 ) {
+  console.log(
+    "FETCH DISPATCH START:",
+    JSON.stringify({
+      orderId:
+        order?.id,
+
+      store:
+        order?.store_name,
+
+      items:
+        order?.items,
+
+      status:
+        order?.status,
+
+      excludedShopperIds,
+    })
+  );
+
   if (!order?.id) {
+    console.error(
+      "FETCH DISPATCH FAILED: NO ORDER"
+    );
+
     return {
-      success: false,
-      shopper: null,
-      job: null,
+      success:
+        false,
+
+      shopper:
+        null,
+
+      job:
+        null,
     };
   }
 
@@ -847,34 +1034,79 @@ async function offerOrderToShopper(
       excludedShopperIds
     );
 
+  console.log(
+    "FETCH DISPATCH SHOPPER COUNT:",
+    shoppers.length
+  );
+
   if (
     shoppers.length === 0
   ) {
     console.log(
-      "FETCH: No available shoppers."
+      "FETCH DISPATCH: NO AVAILABLE SHOPPER"
     );
 
     return {
-      success: false,
-      shopper: null,
-      job: null,
+      success:
+        false,
+
+      shopper:
+        null,
+
+      job:
+        null,
     };
   }
 
   for (
     const shopper of shoppers
   ) {
-    let job = null;
+    let job =
+      null;
 
     try {
-      job =
-        await createShopperJob({
-          orderId:
-            order.id,
+      /*
+       * Check whether this shopper
+       * already has an open offer for
+       * this exact order.
+       */
+      const existingJobs =
+        await supabaseRequest(
+          `shopper_jobs?order_id=eq.${encodeURIComponent(
+            order.id
+          )}&shopper_id=eq.${encodeURIComponent(
+            shopper.id
+          )}&status=eq.offered&select=*&limit=1`
+        );
 
-          shopperId:
-            shopper.id,
-        });
+      if (
+        Array.isArray(
+          existingJobs
+        ) &&
+        existingJobs.length > 0
+      ) {
+        console.log(
+          "FETCH DISPATCH: EXISTING OPEN JOB",
+          JSON.stringify(
+            existingJobs[0]
+          )
+        );
+
+        /*
+         * Try sending the existing job again.
+         */
+        job =
+          existingJobs[0];
+      } else {
+        job =
+          await createShopperJob({
+            orderId:
+              order.id,
+
+            shopperId:
+              shopper.id,
+          });
+      }
 
       const shopperMessage =
         `🛍️ *New Fetch Job*\n\n` +
@@ -882,12 +1114,22 @@ async function offerOrderToShopper(
         `🛒 Items: ${order.items}\n` +
         `📍 Deliver to: ${order.delivery_address}\n` +
         `${
-          order.budget
+          order.budget !==
+            null &&
+          order.budget !==
+            undefined
             ? `💰 Budget: ₹${order.budget}\n`
             : ""
         }\n` +
-        `Reply *ACCEPT* to take this job.\n` +
+        `\nReply *ACCEPT* to take this job.\n` +
         `Reply *DECLINE* to skip it.`;
+
+      console.log(
+        "FETCH DISPATCH SENDING JOB TO:",
+        normalizePhone(
+          shopper.phone
+        )
+      );
 
       await sendWhatsAppMessage(
         shopper.phone,
@@ -898,7 +1140,7 @@ async function offerOrderToShopper(
         order.id,
         {
           shopper_id:
-            shopper.id,
+            null,
 
           status:
             "finding_shopper",
@@ -906,7 +1148,7 @@ async function offerOrderToShopper(
       );
 
       console.log(
-        "FETCH: JOB OFFERED TO SHOPPER",
+        "FETCH DISPATCH SUCCESS:",
         JSON.stringify({
           orderId:
             order.id,
@@ -920,8 +1162,11 @@ async function offerOrderToShopper(
       );
 
       return {
-        success: true,
+        success:
+          true,
+
         shopper,
+
         job,
       };
     } catch (error) {
@@ -930,12 +1175,6 @@ async function offerOrderToShopper(
         error
       );
 
-      /*
-       * If the WhatsApp send failed after
-       * creating the job, mark the offer as
-       * failed/declined so it does not remain
-       * stuck as an active offer.
-       */
       if (job?.id) {
         try {
           await updateShopperJob(
@@ -945,32 +1184,64 @@ async function offerOrderToShopper(
                 "declined",
             }
           );
-        } catch {}
+        } catch (
+          cleanupError
+        ) {
+          console.error(
+            "FETCH JOB CLEANUP ERROR:",
+            cleanupError
+          );
+        }
       }
 
+      /*
+       * Try next shopper.
+       */
       continue;
     }
   }
 
+  console.error(
+    "FETCH DISPATCH FAILED: ALL SHOPPERS FAILED"
+  );
+
   return {
-    success: false,
-    shopper: null,
-    job: null,
+    success:
+      false,
+
+    shopper:
+      null,
+
+    job:
+      null,
   };
 }
+
+
+/* =========================================================
+   DISPATCH ORDER
+========================================================= */
 
 async function dispatchOrder(
   order
 ) {
+  console.log(
+    "FETCH DISPATCH ORDER:",
+    JSON.stringify(
+      order
+    )
+  );
+
   if (!order?.id) {
     return {
-      success: false,
+      success:
+        false,
     };
   }
 
   /*
-   * If a shopper has already accepted,
-   * don't dispatch again.
+   * If already accepted/active, don't
+   * create another assignment.
    */
   if (
     order.shopper_id &&
@@ -978,36 +1249,46 @@ async function dispatchOrder(
       "shopper_assigned",
       "shopping",
       "out_for_delivery",
-    ].includes(order.status)
+    ].includes(
+      order.status
+    )
   ) {
+    console.log(
+      "FETCH DISPATCH: ALREADY ASSIGNED"
+    );
+
     return {
-      success: true,
-      alreadyAssigned: true,
+      success:
+        true,
+
+      alreadyAssigned:
+        true,
     };
   }
 
   /*
-   * Find shoppers that have already
-   * received this order.
+   * Find shoppers who have already
+   * completed/declined this order.
    */
-  let existingJobs = [];
+  let existingJobs =
+    [];
 
   try {
     existingJobs =
-      await supabaseRequest(
-        `shopper_jobs?order_id=eq.${encodeURIComponent(
-          order.id
-        )}&select=shopper_id,status`
+      await getShopperJobsForOrder(
+        order.id
       );
   } catch (error) {
     console.error(
-      "FETCH EXISTING JOBS ERROR:",
+      "FETCH GET ORDER JOBS ERROR:",
       error
     );
   }
 
-  const excluded =
-    Array.isArray(existingJobs)
+  const excludedShopperIds =
+    Array.isArray(
+      existingJobs
+    )
       ? existingJobs
           .filter(
             (job) =>
@@ -1025,15 +1306,22 @@ async function dispatchOrder(
           )
       : [];
 
+  console.log(
+    "FETCH DISPATCH EXCLUDED SHOPPERS:",
+    JSON.stringify(
+      excludedShopperIds
+    )
+  );
+
   return await offerOrderToShopper(
     order,
-    excluded
+    excludedShopperIds
   );
 }
 
 
 /* =========================================================
-   SHOPPER COMMAND HELPERS
+   SHOPPER COMMANDS
 ========================================================= */
 
 function isShopperStart(
@@ -1051,7 +1339,9 @@ function isShopperStart(
     "join shopper",
     "become shopper",
     "shopper",
-  ].includes(text);
+  ].includes(
+    text
+  );
 }
 
 function isShopperAccept(
@@ -1074,7 +1364,9 @@ function isShopperAccept(
     "haan",
     "ശരി",
     "അതെ",
-  ].includes(text);
+  ].includes(
+    text
+  );
 }
 
 function isShopperDecline(
@@ -1095,7 +1387,9 @@ function isShopperDecline(
     "no thanks",
     "vendam",
     "വേണ്ട",
-  ].includes(text);
+  ].includes(
+    text
+  );
 }
 
 function isShoppingCommand(
@@ -1112,7 +1406,9 @@ function isShoppingCommand(
     "started shopping",
     "shopping started",
     "start shopping",
-  ].includes(text);
+  ].includes(
+    text
+  );
 }
 
 function isPickedUpCommand(
@@ -1129,7 +1425,9 @@ function isPickedUpCommand(
     "pickup",
     "pickedup",
     "items picked up",
-  ].includes(text);
+  ].includes(
+    text
+  );
 }
 
 function isOutForDeliveryCommand(
@@ -1145,7 +1443,9 @@ function isOutForDeliveryCommand(
     "out delivery",
     "on the way",
     "delivering",
-  ].includes(text);
+  ].includes(
+    text
+  );
 }
 
 function isDeliveredCommand(
@@ -1161,7 +1461,9 @@ function isDeliveredCommand(
     "delivery done",
     "delivered successfully",
     "done",
-  ].includes(text);
+  ].includes(
+    text
+  );
 }
 
 
@@ -1193,9 +1495,9 @@ async function handleShopperMessage({
     }
   );
 
-  /*
-   * START / JOIN
-   */
+
+  /* START */
+
   if (
     isShopperStart(
       userMessage
@@ -1206,16 +1508,13 @@ async function handleShopperMessage({
         shopper
       );
 
-    const reply =
-      `🛍️ *Welcome to Fetch Shopper!*\n\n` +
-      `You're now marked as *available* to receive shopping jobs.\n\n` +
-      `When a customer needs something, Fetch will send you the store, items and delivery details.\n\n` +
-      `Reply *ACCEPT* to take a job.\n` +
-      `Reply *DECLINE* to skip it.`;
-
     await sendWhatsAppMessage(
       phone,
-      reply
+      `🛍️ *Welcome to Fetch Shopper!*\n\n` +
+        `You're now marked as *available* to receive shopping jobs.\n\n` +
+        `When a customer needs something, Fetch will send you the store, items and delivery details.\n\n` +
+        `Reply *ACCEPT* to take a job.\n` +
+        `Reply *DECLINE* to skip it.`
     );
 
     return {
@@ -1225,9 +1524,9 @@ async function handleShopperMessage({
     };
   }
 
-  /*
-   * ACCEPT
-   */
+
+  /* ACCEPT */
+
   if (
     isShopperAccept(
       userMessage
@@ -1273,9 +1572,6 @@ async function handleShopperMessage({
       };
     }
 
-    /*
-     * Accept job.
-     */
     await updateShopperJob(
       offeredJob.id,
       {
@@ -1290,7 +1586,8 @@ async function handleShopperMessage({
     await updateShopper(
       shopper.id,
       {
-        available: false,
+        available:
+          false,
 
         current_order_id:
           order.id,
@@ -1321,9 +1618,6 @@ async function handleShopperMessage({
         `When you start shopping, reply *SHOPPING*.`
     );
 
-    /*
-     * Notify customer.
-     */
     try {
       const customer =
         await getCustomer(
@@ -1343,22 +1637,23 @@ async function handleShopperMessage({
       }
     } catch (error) {
       console.error(
-        "FETCH CUSTOMER SHOPPER NOTIFICATION ERROR:",
+        "FETCH CUSTOMER ACCEPT NOTIFICATION ERROR:",
         error
       );
     }
 
     return {
       shopper,
+
       order:
         updatedOrder ||
         order,
     };
   }
 
-  /*
-   * DECLINE
-   */
+
+  /* DECLINE */
+
   if (
     isShopperDecline(
       userMessage
@@ -1391,7 +1686,8 @@ async function handleShopperMessage({
     await updateShopper(
       shopper.id,
       {
-        available: true,
+        available:
+          true,
 
         current_order_id:
           null,
@@ -1407,9 +1703,6 @@ async function handleShopperMessage({
       );
 
     if (order) {
-      /*
-       * Find another shopper.
-       */
       const dispatchResult =
         await offerOrderToShopper(
           order,
@@ -1426,7 +1719,7 @@ async function handleShopperMessage({
       } else {
         await sendWhatsAppMessage(
           phone,
-          `👍 No problem. I've skipped that job.\n\nYou're still marked as available for the next job.`
+          `👍 No problem. You're still marked as available for the next job.`
         );
       }
     } else {
@@ -1441,9 +1734,9 @@ async function handleShopperMessage({
     };
   }
 
-  /*
-   * SHOPPING
-   */
+
+  /* SHOPPING */
+
   if (
     isShoppingCommand(
       userMessage
@@ -1473,14 +1766,6 @@ async function handleShopperMessage({
             "shopping",
         }
       );
-
-    await updateShopper(
-      shopper.id,
-      {
-        last_seen_at:
-          new Date().toISOString(),
-      }
-    );
 
     await sendWhatsAppMessage(
       phone,
@@ -1514,9 +1799,9 @@ async function handleShopperMessage({
     };
   }
 
-  /*
-   * PICKED UP
-   */
+
+  /* PICKED UP */
+
   if (
     isPickedUpCommand(
       userMessage
@@ -1558,9 +1843,9 @@ async function handleShopperMessage({
     };
   }
 
-  /*
-   * OUT FOR DELIVERY
-   */
+
+  /* OUT FOR DELIVERY */
+
   if (
     isOutForDeliveryCommand(
       userMessage
@@ -1623,9 +1908,9 @@ async function handleShopperMessage({
     };
   }
 
-  /*
-   * DELIVERED
-   */
+
+  /* DELIVERED */
+
   if (
     isDeliveredCommand(
       userMessage
@@ -1670,7 +1955,8 @@ async function handleShopperMessage({
     await updateShopper(
       shopper.id,
       {
-        available: true,
+        available:
+          true,
 
         current_order_id:
           null,
@@ -1712,9 +1998,9 @@ async function handleShopperMessage({
     };
   }
 
-  /*
-   * Shopper asks what they should do.
-   */
+
+  /* HELP */
+
   await sendWhatsAppMessage(
     phone,
     `Hi 👋 You're registered as a Fetch shopper.\n\n` +
@@ -1767,7 +2053,8 @@ function getOrderStatusText(
 
     default:
       return `Your order status is ${
-        status || "unknown"
+        status ||
+        "unknown"
       }.`;
   }
 }
@@ -1780,7 +2067,8 @@ function getOrderSummary(
   }
 
   return {
-    id: order.id,
+    id:
+      order.id,
 
     store_name:
       order.store_name,
@@ -1810,7 +2098,7 @@ function getOrderSummary(
 
 
 /* =========================================================
-   CONFIRMATION HELPERS
+   CONFIRMATION
 ========================================================= */
 
 function isConfirmation(
@@ -1821,7 +2109,7 @@ function isConfirmation(
       .trim()
       .toLowerCase();
 
-  const confirmations = [
+  return [
     "yes",
     "y",
     "yeah",
@@ -1842,9 +2130,7 @@ function isConfirmation(
     "അതെ",
     "ok bro",
     "okay bro",
-  ];
-
-  return confirmations.includes(
+  ].includes(
     text
   );
 }
@@ -1857,7 +2143,7 @@ function isRejection(
       .trim()
       .toLowerCase();
 
-  const rejections = [
+  return [
     "no",
     "n",
     "nope",
@@ -1867,9 +2153,7 @@ function isRejection(
     "stop",
     "vendam",
     "വേണ്ട",
-  ];
-
-  return rejections.includes(
+  ].includes(
     text
   );
 }
@@ -1884,7 +2168,9 @@ function missingRequiredFields(
     order.store_name ===
       "Not specified"
   ) {
-    missing.push("store");
+    missing.push(
+      "store"
+    );
   }
 
   if (
@@ -1892,7 +2178,9 @@ function missingRequiredFields(
     order.items ===
       "Not specified"
   ) {
-    missing.push("items");
+    missing.push(
+      "items"
+    );
   }
 
   if (
@@ -1908,7 +2196,7 @@ function missingRequiredFields(
 
 
 /* =========================================================
-   OPENAI HELPERS
+   OPENAI
 ========================================================= */
 
 function extractOpenAIText(
@@ -1927,7 +2215,8 @@ function extractOpenAIText(
       ? data.output
       : [];
 
-  let collected = "";
+  let collected =
+    "";
 
   for (
     const item of output
@@ -1954,14 +2243,18 @@ function extractOpenAIText(
     }
   }
 
-  if (collected.trim()) {
+  if (
+    collected.trim()
+  ) {
     return collected.trim();
   }
 
   return "";
 }
 
-function cleanAIText(text) {
+function cleanAIText(
+  text
+) {
   if (!text) {
     return "";
   }
@@ -2001,10 +2294,6 @@ You are Fetch, a friendly AI shopping assistant operating through WhatsApp.
 
 Fetch helps people request products from stores and coordinates human shoppers.
 
-Your job is to understand the customer's message naturally and respond conversationally.
-
-LANGUAGE:
-
 Understand and respond naturally in:
 
 - English
@@ -2024,11 +2313,7 @@ Always try to respond in the same language and style as the customer.
 
 If the customer writes Manglish, replying in Manglish is acceptable.
 
-Do not unnecessarily translate their message into English.
-
-CONVERSATION:
-
-Understand the meaning using previous conversation.
+Understand the conversation using previous messages.
 
 Examples:
 
@@ -2047,15 +2332,11 @@ Examples:
 "yes"
 "no"
 
-Interpret these using the conversation context.
+Do not create a duplicate order just because the customer sent another message.
 
-Do NOT create a new order just because the customer sent another message.
+If an active order exists, continue working with it unless the customer clearly asks for a separate new order.
 
-If an active order exists, continue working with that order unless the customer clearly asks for a separate new order.
-
-ORDER:
-
-Required:
+Required order information:
 
 1. Store
 2. Items
@@ -2072,34 +2353,21 @@ Never invent:
 - Budget
 - Shopper
 - Delivery time
-- Order status
 - Product availability
 
-Only use information actually supplied by the customer or supplied by the database.
+If the customer provides new information about an existing order, extract it.
 
-If the customer provides new information about an existing order, extract that information.
+If the customer says "add", interpret it as an addition to existing items.
 
-If the customer says "add", interpret it as an addition to the existing items.
+If the customer says "remove", interpret it as removing an item.
 
-If the customer says "remove", interpret it as removing an item from the existing request.
-
-If the customer says "change", interpret it as a modification of the existing request.
-
-CONFIRMATION:
+If the customer says "change", interpret it as modifying the existing request.
 
 When all required information is available, summarize the order and ask the customer to confirm.
 
-Do not claim the order is confirmed merely because you generated the summary.
+If the customer says YES or another confirmation, classify it as "confirm".
 
-STATUS:
-
-If the customer asks where their order is, what is happening, or asks for status, use the database status.
-
-GENERAL QUESTIONS:
-
-You can answer normal conversational questions.
-
-Do not pretend to have live information if it is not provided.
+If the customer asks for status, use the database status supplied in the input.
 
 Keep WhatsApp responses natural and reasonably short.
 
@@ -2161,7 +2429,8 @@ Return ONLY JSON matching the required schema.
     await fetch(
       "https://api.openai.com/v1/responses",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           Authorization:
@@ -2324,7 +2593,9 @@ Return ONLY JSON matching the required schema.
   if (!outputText) {
     throw new Error(
       "OpenAI returned no usable text. Full response: " +
-        JSON.stringify(data)
+        JSON.stringify(
+          data
+        )
     );
   }
 
@@ -2371,7 +2642,8 @@ function buildFallbackReply({
     text.includes(
       "order status"
     ) ||
-    text === "status" ||
+    text ===
+      "status" ||
     text.includes(
       "order evide"
     )
@@ -2394,14 +2666,7 @@ function buildFallbackReply({
       userMessage
     )
   ) {
-    if (
-      activeOrder?.status ===
-      "awaiting_confirmation"
-    ) {
-      return "Done 👍 Your order is being processed.";
-    }
-
-    return "Sure 👍 Tell me what you'd like to order.";
+    return "Confirmed 👍 I'm finding a shopper for your order now.";
   }
 
   if (
@@ -2415,9 +2680,7 @@ function buildFallbackReply({
   if (
     text === "hi" ||
     text === "hello" ||
-    text === "hey" ||
-    text === "hi fetch" ||
-    text === "hello fetch"
+    text === "hey"
   ) {
     return "Hi 👋 I'm Fetch. Tell me what you need and which store you want it from.";
   }
@@ -2427,7 +2690,7 @@ function buildFallbackReply({
 
 
 /* =========================================================
-   CUSTOMER MESSAGE PROCESSING
+   CUSTOMER PROCESSING
 ========================================================= */
 
 async function processMessage({
@@ -2471,12 +2734,14 @@ async function processMessage({
     )
   );
 
+
   let order =
     activeOrder;
 
-  /*
-   * STATUS
-   */
+
+  /* =======================================================
+     STATUS
+  ======================================================= */
 
   if (
     decision.intent ===
@@ -2492,9 +2757,11 @@ async function processMessage({
           decision.reply ||
           "I don't see an order for you yet. Tell me what you'd like to buy.",
 
-        order: null,
+        order:
+          null,
 
-        shouldDispatch: false,
+        shouldDispatch:
+          false,
       };
     }
 
@@ -2508,14 +2775,15 @@ async function processMessage({
       order:
         statusOrder,
 
-      shouldDispatch: false,
+      shouldDispatch:
+        false,
     };
   }
 
 
-  /*
-   * CANCEL
-   */
+  /* =======================================================
+     CANCEL
+  ======================================================= */
 
   if (
     decision.intent ===
@@ -2527,16 +2795,20 @@ async function processMessage({
           decision.reply ||
           "I don't see an active order to cancel.",
 
-        order: null,
+        order:
+          null,
 
-        shouldDispatch: false,
+        shouldDispatch:
+          false,
       };
     }
 
     if (
       PROCESSING_ORDER_STATUSES.includes(
         activeOrder.status
-      )
+      ) &&
+      activeOrder.status !==
+        "finding_shopper"
     ) {
       return {
         reply:
@@ -2546,7 +2818,8 @@ async function processMessage({
         order:
           activeOrder,
 
-        shouldDispatch: false,
+        shouldDispatch:
+          false,
       };
     }
 
@@ -2556,6 +2829,9 @@ async function processMessage({
         {
           status:
             "cancelled",
+
+          shopper_id:
+            null,
         }
       );
 
@@ -2566,14 +2842,15 @@ async function processMessage({
 
       order,
 
-      shouldDispatch: false,
+      shouldDispatch:
+        false,
     };
   }
 
 
-  /*
-   * REJECT
-   */
+  /* =======================================================
+     REJECT
+  ======================================================= */
 
   if (
     decision.intent ===
@@ -2603,14 +2880,25 @@ async function processMessage({
 
       order,
 
-      shouldDispatch: false,
+      shouldDispatch:
+        false,
     };
   }
 
 
-  /*
-   * CONFIRM
-   */
+  /* =======================================================
+     CONFIRM
+     
+     IMPORTANT FIX:
+     
+     A confirmed order can be:
+     
+     awaiting_confirmation
+     OR
+     finding_shopper with no shopper
+     
+     The latter was the bug in your previous test.
+  ======================================================= */
 
   if (
     decision.intent ===
@@ -2619,6 +2907,24 @@ async function processMessage({
       userMessage
     )
   ) {
+    console.log(
+      "FETCH CONFIRMATION HANDLER:",
+      JSON.stringify({
+        activeOrderId:
+          activeOrder?.id,
+
+        activeOrderStatus:
+          activeOrder?.status,
+
+        activeShopperId:
+          activeOrder?.shopper_id,
+      })
+    );
+
+
+    /*
+     * Normal confirmation.
+     */
     if (
       activeOrder?.status ===
       "awaiting_confirmation"
@@ -2629,8 +2935,15 @@ async function processMessage({
           {
             status:
               "finding_shopper",
+
+            shopper_id:
+              null,
           }
         );
+
+      console.log(
+        "FETCH CONFIRMATION: ORDER MOVED TO FINDING SHOPPER"
+      );
 
       return {
         reply:
@@ -2638,10 +2951,70 @@ async function processMessage({
 
         order,
 
-        shouldDispatch: true,
+        shouldDispatch:
+          true,
       };
     }
 
+
+    /*
+     * IMPORTANT:
+     *
+     * If the order is already finding_shopper
+     * and has no shopper, dispatch it again.
+     */
+    if (
+      activeOrder?.status ===
+        "finding_shopper" &&
+      !activeOrder.shopper_id
+    ) {
+      console.log(
+        "FETCH CONFIRMATION: EXISTING FINDING_SHOPPER ORDER HAS NO SHOPPER — DISPATCHING NOW"
+      );
+
+      return {
+        reply:
+          `Confirmed 👍 I'm finding a shopper for your order now.`,
+
+        order:
+          activeOrder,
+
+        shouldDispatch:
+          true,
+      };
+    }
+
+
+    /*
+     * If shopper is already assigned,
+     * don't duplicate dispatch.
+     */
+    if (
+      activeOrder?.shopper_id &&
+      [
+        "shopper_assigned",
+        "shopping",
+        "out_for_delivery",
+      ].includes(
+        activeOrder.status
+      )
+    ) {
+      return {
+        reply:
+          `Your order is already being handled by a shopper. 👍`,
+
+        order:
+          activeOrder,
+
+        shouldDispatch:
+          false,
+      };
+    }
+
+
+    /*
+     * Other active order.
+     */
     if (activeOrder) {
       return {
         reply:
@@ -2651,25 +3024,32 @@ async function processMessage({
         order:
           activeOrder,
 
-        shouldDispatch: false,
+        shouldDispatch:
+          false,
       };
     }
 
+
+    /*
+     * No order.
+     */
     return {
       reply:
         decision.reply ||
         "Sure 👍 Tell me what you'd like to order.",
 
-      order: null,
+      order:
+        null,
 
-      shouldDispatch: false,
+      shouldDispatch:
+        false,
     };
   }
 
 
-  /*
-   * SHOPPING REQUEST / ORDER UPDATE
-   */
+  /* =======================================================
+     SHOPPING REQUEST / ORDER UPDATE
+  ======================================================= */
 
   if (
     decision.intent ===
@@ -2678,10 +3058,8 @@ async function processMessage({
       "update_order"
   ) {
     /*
-     * Existing processing order:
-     * do not create a duplicate.
+     * Existing processing order.
      */
-
     if (
       activeOrder &&
       PROCESSING_ORDER_STATUSES.includes(
@@ -2696,15 +3074,15 @@ async function processMessage({
         order:
           activeOrder,
 
-        shouldDispatch: false,
+        shouldDispatch:
+          false,
       };
     }
 
-    /*
-     * Existing draft:
-     * update the same order.
-     */
 
+    /*
+     * Existing draft.
+     */
     if (
       activeOrder &&
       [
@@ -2766,7 +3144,8 @@ async function processMessage({
         );
 
       if (
-        missing.length === 0
+        missing.length ===
+        0
       ) {
         updates.status =
           "awaiting_confirmation";
@@ -2790,14 +3169,14 @@ async function processMessage({
 
         order,
 
-        shouldDispatch: false,
+        shouldDispatch:
+          false,
       };
     }
 
 
     /*
-     * No active order.
-     * Create a new order.
+     * New order.
      */
 
     const store =
@@ -2843,11 +3222,6 @@ async function processMessage({
     }
 
 
-    /*
-     * Missing details:
-     * create draft order.
-     */
-
     if (
       missing.length > 0
     ) {
@@ -2891,14 +3265,14 @@ async function processMessage({
 
         order,
 
-        shouldDispatch: false,
+        shouldDispatch:
+          false,
       };
     }
 
 
     /*
-     * Complete order:
-     * wait for confirmation.
+     * Complete order waiting for confirmation.
      */
 
     order =
@@ -2936,14 +3310,15 @@ async function processMessage({
 
       order,
 
-      shouldDispatch: false,
+      shouldDispatch:
+        false,
     };
   }
 
 
-  /*
-   * NORMAL CONVERSATION
-   */
+  /* =======================================================
+     GENERAL CONVERSATION
+  ======================================================= */
 
   return {
     reply:
@@ -2954,13 +3329,14 @@ async function processMessage({
       activeOrder ||
       null,
 
-    shouldDispatch: false,
+    shouldDispatch:
+      false,
   };
 }
 
 
 /* =========================================================
-   CUSTOMER INCOMING MESSAGE
+   CUSTOMER MESSAGE
 ========================================================= */
 
 async function handleCustomerMessage({
@@ -2976,10 +3352,6 @@ async function handleCustomerMessage({
     await getActiveOrder(
       customer.id
     );
-
-  /*
-   * Save customer message.
-   */
 
   await saveMessage({
     customerId:
@@ -2997,6 +3369,7 @@ async function handleCustomerMessage({
     message:
       userMessage,
   });
+
 
   let result;
 
@@ -3037,14 +3410,11 @@ async function handleCustomerMessage({
       order:
         activeOrderBefore,
 
-      shouldDispatch: false,
+      shouldDispatch:
+        false,
     };
   }
 
-
-  /*
-   * Save Fetch response.
-   */
 
   const reply =
     result.reply?.trim();
@@ -3071,7 +3441,7 @@ async function handleCustomerMessage({
 
 
   /*
-   * Send normal Fetch response.
+   * Send the confirmation/customer response.
    */
   if (reply) {
     await sendWhatsAppMessage(
@@ -3081,16 +3451,26 @@ async function handleCustomerMessage({
   }
 
 
-  /*
-   * If customer confirmed,
-   * dispatch to a shopper.
-   */
+  /* =======================================================
+     SHOPPER DISPATCH
+  ======================================================= */
+
   if (
     result.shouldDispatch &&
     result.order
   ) {
     console.log(
-      "FETCH: CUSTOMER CONFIRMED ORDER. DISPATCHING SHOPPER."
+      "FETCH DISPATCH TRIGGERED FROM CUSTOMER CONFIRMATION:",
+      JSON.stringify({
+        orderId:
+          result.order.id,
+
+        status:
+          result.order.status,
+
+        shopperId:
+          result.order.shopper_id,
+      })
     );
 
     const dispatchResult =
@@ -3098,15 +3478,17 @@ async function handleCustomerMessage({
         result.order
       );
 
+    console.log(
+      "FETCH DISPATCH RESULT:",
+      JSON.stringify(
+        dispatchResult
+      )
+    );
+
+
     if (
       dispatchResult.success
     ) {
-      /*
-       * Tell customer that a shopper
-       * has been contacted.
-       *
-       * Do not claim acceptance yet.
-       */
       const dispatchReply =
         `🛍️ I've sent your order to an available shopper.\n\n` +
         `I'll let you know as soon as someone accepts it.`;
@@ -3134,7 +3516,7 @@ async function handleCustomerMessage({
     } else {
       const noShopperReply =
         `I've confirmed your order 👍\n\n` +
-        `I'm still looking for an available shopper. I'll keep your order open.`;
+        `I'm still looking for an available shopper. Your order remains open.`;
 
       await saveMessage({
         customerId:
@@ -3162,7 +3544,7 @@ async function handleCustomerMessage({
 
 
 /* =========================================================
-   MAIN INCOMING MESSAGE ROUTER
+   MAIN MESSAGE ROUTER
 ========================================================= */
 
 async function handleIncomingMessage(
@@ -3177,7 +3559,7 @@ async function handleIncomingMessage(
     "text"
   ) {
     console.log(
-      "FETCH: Non-text message ignored."
+      "FETCH NON-TEXT MESSAGE IGNORED"
     );
 
     return;
@@ -3204,15 +3586,12 @@ async function handleIncomingMessage(
 
 
   /*
-   * =====================================================
-   * IMPORTANT:
-   *
-   * Check whether this WhatsApp number is a shopper
-   * BEFORE creating/finding a customer.
-   * =====================================================
+   * FIRST:
+   * determine whether this number is
+   * a shopper.
    */
-
-  let shopper = null;
+  let shopper =
+    null;
 
   try {
     shopper =
@@ -3228,10 +3607,8 @@ async function handleIncomingMessage(
 
 
   /*
-   * Existing shopper OR explicit START/JOIN:
-   * route to shopper flow.
+   * Existing shopper OR START/JOIN.
    */
-
   if (
     shopper ||
     isShopperStart(
@@ -3270,9 +3647,9 @@ async function handleIncomingMessage(
 
 
   /*
-   * Otherwise this is a customer.
+   * Otherwise:
+   * customer.
    */
-
   await handleCustomerMessage({
     phone,
 
@@ -3289,7 +3666,9 @@ export async function GET(
   request
 ) {
   const url =
-    new URL(request.url);
+    new URL(
+      request.url
+    );
 
   const mode =
     url.searchParams.get(
@@ -3307,12 +3686,14 @@ export async function GET(
     );
 
   if (
-    mode === "subscribe" &&
+    mode ===
+      "subscribe" &&
     token ===
       WHATSAPP_VERIFY_TOKEN
   ) {
     return textResponse(
-      challenge || "",
+      challenge ||
+        "",
       200
     );
   }
