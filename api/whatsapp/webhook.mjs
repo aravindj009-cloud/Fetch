@@ -30,6 +30,16 @@ const ACTIVE_ORDER_STATUSES = [
   "out_for_delivery",
 ];
 
+const FETCH_FEE = 0;
+const MIN_DELIVERY_FEE = 20;
+const DELIVERY_RATE_PER_KM = 10;
+const DISTANCE_DECIMAL_PLACES = 2;
+
+// Free MVP distance routing. This can be replaced by Google Routes later.
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
+const FETCH_DISTANCE_USER_AGENT = "Fetch MVP/1.0";
+
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -387,6 +397,298 @@ async function updateShopper(
 }
 
 /* =========================================================
+   STORES + DELIVERY PRICING
+========================================================= */
+
+function normalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+async function getStoreByName(storeName) {
+  const requested = normalizeText(storeName);
+
+  if (!requested) {
+    return null;
+  }
+
+  try {
+    const data = await supabaseRequest(
+      "stores?active=eq.true&select=*&order=name.asc&limit=100"
+    );
+
+    if (!Array.isArray(data)) {
+      return null;
+    }
+
+    return (
+      data.find(
+        (store) =>
+          normalizeText(store?.name) === requested
+      ) || null
+    );
+  } catch (error) {
+    console.error(
+      "FETCH STORE LOOKUP ERROR:",
+      error
+    );
+    return null;
+  }
+}
+
+async function updateStoreLocation(
+  storeId,
+  latitude,
+  longitude
+) {
+  if (!storeId || latitude == null || longitude == null) {
+    return;
+  }
+
+  try {
+    await supabaseRequest(
+      `stores?id=eq.${encodeURIComponent(storeId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          latitude,
+          longitude,
+        }),
+      }
+    );
+  } catch (error) {
+    console.error(
+      "FETCH STORE LOCATION SAVE ERROR:",
+      error
+    );
+  }
+}
+
+async function geocodeAddress(address) {
+  const query = String(address || "").trim();
+
+  if (!query) {
+    throw new Error("Address is missing for geocoding");
+  }
+
+  const url =
+    `${NOMINATIM_URL}?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(query)}`;
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": FETCH_DISTANCE_USER_AGENT,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Nominatim ${response.status}`
+    );
+  }
+
+  const data = await response.json();
+  const result = Array.isArray(data) && data.length
+    ? data[0]
+    : null;
+
+  if (!result?.lat || !result?.lon) {
+    throw new Error(
+      `Unable to geocode address: ${query}`
+    );
+  }
+
+  return {
+    latitude: Number(result.lat),
+    longitude: Number(result.lon),
+    displayName: result.display_name || query,
+  };
+}
+
+async function getCoordinatesForStore(store) {
+  if (
+    store?.latitude != null &&
+    store?.longitude != null
+  ) {
+    return {
+      latitude: Number(store.latitude),
+      longitude: Number(store.longitude),
+    };
+  }
+
+  const coordinates = await geocodeAddress(
+    store?.address
+  );
+
+  if (store?.id) {
+    await updateStoreLocation(
+      store.id,
+      coordinates.latitude,
+      coordinates.longitude
+    );
+  }
+
+  return coordinates;
+}
+
+async function calculateRoadDistanceKm(
+  store,
+  deliveryAddress
+) {
+  const storeCoordinates =
+    await getCoordinatesForStore(store);
+
+  const destination =
+    await geocodeAddress(deliveryAddress);
+
+  const coordinates =
+    `${storeCoordinates.longitude},${storeCoordinates.latitude};` +
+    `${destination.longitude},${destination.latitude}`;
+
+  const response = await fetch(
+    `${OSRM_URL}/${coordinates}?overview=false&steps=false`,
+    {
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `OSRM ${response.status}`
+    );
+  }
+
+  const data = await response.json();
+  const meters =
+    data?.routes?.[0]?.distance;
+
+  if (typeof meters !== "number" || !Number.isFinite(meters)) {
+    throw new Error(
+      "Road distance could not be calculated"
+    );
+  }
+
+  return Number(
+    (meters / 1000).toFixed(
+      DISTANCE_DECIMAL_PLACES
+    )
+  );
+}
+
+function calculateDeliveryFee(distanceKm) {
+  const distance = Number(distanceKm);
+
+  if (!Number.isFinite(distance) || distance < 0) {
+    throw new Error(
+      "A valid delivery distance is required"
+    );
+  }
+
+  return Math.max(
+    MIN_DELIVERY_FEE,
+    Number(
+      (distance * DELIVERY_RATE_PER_KM).toFixed(2)
+    )
+  );
+}
+
+async function applyDeliveryPricing(order) {
+  if (!order?.id) {
+    throw new Error(
+      "Order is required for delivery pricing"
+    );
+  }
+
+  const store =
+    await getStoreByName(order.store_name);
+
+  if (!store) {
+    throw new Error(
+      `Store not found in Fetch stores: ${order.store_name}`
+    );
+  }
+
+  const distanceKm =
+    await calculateRoadDistanceKm(
+      store,
+      order.delivery_address
+    );
+
+  const deliveryFee =
+    calculateDeliveryFee(distanceKm);
+
+  const updated =
+    await updateOrder(
+      order.id,
+      {
+        store_id: store.id,
+        item_total: Number(order.item_total || 0),
+        fetch_fee: FETCH_FEE,
+        delivery_rate_per_km:
+          DELIVERY_RATE_PER_KM,
+        distance_km: distanceKm,
+        delivery_fee: deliveryFee,
+        total_amount:
+          Number(order.item_total || 0) +
+          FETCH_FEE +
+          deliveryFee,
+        delivery_pricing_status:
+          "calculated",
+        delivery_pricing_source:
+          "osm_osrm_mvp",
+        payment_status:
+          order.payment_status ||
+          "pending",
+        priced_at:
+          new Date().toISOString(),
+        status:
+          "awaiting_confirmation",
+      }
+    );
+
+  if (!updated) {
+    throw new Error(
+      "Order pricing update returned no order"
+    );
+  }
+
+  return updated;
+}
+
+function formatRupees(amount) {
+  const value = Number(amount || 0);
+  return value.toFixed(2).replace(/\.00$/, "");
+}
+
+function buildPricingConfirmationMessage(order) {
+  const distance = Number(order.distance_km || 0);
+  const deliveryFee = Number(order.delivery_fee || 0);
+
+  const budgetLine =
+    order.budget != null
+      ? `\n💰 Item budget: ₹${formatRupees(order.budget)}`
+      : "";
+
+  return (
+    `Sure 👍 Here's your Fetch order:\n\n` +
+    `🏪 Store: ${order.store_name}\n` +
+    `🛒 Items: ${order.items}\n` +
+    `📍 Deliver to: ${order.delivery_address}${budgetLine}\n\n` +
+    `📏 Delivery distance: ${distance.toFixed(2)} km\n` +
+    `🚚 Delivery charge: ₹${formatRupees(deliveryFee)}\n` +
+    `💼 Fetch fee: ₹0\n\n` +
+    `Shall I confirm this order?`
+  );
+}
+
+/* =========================================================
    ORDERS
 ========================================================= */
 
@@ -478,6 +780,23 @@ async function createOrder({
             deliveryAddress,
 
           status,
+
+          item_total: 0,
+
+          fetch_fee: FETCH_FEE,
+
+          delivery_fee: 0,
+
+          total_amount: 0,
+
+          shopper_earnings: 0,
+
+          payment_status: "pending",
+
+          delivery_pricing_status: "pending",
+
+          delivery_rate_per_km:
+            DELIVERY_RATE_PER_KM,
         }),
       }
     );
@@ -1871,6 +2190,21 @@ async function handleCustomerMessage({
       return;
     }
 
+    if (
+      activeOrder.delivery_pricing_status !==
+        "calculated" ||
+      activeOrder.distance_km == null ||
+      activeOrder.delivery_fee == null
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "I’m still calculating the delivery distance and charge. Please wait for my delivery-price message before confirming."
+      );
+
+      return;
+    }
+
     const order =
       await updateOrder(
         activeOrder.id,
@@ -1949,6 +2283,20 @@ async function handleCustomerMessage({
       address
     );
 
+    // A known store is required for the MVP distance calculation.
+    const storeRecord =
+      await getStoreByName(store);
+
+    if (!storeRecord) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        `I can take this order, but I don’t yet have ${store} in my Fetch store list. Please send the store address so I can calculate the delivery distance and charge.`
+      );
+
+      return;
+    }
+
     let order;
 
     if (
@@ -1967,6 +2315,9 @@ async function handleCustomerMessage({
             store_name:
               store,
 
+            store_id:
+              storeRecord.id,
+
             items,
 
             budget:
@@ -1977,8 +2328,24 @@ async function handleCustomerMessage({
             delivery_address:
               address,
 
+            item_total: 0,
+
+            fetch_fee: FETCH_FEE,
+
+            delivery_fee: 0,
+
+            total_amount: 0,
+
+            delivery_pricing_status:
+              "pending",
+
+            delivery_pricing_source:
+              null,
+
+            priced_at: null,
+
             status:
-              "awaiting_confirmation",
+              "collecting_details",
           }
         );
     } else {
@@ -2000,22 +2367,49 @@ async function handleCustomerMessage({
             address,
 
           status:
-            "awaiting_confirmation",
+            "collecting_details",
         });
     }
 
+    if (!order) {
+      throw new Error(
+        "Could not create or update Fetch order"
+      );
+    }
+
+    let pricedOrder;
+
+    try {
+      pricedOrder =
+        await applyDeliveryPricing(
+          order
+        );
+    } catch (pricingError) {
+      console.error(
+        "FETCH DELIVERY PRICING ERROR:",
+        pricingError
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        `I have your order details 👍\n\n🏪 Store: ${store}\n🛒 Items: ${items}\n📍 Deliver to: ${address}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t calculate the exact road distance right now, so I’m not asking you to confirm yet.`
+      );
+
+      return;
+    }
+
     const reply =
-      decision.reply &&
-      decision.reply.trim()
-        ? decision.reply.trim()
-        : `Sure – ${items} from ${store}, delivered to ${address}. Shall I place this order?`;
+      buildPricingConfirmationMessage(
+        pricedOrder
+      );
 
     await saveMessage({
       customerId:
         customer.id,
 
       orderId:
-        order.id,
+        pricedOrder.id,
 
       phone:
         normalizedPhone,
@@ -2077,20 +2471,76 @@ async function handleCustomerMessage({
         decision.budget;
     }
 
+    // Any order change invalidates the old distance/price.
+    updates.item_total = 0;
+    updates.fetch_fee = FETCH_FEE;
+    updates.delivery_fee = 0;
+    updates.total_amount = 0;
+    updates.distance_km = null;
+    updates.delivery_pricing_status =
+      "pending";
+    updates.delivery_pricing_source =
+      null;
+    updates.priced_at = null;
     updates.status =
-      "awaiting_confirmation";
+      "collecting_details";
 
-    await updateOrder(
-      activeOrder.id,
-      updates
-    );
+    const changedOrder =
+      await updateOrder(
+        activeOrder.id,
+        updates
+      );
 
-    await sendWhatsAppMessage(
-      normalizedPhone,
+    if (!changedOrder) {
+      throw new Error(
+        "Could not update active Fetch order"
+      );
+    }
 
-      decision.reply ||
-        "Updated your order. Shall I place it?"
-    );
+    try {
+      const pricedOrder =
+        await applyDeliveryPricing(
+          changedOrder
+        );
+
+      const reply =
+        buildPricingConfirmationMessage(
+          pricedOrder
+        );
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          pricedOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "assistant",
+
+        message:
+          reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+    } catch (pricingError) {
+      console.error(
+        "FETCH DELIVERY REPRICING ERROR:",
+        pricingError
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "Updated 👍\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t calculate the exact road distance right now, so please wait for my pricing message before confirming."
+      );
+    }
 
     return;
   }
