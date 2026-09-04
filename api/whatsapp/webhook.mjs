@@ -40,6 +40,18 @@ const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
 const FETCH_DISTANCE_USER_AGENT = "Fetch MVP/1.0";
 
+// OpenAI can temporarily return HTTP 429 when the organization
+// or model is rate-limited. Keep retries short and fall back
+// locally instead of making WhatsApp feel broken.
+const OPENAI_MAX_RETRIES = 1;
+const OPENAI_RETRY_DELAY_MS = 1500;
+
+function sleep(ms) {
+  return new Promise((resolve) =>
+    setTimeout(resolve, ms)
+  );
+}
+
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -1596,140 +1608,172 @@ Rules:
       userMessage,
   };
 
-  const response =
-    await fetch(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
+  let response = null;
+  let data = null;
 
-        headers: {
-          Authorization:
-            `Bearer ${OPENAI_API_KEY}`,
+  for (
+    let attempt = 0;
+    attempt <= OPENAI_MAX_RETRIES;
+    attempt += 1
+  ) {
+    response =
+      await fetch(
+        "https://api.openai.com/v1/responses",
+        {
+          method: "POST",
 
-          "Content-Type":
-            "application/json",
-        },
+          headers: {
+            Authorization:
+              `Bearer ${OPENAI_API_KEY}`,
 
-        body: JSON.stringify({
-          model:
-            OPENAI_MODEL,
+            "Content-Type":
+              "application/json",
+          },
 
-          input: [
-            {
-              role:
-                "system",
+          body: JSON.stringify({
+            model:
+              OPENAI_MODEL,
 
-              content: [
-                {
-                  type:
-                    "input_text",
+            input: [
+              {
+                role:
+                  "system",
 
-                  text:
-                    systemPrompt,
-                },
-              ],
-            },
-
-            {
-              role:
-                "user",
-
-              content: [
-                {
-                  type:
-                    "input_text",
-
-                  text:
-                    JSON.stringify(
-                      context
-                    ),
-                },
-              ],
-            },
-          ],
-
-          text: {
-            format: {
-              type:
-                "json_schema",
-
-              name:
-                "fetch_agent_decision",
-
-              strict:
-                true,
-
-              schema: {
-                type:
-                  "object",
-
-                additionalProperties:
-                  false,
-
-                properties: {
-                  intent: {
+                content: [
+                  {
                     type:
-                      "string",
+                      "input_text",
 
-                    enum: [
-                      "greeting",
-                      "shopping_request",
-                      "update_order",
-                      "confirm",
-                      "reject",
-                      "status",
-                      "cancel",
-                      "general_question",
-                    ],
+                    text:
+                      systemPrompt,
                   },
-
-                  store_name: {
-                    type:
-                      "string",
-                  },
-
-                  items: {
-                    type:
-                      "string",
-                  },
-
-                  delivery_address: {
-                    type:
-                      "string",
-                  },
-
-                  budget: {
-                    type: [
-                      "number",
-                      "null",
-                    ],
-                  },
-
-                  reply: {
-                    type:
-                      "string",
-                  },
-                },
-
-                required: [
-                  "intent",
-                  "store_name",
-                  "items",
-                  "delivery_address",
-                  "budget",
-                  "reply",
                 ],
               },
+
+              {
+                role:
+                  "user",
+
+                content: [
+                  {
+                    type:
+                      "input_text",
+
+                    text:
+                      JSON.stringify(
+                        context
+                      ),
+                  },
+                ],
+              },
+            ],
+
+            text: {
+              format: {
+                type:
+                  "json_schema",
+
+                name:
+                  "fetch_agent_decision",
+
+                strict:
+                  true,
+
+                schema: {
+                  type:
+                    "object",
+
+                  additionalProperties:
+                    false,
+
+                  properties: {
+                    intent: {
+                      type:
+                        "string",
+
+                      enum: [
+                        "greeting",
+                        "shopping_request",
+                        "update_order",
+                        "confirm",
+                        "reject",
+                        "status",
+                        "cancel",
+                        "general_question",
+                      ],
+                    },
+
+                    store_name: {
+                      type:
+                        "string",
+                    },
+
+                    items: {
+                      type:
+                        "string",
+                    },
+
+                    delivery_address: {
+                      type:
+                        "string",
+                    },
+
+                    budget: {
+                      type: [
+                        "number",
+                        "null",
+                      ],
+                    },
+
+                    reply: {
+                      type:
+                        "string",
+                    },
+                  },
+
+                  required: [
+                    "intent",
+                    "store_name",
+                    "items",
+                    "delivery_address",
+                    "budget",
+                    "reply",
+                  ],
+                },
+              },
             },
-          },
-        }),
-      }
-    );
+          }),
+        }
+      );
 
-  const data =
-    await response.json();
+    data =
+      await response.json();
 
-  if (!response.ok) {
+    if (response.ok) {
+      break;
+    }
+
+    if (
+      response.status === 429 &&
+      attempt < OPENAI_MAX_RETRIES
+    ) {
+      console.warn(
+        "FETCH OPENAI RATE LIMITED; RETRYING ONCE..."
+      );
+
+      await sleep(
+        OPENAI_RETRY_DELAY_MS
+      );
+
+      continue;
+    }
+
+    if (response.status === 429) {
+      throw new Error(
+        "OPENAI_RATE_LIMITED: The OpenAI API is temporarily rate-limited."
+      );
+    }
+
     throw new Error(
       `OpenAI ${response.status}: ${JSON.stringify(
         data
@@ -1757,6 +1801,7 @@ Rules:
   return decision;
 }
 
+
 /* =========================================================
    FALLBACK
 ========================================================= */
@@ -1783,6 +1828,33 @@ function fallbackDecision(
     /^(no|n|nope|cancel|don't|dont)$/i.test(
       text
     );
+
+  const greeting =
+    /^(hi|hello|hey|helo|hii|hiii|namaste|namaskaram|good morning|good afternoon|good evening)$/i.test(
+      text
+    );
+
+  if (greeting) {
+    return {
+      intent:
+        "greeting",
+
+      store_name:
+        "",
+
+      items:
+        "",
+
+      delivery_address:
+        "",
+
+      budget:
+        null,
+
+      reply:
+        "Hi 👋 I’m Fetch. Tell me what you’d like me to fetch, which store, and where to deliver it." ,
+    };
+  }
 
   if (
     yes &&
@@ -1866,6 +1938,114 @@ function fallbackDecision(
     };
   }
 
+  if (
+    activeOrder &&
+    /^(add|also|include|and)\s+/i.test(
+      text
+    )
+  ) {
+    const additionalItems =
+      text.replace(
+        /^(add|also|include|and)\s+/i,
+        ""
+      ).trim();
+
+    if (additionalItems) {
+      return {
+        intent:
+          "update_order",
+
+        store_name:
+          activeOrder.store_name,
+
+        items:
+          `${activeOrder.items}; ${additionalItems}`,
+
+        delivery_address:
+          activeOrder.delivery_address ||
+          customer?.address ||
+          "",
+
+        budget:
+          activeOrder.budget ??
+          null,
+
+        reply:
+          `Added ${additionalItems}. I’ll recalculate the delivery charge before confirmation.`,
+      };
+    }
+  }
+
+  // When an active order exists and the customer sends a short
+  // item message such as "bread" or "milk", treat it as an
+  // addition rather than returning the generic fallback.
+  if (
+    activeOrder &&
+    text.length >= 2 &&
+    text.length <= 80 &&
+    !/[?]$/.test(text) &&
+    !/^(new order|cancel|status|track|help)$/i.test(text)
+  ) {
+    return {
+      intent:
+        "update_order",
+
+      store_name:
+        activeOrder.store_name,
+
+      items:
+        `${activeOrder.items}; ${text}`,
+
+      delivery_address:
+        activeOrder.delivery_address ||
+        customer?.address ||
+        "",
+
+      budget:
+        activeOrder.budget ??
+        null,
+
+      reply:
+        `Added ${text}. I’ll recalculate the delivery charge before confirmation.`,
+    };
+  }
+
+  // Common natural shopping-request shapes. This is only a
+  // temporary fallback for OpenAI rate-limit periods.
+  const shoppingPatterns = [
+    /^(?:i\s+want|i\s+need|fetch|get|buy|please\s+get|can\s+you\s+get)\s+(.+?)\s+(?:from|at)\s+(.+?)\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+)$/i,
+    /^(.+?)\s+(?:from|at)\s+(.+?)\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+)$/i,
+  ];
+
+  for (
+    const pattern of shoppingPatterns
+  ) {
+    const match =
+      text.match(pattern);
+
+    if (match) {
+      return {
+        intent:
+          "shopping_request",
+
+        store_name:
+          match[2].trim(),
+
+        items:
+          match[1].trim(),
+
+        delivery_address:
+          match[3].trim(),
+
+        budget:
+          null,
+
+        reply:
+          `Got it — ${match[1].trim()} from ${match[2].trim()}.`,
+      };
+    }
+  }
+
   return {
     intent:
       "general_question",
@@ -1886,6 +2066,7 @@ function fallbackDecision(
       "Tell me what you’d like me to fetch, which store, and where to deliver it.",
   };
 }
+
 
 /* =========================================================
    CUSTOMER ENGINE
