@@ -2,15 +2,23 @@ const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL ||
   "https://skfxzagxlxputwpwxwbe.supabase.co";
 
-const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_KEY =
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
-const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+const WHATSAPP_ACCESS_TOKEN =
+  process.env.WHATSAPP_ACCESS_TOKEN;
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const WHATSAPP_PHONE_NUMBER_ID =
+  process.env.WHATSAPP_PHONE_NUMBER_ID;
 
-const OPENAI_MODEL = "gpt-5.6-luna";
+const WHATSAPP_VERIFY_TOKEN =
+  process.env.WHATSAPP_VERIFY_TOKEN;
+
+const OPENAI_API_KEY =
+  process.env.OPENAI_API_KEY;
+
+const OPENAI_MODEL =
+  "gpt-5.6-luna";
 
 const ACTIVE_ORDER_STATUSES = [
   "collecting_details",
@@ -22,42 +30,73 @@ const ACTIVE_ORDER_STATUSES = [
 ];
 
 function jsonResponse(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
+  return new Response(
+    JSON.stringify(body),
+    {
+      status,
+      headers: {
+        "Content-Type":
+          "application/json",
+      },
+    }
+  );
 }
 
 function textResponse(body, status = 200) {
-  return new Response(String(body), {
-    status,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-    },
-  });
+  return new Response(
+    String(body),
+    {
+      status,
+      headers: {
+        "Content-Type":
+          "text/plain; charset=utf-8",
+      },
+    }
+  );
 }
 
 function normalizePhone(phone) {
   if (!phone) return "";
-  return String(phone).replace(/[^\d]/g, "");
+
+  return String(phone).replace(
+    /[^\d]/g,
+    ""
+  );
 }
 
-async function supabaseRequest(path, options = {}) {
+async function supabaseRequest(
+  path,
+  options = {}
+) {
+  if (!SUPABASE_KEY) {
+    throw new Error(
+      "VITE_SUPABASE_PUBLISHABLE_KEY is missing"
+    );
+  }
+
   const headers = {
     apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${SUPABASE_KEY}`,
-    "Content-Type": "application/json",
+
+    Authorization:
+      `Bearer ${SUPABASE_KEY}`,
+
+    "Content-Type":
+      "application/json",
+
     ...options.headers,
   };
 
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    ...options,
-    headers,
-  });
+  const response =
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/${path}`,
+      {
+        ...options,
+        headers,
+      }
+    );
 
-  const text = await response.text();
+  const text =
+    await response.text();
 
   let data = null;
 
@@ -72,7 +111,9 @@ async function supabaseRequest(path, options = {}) {
   if (!response.ok) {
     throw new Error(
       `Supabase ${response.status}: ${
-        typeof data === "string" ? data : JSON.stringify(data)
+        typeof data === "string"
+          ? data
+          : JSON.stringify(data)
       }`
     );
   }
@@ -80,78 +121,128 @@ async function supabaseRequest(path, options = {}) {
   return data;
 }
 
-async function sendWhatsAppMessage(to, message) {
-  if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
-    throw new Error("WhatsApp environment variables are missing");
+async function sendWhatsAppMessage(
+  to,
+  message
+) {
+  if (
+    !WHATSAPP_ACCESS_TOKEN ||
+    !WHATSAPP_PHONE_NUMBER_ID
+  ) {
+    throw new Error(
+      "WhatsApp environment variables are missing"
+    );
   }
 
-  const response = await fetch(
-    `https://graph.facebook.com/v26.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to,
-        type: "text",
-        text: {
-          preview_url: false,
-          body: message,
-        },
-      }),
-    }
-  );
+  const response =
+    await fetch(
+      `https://graph.facebook.com/v26.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        method: "POST",
 
-  const data = await response.json();
+        headers: {
+          Authorization:
+            `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          messaging_product:
+            "whatsapp",
+
+          recipient_type:
+            "individual",
+
+          to,
+
+          type: "text",
+
+          text: {
+            preview_url: false,
+            body: message,
+          },
+        }),
+      }
+    );
+
+  const data =
+    await response.json();
 
   if (!response.ok) {
     throw new Error(
-      `WhatsApp ${response.status}: ${JSON.stringify(data)}`
+      `WhatsApp ${response.status}: ${JSON.stringify(
+        data
+      )}`
     );
   }
+
+  console.log(
+    "FETCH WHATSAPP API RESPONSE:",
+    JSON.stringify(data)
+  );
 
   return data;
 }
 
 async function getCustomer(phone) {
-  const encodedPhone = encodeURIComponent(phone);
+  const encodedPhone =
+    encodeURIComponent(phone);
 
-  const data = await supabaseRequest(
-    `customers?phone=eq.${encodedPhone}&select=*&limit=1`
-  );
+  const data =
+    await supabaseRequest(
+      `customers?phone=eq.${encodedPhone}&select=*&limit=1`
+    );
 
-  return Array.isArray(data) && data.length > 0 ? data[0] : null;
+  return Array.isArray(data) &&
+    data.length > 0
+    ? data[0]
+    : null;
 }
 
-async function createCustomer(phone) {
-  const data = await supabaseRequest("customers", {
-    method: "POST",
-    headers: {
-      Prefer: "return=representation",
-    },
-    body: JSON.stringify({
-      phone,
-    }),
-  });
+async function createCustomer(
+  phone
+) {
+  const data =
+    await supabaseRequest(
+      "customers",
+      {
+        method: "POST",
 
-  return Array.isArray(data) ? data[0] : data;
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify({
+          phone,
+        }),
+      }
+    );
+
+  return Array.isArray(data)
+    ? data[0]
+    : data;
 }
 
-async function getOrCreateCustomer(phone) {
-  let customer = await getCustomer(phone);
+async function getOrCreateCustomer(
+  phone
+) {
+  let customer =
+    await getCustomer(phone);
 
   if (customer) {
     return customer;
   }
 
   try {
-    return await createCustomer(phone);
+    return await createCustomer(
+      phone
+    );
   } catch (error) {
-    customer = await getCustomer(phone);
+    customer =
+      await getCustomer(phone);
 
     if (customer) {
       return customer;
@@ -161,39 +252,58 @@ async function getOrCreateCustomer(phone) {
   }
 }
 
-async function getActiveOrder(customerId) {
-  const statusList = ACTIVE_ORDER_STATUSES
-    .map((status) => `"${status}"`)
-    .join(",");
+async function getActiveOrder(
+  customerId
+) {
+  const statusList =
+    ACTIVE_ORDER_STATUSES
+      .map(
+        (status) =>
+          `"${status}"`
+      )
+      .join(",");
 
-  const data = await supabaseRequest(
-    `orders?customer_id=eq.${encodeURIComponent(
-      customerId
-    )}&status=in.(${encodeURIComponent(
-      statusList
-    )})&select=*&order=created_at.desc&limit=1`
-  );
-
-  return Array.isArray(data) && data.length > 0 ? data[0] : null;
-}
-
-async function getLatestOrder(customerId) {
-  const data = await supabaseRequest(
-    `orders?customer_id=eq.${encodeURIComponent(
-      customerId
-    )}&select=*&order=created_at.desc&limit=1`
-  );
-
-  return Array.isArray(data) && data.length > 0 ? data[0] : null;
-}
-
-async function getRecentMessages(customerId) {
-  try {
-    const data = await supabaseRequest(
-      `messages?customer_id=eq.${encodeURIComponent(
+  const data =
+    await supabaseRequest(
+      `orders?customer_id=eq.${encodeURIComponent(
         customerId
-      )}&select=role,message,created_at&order=created_at.desc&limit=12`
+      )}&status=in.(${encodeURIComponent(
+        statusList
+      )})&select=*&order=created_at.desc&limit=1`
     );
+
+  return Array.isArray(data) &&
+    data.length > 0
+    ? data[0]
+    : null;
+}
+
+async function getLatestOrder(
+  customerId
+) {
+  const data =
+    await supabaseRequest(
+      `orders?customer_id=eq.${encodeURIComponent(
+        customerId
+      )}&select=*&order=created_at.desc&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length > 0
+    ? data[0]
+    : null;
+}
+
+async function getRecentMessages(
+  customerId
+) {
+  try {
+    const data =
+      await supabaseRequest(
+        `messages?customer_id=eq.${encodeURIComponent(
+          customerId
+        )}&select=role,message,created_at&order=created_at.desc&limit=12`
+      );
 
     if (!Array.isArray(data)) {
       return [];
@@ -201,7 +311,11 @@ async function getRecentMessages(customerId) {
 
     return data.reverse();
   } catch (error) {
-    console.error("FETCH MESSAGE HISTORY ERROR:", error);
+    console.error(
+      "FETCH MESSAGE HISTORY ERROR:",
+      error
+    );
+
     return [];
   }
 }
@@ -214,42 +328,68 @@ async function saveMessage({
   message,
 }) {
   try {
-    await supabaseRequest("messages", {
-      method: "POST",
-      headers: {
-        Prefer: "return=minimal",
-      },
-      body: JSON.stringify({
-        customer_id: customerId,
-        order_id: orderId || null,
-        phone,
-        role,
-        message,
-      }),
-    });
+    await supabaseRequest(
+      "messages",
+      {
+        method: "POST",
+
+        headers: {
+          Prefer:
+            "return=minimal",
+        },
+
+        body: JSON.stringify({
+          customer_id:
+            customerId,
+
+          order_id:
+            orderId || null,
+
+          phone,
+
+          role,
+
+          message,
+        }),
+      }
+    );
   } catch (error) {
-    console.error("FETCH SAVE MESSAGE ERROR:", error);
+    console.error(
+      "FETCH SAVE MESSAGE ERROR:",
+      error
+    );
   }
 }
 
-async function updateCustomerAddress(customerId, address) {
+async function updateCustomerAddress(
+  customerId,
+  address
+) {
   if (!address) return;
 
   try {
     await supabaseRequest(
-      `customers?id=eq.${encodeURIComponent(customerId)}`,
+      `customers?id=eq.${encodeURIComponent(
+        customerId
+      )}`,
       {
         method: "PATCH",
+
         headers: {
-          Prefer: "return=minimal",
+          Prefer:
+            "return=minimal",
         },
+
         body: JSON.stringify({
           address,
         }),
       }
     );
   } catch (error) {
-    console.error("FETCH CUSTOMER ADDRESS UPDATE ERROR:", error);
+    console.error(
+      "FETCH CUSTOMER ADDRESS UPDATE ERROR:",
+      error
+    );
   }
 }
 
@@ -261,40 +401,73 @@ async function createOrder({
   deliveryAddress,
   status,
 }) {
-  const data = await supabaseRequest("orders", {
-    method: "POST",
-    headers: {
-      Prefer: "return=representation",
-    },
-    body: JSON.stringify({
-      customer_id: customerId,
-      store_name: storeName,
-      items,
-      budget,
-      delivery_address: deliveryAddress,
-      status,
-    }),
-  });
+  const data =
+    await supabaseRequest(
+      "orders",
+      {
+        method: "POST",
 
-  return Array.isArray(data) ? data[0] : data;
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify({
+          customer_id:
+            customerId,
+
+          store_name:
+            storeName,
+
+          items,
+
+          budget,
+
+          delivery_address:
+            deliveryAddress,
+
+          status,
+        }),
+      }
+    );
+
+  return Array.isArray(data)
+    ? data[0]
+    : data;
 }
 
-async function updateOrder(orderId, updates) {
-  const data = await supabaseRequest(
-    `orders?id=eq.${encodeURIComponent(orderId)}`,
-    {
-      method: "PATCH",
-      headers: {
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify(updates),
-    }
-  );
+async function updateOrder(
+  orderId,
+  updates
+) {
+  const data =
+    await supabaseRequest(
+      `orders?id=eq.${encodeURIComponent(
+        orderId
+      )}`,
+      {
+        method: "PATCH",
 
-  return Array.isArray(data) && data.length > 0 ? data[0] : null;
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify(
+          updates
+        ),
+      }
+    );
+
+  return Array.isArray(data) &&
+    data.length > 0
+    ? data[0]
+    : null;
 }
 
-function getOrderStatusText(status) {
+function getOrderStatusText(
+  status
+) {
   switch (status) {
     case "collecting_details":
       return "I'm still collecting the details for your order.";
@@ -321,30 +494,55 @@ function getOrderStatusText(status) {
       return "Your order has been cancelled.";
 
     default:
-      return `Your order status is ${status || "unknown"}.`;
+      return `Your order status is ${
+        status || "unknown"
+      }.`;
   }
 }
 
-function getOrderSummary(order) {
-  if (!order) return null;
+function getOrderSummary(
+  order
+) {
+  if (!order) {
+    return null;
+  }
 
   return {
     id: order.id,
-    store_name: order.store_name,
-    items: order.items,
-    budget: order.budget,
-    delivery_address: order.delivery_address,
-    status: order.status,
-    total_amount: order.total_amount,
-    shopper_fee: order.shopper_fee,
-    created_at: order.created_at,
+
+    store_name:
+      order.store_name,
+
+    items:
+      order.items,
+
+    budget:
+      order.budget,
+
+    delivery_address:
+      order.delivery_address,
+
+    status:
+      order.status,
+
+    total_amount:
+      order.total_amount,
+
+    shopper_fee:
+      order.shopper_fee,
+
+    created_at:
+      order.created_at,
   };
 }
 
-function isConfirmation(message) {
-  const text = String(message || "")
-    .trim()
-    .toLowerCase();
+function isConfirmation(
+  message
+) {
+  const text =
+    String(message || "")
+      .trim()
+      .toLowerCase();
 
   const confirmations = [
     "yes",
@@ -369,13 +567,18 @@ function isConfirmation(message) {
     "okay bro",
   ];
 
-  return confirmations.includes(text);
+  return confirmations.includes(
+    text
+  );
 }
 
-function isRejection(message) {
-  const text = String(message || "")
-    .trim()
-    .toLowerCase();
+function isRejection(
+  message
+) {
+  const text =
+    String(message || "")
+      .trim()
+      .toLowerCase();
 
   const rejections = [
     "no",
@@ -389,35 +592,119 @@ function isRejection(message) {
     "വേണ്ട",
   ];
 
-  return rejections.includes(text);
+  return rejections.includes(
+    text
+  );
 }
 
-function missingRequiredFields(order) {
+function missingRequiredFields(
+  order
+) {
   const missing = [];
 
-  if (!order?.store_name || order.store_name === "Not specified") {
+  if (
+    !order?.store_name ||
+    order.store_name ===
+      "Not specified"
+  ) {
     missing.push("store");
   }
 
-  if (!order?.items || order.items === "Not specified") {
+  if (
+    !order?.items ||
+    order.items ===
+      "Not specified"
+  ) {
     missing.push("items");
   }
 
-  if (!order?.delivery_address) {
-    missing.push("delivery address");
+  if (
+    !order?.delivery_address
+  ) {
+    missing.push(
+      "delivery address"
+    );
   }
 
   return missing;
 }
 
+/*
+ * IMPORTANT:
+ * The REST Responses API may return
+ * generated text inside output[].content[]
+ * instead of data.output_text.
+ */
+
+function extractOpenAIText(
+  data
+) {
+  if (
+    typeof data?.output_text ===
+    "string" &&
+    data.output_text.trim()
+  ) {
+    return data.output_text.trim();
+  }
+
+  const output =
+    Array.isArray(data?.output)
+      ? data.output
+      : [];
+
+  let collected = "";
+
+  for (
+    const item of output
+  ) {
+    if (
+      item?.type ===
+        "message" &&
+      Array.isArray(
+        item.content
+      )
+    ) {
+      for (
+        const content of
+          item.content
+      ) {
+        if (
+          typeof content?.text ===
+          "string"
+        ) {
+          collected +=
+            content.text;
+        }
+      }
+    }
+  }
+
+  if (collected.trim()) {
+    return collected.trim();
+  }
+
+  return "";
+}
+
 function cleanAIText(text) {
-  if (!text) return "";
+  if (!text) {
+    return "";
+  }
 
   return String(text)
     .trim()
-    .replace(/^```json/i, "")
-    .replace(/^```/i, "")
-    .replace(/```$/i, "")
+    .replace(
+      /^```json/i,
+      ""
+    )
+    .replace(
+      /^```/i,
+      ""
+    )
+    .replace(
+      /```$/i,
+      ""
+    )
     .trim();
 }
 
@@ -429,7 +716,9 @@ async function callFetchAI({
   customer,
 }) {
   if (!OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is missing");
+    throw new Error(
+      "OPENAI_API_KEY is missing"
+    );
   }
 
   const systemPrompt = `
@@ -464,20 +753,26 @@ Do not unnecessarily translate their message into English.
 
 CONVERSATION:
 
-Understand the meaning using the previous conversation.
+Understand the meaning using previous conversation.
 
 Examples:
 
 "vere nthoke und?"
+"ethokke und?"
+"enthokke und?"
 "add 10 eggs"
+"10 eggs koodi venam"
 "remove bread"
+"bread venda"
 "change the store"
 "where is my order?"
+"order evide?"
 "cancel it"
+"cancel cheyy"
 "yes"
 "no"
 
-These must be interpreted based on conversation context.
+Interpret these using the conversation context.
 
 Do NOT create a new order just because the customer sent another message.
 
@@ -507,6 +802,14 @@ Never invent:
 
 Only use information actually supplied by the customer or supplied by the database.
 
+If the customer provides new information about an existing order, extract that information.
+
+If the customer says "add", interpret it as an addition to the existing items.
+
+If the customer says "remove", interpret it as removing an item from the existing request.
+
+If the customer says "change", interpret it as a modification of the existing request.
+
 CONFIRMATION:
 
 When all required information is available, summarize the order and ask the customer to confirm.
@@ -530,134 +833,238 @@ Return ONLY JSON matching the required schema.
 
   const inputPayload = {
     customer: {
-      id: customer?.id || null,
-      name: customer?.name || null,
-      phone: customer?.phone || null,
-      address: customer?.address || null,
+      id:
+        customer?.id ||
+        null,
+
+      name:
+        customer?.name ||
+        null,
+
+      phone:
+        customer?.phone ||
+        null,
+
+      address:
+        customer?.address ||
+        null,
     },
 
-    current_active_order: getOrderSummary(activeOrder),
+    current_active_order:
+      getOrderSummary(
+        activeOrder
+      ),
 
-    latest_order: getOrderSummary(latestOrder),
+    latest_order:
+      getOrderSummary(
+        latestOrder
+      ),
 
-    conversation_history: conversationHistory.map((item) => ({
-      role: item.role,
-      message: item.message,
-    })),
+    conversation_history:
+      conversationHistory.map(
+        (item) => ({
+          role:
+            item.role,
 
-    latest_customer_message: userMessage,
+          message:
+            item.message,
+        })
+      ),
+
+    latest_customer_message:
+      userMessage,
   };
 
-  const response = await fetch(
-    "https://api.openai.com/v1/responses",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-
-        instructions: systemPrompt,
-
-        input: JSON.stringify(inputPayload),
-
-        text: {
-          format: {
-            type: "json_schema",
-            name: "fetch_agent_decision",
-            strict: true,
-
-            schema: {
-              type: "object",
-              additionalProperties: false,
-
-              properties: {
-                intent: {
-                  type: "string",
-                  enum: [
-                    "greeting",
-                    "shopping_request",
-                    "update_order",
-                    "confirm",
-                    "reject",
-                    "status",
-                    "cancel",
-                    "general_question",
-                  ],
-                },
-
-                store: {
-                  type: ["string", "null"],
-                },
-
-                items: {
-                  type: ["string", "null"],
-                },
-
-                delivery_address: {
-                  type: ["string", "null"],
-                },
-
-                budget: {
-                  type: ["number", "null"],
-                },
-
-                response_language: {
-                  type: "string",
-                },
-
-                needs_confirmation: {
-                  type: "boolean",
-                },
-
-                reply: {
-                  type: "string",
-                },
-              },
-
-              required: [
-                "intent",
-                "store",
-                "items",
-                "delivery_address",
-                "budget",
-                "response_language",
-                "needs_confirmation",
-                "reply",
-              ],
-            },
-          },
-        },
-      }),
-    }
+  console.log(
+    "FETCH SENDING TO OPENAI:",
+    JSON.stringify(
+      inputPayload
+    )
   );
 
-  const raw = await response.text();
+  const response =
+    await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+
+        headers: {
+          Authorization:
+            `Bearer ${OPENAI_API_KEY}`,
+
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          model:
+            OPENAI_MODEL,
+
+          instructions:
+            systemPrompt,
+
+          input:
+            JSON.stringify(
+              inputPayload
+            ),
+
+          text: {
+            format: {
+              type:
+                "json_schema",
+
+              name:
+                "fetch_agent_decision",
+
+              strict:
+                true,
+
+              schema: {
+                type:
+                  "object",
+
+                additionalProperties:
+                  false,
+
+                properties: {
+                  intent: {
+                    type:
+                      "string",
+
+                    enum: [
+                      "greeting",
+                      "shopping_request",
+                      "update_order",
+                      "confirm",
+                      "reject",
+                      "status",
+                      "cancel",
+                      "general_question",
+                    ],
+                  },
+
+                  store: {
+                    type: [
+                      "string",
+                      "null",
+                    ],
+                  },
+
+                  items: {
+                    type: [
+                      "string",
+                      "null",
+                    ],
+                  },
+
+                  delivery_address: {
+                    type: [
+                      "string",
+                      "null",
+                    ],
+                  },
+
+                  budget: {
+                    type: [
+                      "number",
+                      "null",
+                    ],
+                  },
+
+                  response_language: {
+                    type:
+                      "string",
+                  },
+
+                  needs_confirmation: {
+                    type:
+                      "boolean",
+                  },
+
+                  reply: {
+                    type:
+                      "string",
+                  },
+                },
+
+                required: [
+                  "intent",
+                  "store",
+                  "items",
+                  "delivery_address",
+                  "budget",
+                  "response_language",
+                  "needs_confirmation",
+                  "reply",
+                ],
+              },
+            },
+          },
+        }),
+      }
+    );
+
+  const raw =
+    await response.text();
+
+  console.log(
+    "FETCH OPENAI HTTP STATUS:",
+    response.status
+  );
 
   if (!response.ok) {
-    throw new Error(`OpenAI ${response.status}: ${raw}`);
+    console.error(
+      "FETCH OPENAI RAW ERROR:",
+      raw
+    );
+
+    throw new Error(
+      `OpenAI ${response.status}: ${raw}`
+    );
   }
 
   let data;
 
   try {
-    data = JSON.parse(raw);
+    data =
+      JSON.parse(raw);
   } catch {
-    throw new Error(`Invalid OpenAI response: ${raw}`);
+    throw new Error(
+      `Invalid OpenAI response: ${raw}`
+    );
   }
 
-  if (!data.output_text) {
-    throw new Error("OpenAI returned no output_text");
+  console.log(
+    "FETCH OPENAI RESPONSE:",
+    JSON.stringify(
+      data
+    )
+  );
+
+  const outputText =
+    extractOpenAIText(
+      data
+    );
+
+  if (!outputText) {
+    throw new Error(
+      "OpenAI returned no usable text. Full response: " +
+        JSON.stringify(data)
+    );
   }
 
-  const cleaned = cleanAIText(data.output_text);
+  const cleaned =
+    cleanAIText(
+      outputText
+    );
 
   let decision;
 
   try {
-    decision = JSON.parse(cleaned);
+    decision =
+      JSON.parse(
+        cleaned
+      );
   } catch {
     throw new Error(
       `OpenAI JSON parsing failed: ${cleaned}`
@@ -672,34 +1079,56 @@ function buildFallbackReply({
   activeOrder,
   latestOrder,
 }) {
-  const text = String(userMessage || "")
-    .trim()
-    .toLowerCase();
+  const text =
+    String(userMessage || "")
+      .trim()
+      .toLowerCase();
 
   if (
-    text.includes("where is my order") ||
-    text.includes("order status") ||
+    text.includes(
+      "where is my order"
+    ) ||
+    text.includes(
+      "order status"
+    ) ||
     text === "status" ||
-    text.includes("where is my order?")
+    text.includes(
+      "order evide"
+    )
   ) {
-    const order = activeOrder || latestOrder;
+    const order =
+      activeOrder ||
+      latestOrder;
 
     if (!order) {
       return "I don't see an order for you yet. Tell me what you'd like to buy and which store you want it from.";
     }
 
-    return getOrderStatusText(order.status);
+    return getOrderStatusText(
+      order.status
+    );
   }
 
-  if (isConfirmation(userMessage)) {
-    if (activeOrder?.status === "awaiting_confirmation") {
+  if (
+    isConfirmation(
+      userMessage
+    )
+  ) {
+    if (
+      activeOrder?.status ===
+      "awaiting_confirmation"
+    ) {
       return "Done 👍 Your order is being processed.";
     }
 
     return "Sure 👍 Tell me what you'd like to order.";
   }
 
-  if (isRejection(userMessage)) {
+  if (
+    isRejection(
+      userMessage
+    )
+  ) {
     return "No problem 👍 Tell me what you'd like to change.";
   }
 
@@ -717,47 +1146,67 @@ function buildFallbackReply({
 }
 
 async function processMessage({
-  phone,
   customer,
   userMessage,
 }) {
   const conversationHistory =
-    await getRecentMessages(customer.id);
+    await getRecentMessages(
+      customer.id
+    );
 
   const activeOrder =
-    await getActiveOrder(customer.id);
+    await getActiveOrder(
+      customer.id
+    );
 
   const latestOrder =
-    await getLatestOrder(customer.id);
+    await getLatestOrder(
+      customer.id
+    );
 
-  const decision = await callFetchAI({
-    userMessage,
-    conversationHistory,
-    activeOrder,
-    latestOrder,
-    customer,
-  });
+  const decision =
+    await callFetchAI({
+      userMessage,
+
+      conversationHistory,
+
+      activeOrder,
+
+      latestOrder,
+
+      customer,
+    });
 
   console.log(
     "FETCH AI DECISION:",
-    JSON.stringify(decision, null, 2)
+    JSON.stringify(
+      decision,
+      null,
+      2
+    )
   );
 
-  let order = activeOrder;
+  let order =
+    activeOrder;
 
   /*
    * STATUS
    */
 
-  if (decision.intent === "status") {
+  if (
+    decision.intent ===
+    "status"
+  ) {
     const statusOrder =
-      activeOrder || latestOrder;
+      activeOrder ||
+      latestOrder;
 
     if (!statusOrder) {
       return {
         reply:
           decision.reply ||
           "I don't see an order for you yet. Tell me what you'd like to buy.",
+
         order: null,
       };
     }
@@ -765,9 +1214,12 @@ async function processMessage({
     return {
       reply:
         decision.reply ||
-        getOrderStatusText(statusOrder.status),
+        getOrderStatusText(
+          statusOrder.status
+        ),
 
-      order: statusOrder,
+      order:
+        statusOrder,
     };
   }
 
@@ -775,7 +1227,10 @@ async function processMessage({
    * CANCEL
    */
 
-  if (decision.intent === "cancel") {
+  if (
+    decision.intent ===
+    "cancel"
+  ) {
     if (!activeOrder) {
       return {
         reply:
@@ -792,23 +1247,28 @@ async function processMessage({
         "shopper_assigned",
         "shopping",
         "out_for_delivery",
-      ].includes(activeOrder.status)
+      ].includes(
+        activeOrder.status
+      )
     ) {
       return {
         reply:
           decision.reply ||
           "Your order is already being processed, so I can't cancel it automatically right now.",
 
-        order: activeOrder,
+        order:
+          activeOrder,
       };
     }
 
-    order = await updateOrder(
-      activeOrder.id,
-      {
-        status: "cancelled",
-      }
-    );
+    order =
+      await updateOrder(
+        activeOrder.id,
+        {
+          status:
+            "cancelled",
+        }
+      );
 
     return {
       reply:
@@ -824,19 +1284,24 @@ async function processMessage({
    */
 
   if (
-    decision.intent === "reject" ||
-    isRejection(userMessage)
+    decision.intent ===
+      "reject" ||
+    isRejection(
+      userMessage
+    )
   ) {
     if (
       activeOrder?.status ===
       "awaiting_confirmation"
     ) {
-      order = await updateOrder(
-        activeOrder.id,
-        {
-          status: "collecting_details",
-        }
-      );
+      order =
+        await updateOrder(
+          activeOrder.id,
+          {
+            status:
+              "collecting_details",
+          }
+        );
     }
 
     return {
@@ -853,19 +1318,24 @@ async function processMessage({
    */
 
   if (
-    decision.intent === "confirm" ||
-    isConfirmation(userMessage)
+    decision.intent ===
+      "confirm" ||
+    isConfirmation(
+      userMessage
+    )
   ) {
     if (
       activeOrder?.status ===
       "awaiting_confirmation"
     ) {
-      order = await updateOrder(
-        activeOrder.id,
-        {
-          status: "finding_shopper",
-        }
-      );
+      order =
+        await updateOrder(
+          activeOrder.id,
+          {
+            status:
+              "finding_shopper",
+          }
+        );
 
       return {
         reply:
@@ -882,7 +1352,8 @@ async function processMessage({
           decision.reply ||
           "Your current order is already being processed.",
 
-        order: activeOrder,
+        order:
+          activeOrder,
       };
     }
 
@@ -906,8 +1377,8 @@ async function processMessage({
       "update_order"
   ) {
     /*
-     * Don't create another order when
-     * the existing order is already processing.
+     * Existing processing order:
+     * do not create a duplicate.
      */
 
     if (
@@ -917,20 +1388,23 @@ async function processMessage({
         "shopper_assigned",
         "shopping",
         "out_for_delivery",
-      ].includes(activeOrder.status)
+      ].includes(
+        activeOrder.status
+      )
     ) {
       return {
         reply:
           decision.reply ||
-          "Your current order is already being processed. If you want to create a separate order, tell me that it is a new order.",
+          "Your current order is already being processed. If you want a separate order, tell me it's a new order.",
 
-        order: activeOrder,
+        order:
+          activeOrder,
       };
     }
 
     /*
      * Existing draft:
-     * update the SAME order.
+     * update the same order.
      */
 
     if (
@@ -938,49 +1412,82 @@ async function processMessage({
       [
         "collecting_details",
         "awaiting_confirmation",
-      ].includes(activeOrder.status)
+      ].includes(
+        activeOrder.status
+      )
     ) {
-      const updates = {};
+      const updates =
+        {};
 
-      if (decision.store) {
+      /*
+       * If AI gives new store,
+       * replace store.
+       */
+
+      if (
+        decision.store
+      ) {
         updates.store_name =
           decision.store;
       }
 
-      if (decision.items) {
+      /*
+       * If AI gives items,
+       * replace/update items.
+       */
+
+      if (
+        decision.items
+      ) {
         updates.items =
           decision.items;
       }
 
+      /*
+       * Budget.
+       */
+
       if (
-        decision.budget !== null &&
-        decision.budget !== undefined
+        decision.budget !==
+          null &&
+        decision.budget !==
+          undefined
       ) {
         updates.budget =
           decision.budget;
       }
 
-      if (decision.delivery_address) {
+      /*
+       * Address.
+       */
+
+      if (
+        decision.delivery_address
+      ) {
         updates.delivery_address =
           decision.delivery_address;
 
         await updateCustomerAddress(
           customer.id,
+
           decision.delivery_address
         );
       }
 
-      const mergedOrder = {
-        ...activeOrder,
-        ...updates,
-      };
+      const mergedOrder =
+        {
+          ...activeOrder,
+          ...updates,
+        };
 
       const missing =
         missingRequiredFields(
           mergedOrder
         );
 
-      if (missing.length === 0) {
+      if (
+        missing.length === 0
+      ) {
         updates.status =
           "awaiting_confirmation";
       } else {
@@ -988,10 +1495,11 @@ async function processMessage({
           "collecting_details";
       }
 
-      order = await updateOrder(
-        activeOrder.id,
-        updates
-      );
+      order =
+        await updateOrder(
+          activeOrder.id,
+          updates
+        );
 
       return {
         reply:
@@ -1005,15 +1513,17 @@ async function processMessage({
     }
 
     /*
-     * No active order:
-     * create one.
+     * No active order.
+     * Create a new order.
      */
 
     const store =
-      decision.store || null;
+      decision.store ||
+      null;
 
     const items =
-      decision.items || null;
+      decision.items ||
+      null;
 
     const deliveryAddress =
       decision.delivery_address ||
@@ -1021,46 +1531,69 @@ async function processMessage({
       null;
 
     const budget =
-      decision.budget !== null &&
-      decision.budget !== undefined
+      decision.budget !==
+        null &&
+      decision.budget !==
+        undefined
         ? decision.budget
         : null;
 
-    const missing = [];
+    const missing =
+      [];
 
     if (!store) {
-      missing.push("store");
+      missing.push(
+        "store"
+      );
     }
 
     if (!items) {
-      missing.push("items");
+      missing.push(
+        "items"
+      );
     }
 
     if (!deliveryAddress) {
-      missing.push("delivery address");
+      missing.push(
+        "delivery address"
+      );
     }
 
-    if (missing.length > 0) {
-      order = await createOrder({
-        customerId: customer.id,
+    /*
+     * Missing details:
+     * create draft order.
+     */
 
-        storeName:
-          store || "Not specified",
+    if (
+      missing.length > 0
+    ) {
+      order =
+        await createOrder({
+          customerId:
+            customer.id,
 
-        items:
-          items || "Not specified",
+          storeName:
+            store ||
+            "Not specified",
 
-        budget,
+          items:
+            items ||
+            "Not specified",
 
-        deliveryAddress,
+          budget,
 
-        status:
-          "collecting_details",
-      });
+          deliveryAddress,
 
-      if (deliveryAddress) {
+          status:
+            "collecting_details",
+        });
+
+      if (
+        deliveryAddress
+      ) {
         await updateCustomerAddress(
           customer.id,
+
           deliveryAddress
         );
       }
@@ -1076,23 +1609,32 @@ async function processMessage({
       };
     }
 
-    order = await createOrder({
-      customerId: customer.id,
+    /*
+     * Complete order:
+     * wait for confirmation.
+     */
 
-      storeName: store,
+    order =
+      await createOrder({
+        customerId:
+          customer.id,
 
-      items,
+        storeName:
+          store,
 
-      budget,
+        items,
 
-      deliveryAddress,
+        budget,
 
-      status:
-        "awaiting_confirmation",
-    });
+        deliveryAddress,
+
+        status:
+          "awaiting_confirmation",
+      });
 
     await updateCustomerAddress(
       customer.id,
+
       deliveryAddress
     );
 
@@ -1118,26 +1660,42 @@ async function processMessage({
       decision.reply ||
       "I'm Fetch 👋 How can I help?",
 
-    order: activeOrder || null,
+    order:
+      activeOrder ||
+      null,
   };
 }
 
-async function handleIncomingMessage(message) {
+async function handleIncomingMessage(
+  message
+) {
   if (!message) {
     return;
   }
 
-  if (message.type !== "text") {
+  if (
+    message.type !==
+    "text"
+  ) {
+    console.log(
+      "FETCH: Non-text message ignored."
+    );
+
     return;
   }
 
   const phone =
-    normalizePhone(message.from);
+    normalizePhone(
+      message.from
+    );
 
   const userMessage =
     message.text?.body?.trim();
 
-  if (!phone || !userMessage) {
+  if (
+    !phone ||
+    !userMessage
+  ) {
     return;
   }
 
@@ -1146,36 +1704,45 @@ async function handleIncomingMessage(message) {
   );
 
   const customer =
-    await getOrCreateCustomer(phone);
+    await getOrCreateCustomer(
+      phone
+    );
 
   const activeOrderBefore =
-    await getActiveOrder(customer.id);
+    await getActiveOrder(
+      customer.id
+    );
 
   /*
    * Save customer message.
    */
 
   await saveMessage({
-    customerId: customer.id,
+    customerId:
+      customer.id,
 
     orderId:
-      activeOrderBefore?.id || null,
+      activeOrderBefore?.id ||
+      null,
 
     phone,
 
-    role: "user",
+    role:
+      "user",
 
-    message: userMessage,
+    message:
+      userMessage,
   });
 
   let result;
 
   try {
-    result = await processMessage({
-      phone,
-      customer,
-      userMessage,
-    });
+    result =
+      await processMessage({
+        customer,
+
+        userMessage,
+      });
   } catch (error) {
     console.error(
       "FETCH AI PROCESSING ERROR:",
@@ -1183,21 +1750,29 @@ async function handleIncomingMessage(message) {
     );
 
     /*
-     * AI failure should not kill Fetch.
+     * Fetch still replies if AI fails.
      */
 
+    let latestOrder =
+      null;
+
+    try {
+      latestOrder =
+        await getLatestOrder(
+          customer.id
+        );
+    } catch {}
+
     result = {
-      reply: buildFallbackReply({
-        userMessage,
+      reply:
+        buildFallbackReply({
+          userMessage,
 
-        activeOrder:
-          activeOrderBefore,
+          activeOrder:
+            activeOrderBefore,
 
-        latestOrder:
-          await getLatestOrder(
-            customer.id
-          ),
-      }),
+          latestOrder,
+        }),
 
       order:
         activeOrderBefore,
@@ -1212,11 +1787,12 @@ async function handleIncomingMessage(message) {
   }
 
   /*
-   * Save Fetch's response.
+   * Save Fetch response.
    */
 
   await saveMessage({
-    customerId: customer.id,
+    customerId:
+      customer.id,
 
     orderId:
       result.order?.id ||
@@ -1225,13 +1801,15 @@ async function handleIncomingMessage(message) {
 
     phone,
 
-    role: "assistant",
+    role:
+      "assistant",
 
-    message: reply,
+    message:
+      reply,
   });
 
   /*
-   * Send response to WhatsApp.
+   * Send to WhatsApp.
    */
 
   await sendWhatsAppMessage(
@@ -1240,7 +1818,9 @@ async function handleIncomingMessage(message) {
   );
 }
 
-export async function GET(request) {
+export async function GET(
+  request
+) {
   const url =
     new URL(request.url);
 
@@ -1261,7 +1841,8 @@ export async function GET(request) {
 
   if (
     mode === "subscribe" &&
-    token === WHATSAPP_VERIFY_TOKEN
+    token ===
+      WHATSAPP_VERIFY_TOKEN
   ) {
     return textResponse(
       challenge || "",
@@ -1275,7 +1856,9 @@ export async function GET(request) {
   );
 }
 
-export async function POST(request) {
+export async function POST(
+  request
+) {
   try {
     const rawBody =
       await request.text();
@@ -1284,7 +1867,9 @@ export async function POST(request) {
 
     try {
       body =
-        JSON.parse(rawBody);
+        JSON.parse(
+          rawBody
+        );
     } catch {
       return jsonResponse(
         {
@@ -1305,11 +1890,16 @@ export async function POST(request) {
     );
 
     const entries =
-      Array.isArray(body.entry)
+      Array.isArray(
+        body.entry
+      )
         ? body.entry
         : [];
 
-    for (const entry of entries) {
+    for (
+      const entry of
+        entries
+    ) {
       const changes =
         Array.isArray(
           entry.changes
@@ -1317,7 +1907,10 @@ export async function POST(request) {
           ? entry.changes
           : [];
 
-      for (const change of changes) {
+      for (
+        const change of
+          changes
+      ) {
         const value =
           change.value;
 
@@ -1332,7 +1925,10 @@ export async function POST(request) {
             ? value.messages
             : [];
 
-        for (const message of messages) {
+        for (
+          const message of
+            messages
+        ) {
           try {
             await handleIncomingMessage(
               message
@@ -1348,7 +1944,8 @@ export async function POST(request) {
     }
 
     return jsonResponse({
-      success: true,
+      success:
+        true,
     });
   } catch (error) {
     console.error(
@@ -1357,7 +1954,8 @@ export async function POST(request) {
     );
 
     return jsonResponse({
-      success: false,
+      success:
+        false,
     });
   }
 }
