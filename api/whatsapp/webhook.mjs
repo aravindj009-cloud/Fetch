@@ -443,7 +443,11 @@ async function updateStoreLocation(
   latitude,
   longitude
 ) {
-  if (!storeId || latitude == null || longitude == null) {
+  if (
+    !storeId ||
+    latitude == null ||
+    longitude == null
+  ) {
     return;
   }
 
@@ -453,7 +457,8 @@ async function updateStoreLocation(
       {
         method: "PATCH",
         headers: {
-          Prefer: "return=minimal",
+          Prefer:
+            "return=minimal",
         },
         body: JSON.stringify({
           latitude,
@@ -469,63 +474,280 @@ async function updateStoreLocation(
   }
 }
 
-async function geocodeAddress(address) {
-  const query = String(address || "").trim();
-
-  if (!query) {
-    throw new Error("Address is missing for geocoding");
-  }
-
-  const url =
-    `${NOMINATIM_URL}?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(query)}`;
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": FETCH_DISTANCE_USER_AGENT,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Nominatim ${response.status}`
-    );
-  }
-
-  const data = await response.json();
-  const result = Array.isArray(data) && data.length
-    ? data[0]
-    : null;
-
-  if (!result?.lat || !result?.lon) {
-    throw new Error(
-      `Unable to geocode address: ${query}`
-    );
-  }
-
-  return {
-    latitude: Number(result.lat),
-    longitude: Number(result.lon),
-    displayName: result.display_name || query,
-  };
+function cleanAddressForGeocoding(address) {
+  return String(address || "")
+    .trim()
+    .replace(
+      /\b(?:house\s*number|house\s*no\.?|house\s*#|door\s*no\.?|door\s*number)\s*(?:is|=|:)?\s*[a-z0-9\-\/]+/gi,
+      " "
+    )
+    .replace(
+      /\b(?:my|me)\s+house\b/gi,
+      " "
+    )
+    .replace(
+      /\b(?:deliver|delivery)\s+to\b/gi,
+      " "
+    )
+    .replace(
+      /\b(?:please|kindly)\b/gi,
+      " "
+    )
+    .replace(
+      /\s*,\s*/g,
+      ", "
+    )
+    .replace(
+      /\s{2,}/g,
+      " "
+    )
+    .replace(
+      /^\s*,\s*|\s*,\s*$/g,
+      ""
+    )
+    .trim();
 }
 
-async function getCoordinatesForStore(store) {
+function getGeocodingQueries(address) {
+  const raw =
+    String(address || "").trim();
+
+  if (!raw) {
+    return [];
+  }
+
+  const cleaned =
+    cleanAddressForGeocoding(
+      raw
+    );
+
+  const queries = [];
+
+  const add = (value) => {
+    const query =
+      String(value || "")
+        .trim()
+        .replace(
+          /\s{2,}/g,
+          " "
+        );
+
+    if (
+      query &&
+      !queries.some(
+        (existing) =>
+          existing.toLowerCase() ===
+          query.toLowerCase()
+      )
+    ) {
+      queries.push(query);
+    }
+  };
+
+  // Try the customer's original wording first.
+  add(raw);
+
+  // Add useful geographic context.
+  add(
+    `${cleaned}, Thiruvananthapuram, Kerala, India`
+  );
+
+  // Landmark-style addresses often work better when
+  // conversational words are removed.
+  const landmarkQuery =
+    cleaned
+      .replace(
+        /\bnear\b/gi,
+        ""
+      )
+      .replace(
+        /\bopposite\b/gi,
+        ""
+      )
+      .replace(
+        /\bbehind\b/gi,
+        ""
+      )
+      .replace(
+        /\bin front of\b/gi,
+        ""
+      )
+      .replace(
+        /\s{2,}/g,
+        " "
+      )
+      .trim();
+
+  add(
+    `${landmarkQuery}, Thiruvananthapuram, Kerala, India`
+  );
+
+  // Try named landmark + locality.
+  const localityMatch =
+    cleaned.match(
+      /^(.*?)(?:,\s*|\s+)([A-Za-z][A-Za-z\s.-]{2,})$/i
+    );
+
+  if (localityMatch) {
+    const landmark =
+      localityMatch[1].trim();
+
+    const locality =
+      localityMatch[2].trim();
+
+    if (
+      landmark &&
+      locality
+    ) {
+      add(
+        `${landmark}, ${locality}, Thiruvananthapuram, Kerala, India`
+      );
+    }
+  }
+
+  // Finally try the cleaned wording by itself.
+  add(cleaned);
+
+  return queries;
+}
+
+async function geocodeAddress(address) {
+  const queries =
+    getGeocodingQueries(
+      address
+    );
+
+  if (!queries.length) {
+    throw new Error(
+      "Address is missing for geocoding"
+    );
+  }
+
+  let lastError =
+    null;
+
+  for (
+    const query of queries
+  ) {
+    try {
+      const url =
+        `${NOMINATIM_URL}?format=jsonv2&limit=5&countrycodes=in&addressdetails=1&q=${encodeURIComponent(
+          query
+        )}`;
+
+      const response =
+        await fetch(
+          url,
+          {
+            headers: {
+              Accept:
+                "application/json",
+              "User-Agent":
+                FETCH_DISTANCE_USER_AGENT,
+            },
+          }
+        );
+
+      if (!response.ok) {
+        throw new Error(
+          `Nominatim ${response.status}`
+        );
+      }
+
+      const data =
+        await response.json();
+
+      const result =
+        Array.isArray(data) &&
+        data.length
+          ? data[0]
+          : null;
+
+      if (
+        result?.lat &&
+        result?.lon
+      ) {
+        console.log(
+          "FETCH GEOCODE SUCCESS:",
+          JSON.stringify({
+            originalAddress:
+              address,
+            query,
+            displayName:
+              result.display_name,
+          })
+        );
+
+        return {
+          latitude:
+            Number(
+              result.lat
+            ),
+
+          longitude:
+            Number(
+              result.lon
+            ),
+
+          displayName:
+            result.display_name ||
+            query,
+
+          matchedQuery:
+            query,
+        };
+      }
+    } catch (error) {
+      lastError = error;
+
+      console.error(
+        "FETCH GEOCODE ATTEMPT ERROR:",
+        JSON.stringify({
+          address,
+          query,
+          error:
+            error?.message ||
+            String(error),
+        })
+      );
+    }
+  }
+
+  throw new Error(
+    `Unable to geocode address: ${address}. ${
+      lastError?.message || ""
+    }`.trim()
+  );
+}
+
+async function getCoordinatesForStore(
+  store
+) {
   if (
     store?.latitude != null &&
     store?.longitude != null
   ) {
     return {
-      latitude: Number(store.latitude),
-      longitude: Number(store.longitude),
+      latitude:
+        Number(
+          store.latitude
+        ),
+
+      longitude:
+        Number(
+          store.longitude
+        ),
     };
   }
 
-  const coordinates = await geocodeAddress(
-    store?.address
-  );
+  const coordinates =
+    await geocodeAddress(
+      store?.address
+    );
 
-  if (store?.id) {
+  if (
+    store?.id
+  ) {
     await updateStoreLocation(
       store.id,
       coordinates.latitude,
@@ -541,23 +763,29 @@ async function calculateRoadDistanceKm(
   deliveryAddress
 ) {
   const storeCoordinates =
-    await getCoordinatesForStore(store);
+    await getCoordinatesForStore(
+      store
+    );
 
   const destination =
-    await geocodeAddress(deliveryAddress);
+    await geocodeAddress(
+      deliveryAddress
+    );
 
   const coordinates =
     `${storeCoordinates.longitude},${storeCoordinates.latitude};` +
     `${destination.longitude},${destination.latitude}`;
 
-  const response = await fetch(
-    `${OSRM_URL}/${coordinates}?overview=false&steps=false`,
-    {
-      headers: {
-        Accept: "application/json",
-      },
-    }
-  );
+  const response =
+    await fetch(
+      `${OSRM_URL}/${coordinates}?overview=false&steps=false`,
+      {
+        headers: {
+          Accept:
+            "application/json",
+        },
+      }
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -565,27 +793,47 @@ async function calculateRoadDistanceKm(
     );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
+
   const meters =
     data?.routes?.[0]?.distance;
 
-  if (typeof meters !== "number" || !Number.isFinite(meters)) {
+  if (
+    typeof meters !==
+      "number" ||
+    !Number.isFinite(
+      meters
+    )
+  ) {
     throw new Error(
       "Road distance could not be calculated"
     );
   }
 
   return Number(
-    (meters / 1000).toFixed(
+    (
+      meters / 1000
+    ).toFixed(
       DISTANCE_DECIMAL_PLACES
     )
   );
 }
 
-function calculateDeliveryFee(distanceKm) {
-  const distance = Number(distanceKm);
+function calculateDeliveryFee(
+  distanceKm
+) {
+  const distance =
+    Number(
+      distanceKm
+    );
 
-  if (!Number.isFinite(distance) || distance < 0) {
+  if (
+    !Number.isFinite(
+      distance
+    ) ||
+    distance < 0
+  ) {
     throw new Error(
       "A valid delivery distance is required"
     );
@@ -594,12 +842,17 @@ function calculateDeliveryFee(distanceKm) {
   return Math.max(
     MIN_DELIVERY_FEE,
     Number(
-      (distance * DELIVERY_RATE_PER_KM).toFixed(2)
+      (
+        distance *
+        DELIVERY_RATE_PER_KM
+      ).toFixed(2)
     )
   );
 }
 
-async function applyDeliveryPricing(order) {
+async function applyDeliveryPricing(
+  order
+) {
   if (!order?.id) {
     throw new Error(
       "Order is required for delivery pricing"
@@ -607,7 +860,9 @@ async function applyDeliveryPricing(order) {
   }
 
   const store =
-    await getStoreByName(order.store_name);
+    await getStoreByName(
+      order.store_name
+    );
 
   if (!store) {
     throw new Error(
@@ -622,32 +877,56 @@ async function applyDeliveryPricing(order) {
     );
 
   const deliveryFee =
-    calculateDeliveryFee(distanceKm);
+    calculateDeliveryFee(
+      distanceKm
+    );
 
   const updated =
     await updateOrder(
       order.id,
       {
-        store_id: store.id,
-        item_total: Number(order.item_total || 0),
-        fetch_fee: FETCH_FEE,
+        store_id:
+          store.id,
+
+        item_total:
+          Number(
+            order.item_total ||
+            0
+          ),
+
+        fetch_fee:
+          FETCH_FEE,
+
         delivery_rate_per_km:
           DELIVERY_RATE_PER_KM,
-        distance_km: distanceKm,
-        delivery_fee: deliveryFee,
+
+        distance_km:
+          distanceKm,
+
+        delivery_fee:
+          deliveryFee,
+
         total_amount:
-          Number(order.item_total || 0) +
+          Number(
+            order.item_total ||
+            0
+          ) +
           FETCH_FEE +
           deliveryFee,
+
         delivery_pricing_status:
           "calculated",
+
         delivery_pricing_source:
           "osm_osrm_mvp",
+
         payment_status:
           order.payment_status ||
           "pending",
+
         priced_at:
           new Date().toISOString(),
+
         status:
           "awaiting_confirmation",
       }
@@ -662,18 +941,42 @@ async function applyDeliveryPricing(order) {
   return updated;
 }
 
-function formatRupees(amount) {
-  const value = Number(amount || 0);
-  return value.toFixed(2).replace(/\.00$/, "");
+function formatRupees(
+  amount
+) {
+  const value =
+    Number(
+      amount || 0
+    );
+
+  return value
+    .toFixed(2)
+    .replace(
+      /\.00$/,
+      ""
+    );
 }
 
-function buildPricingConfirmationMessage(order) {
-  const distance = Number(order.distance_km || 0);
-  const deliveryFee = Number(order.delivery_fee || 0);
+function buildPricingConfirmationMessage(
+  order
+) {
+  const distance =
+    Number(
+      order.distance_km ||
+      0
+    );
+
+  const deliveryFee =
+    Number(
+      order.delivery_fee ||
+      0
+    );
 
   const budgetLine =
     order.budget != null
-      ? `\n💰 Item budget: ₹${formatRupees(order.budget)}`
+      ? `\n💰 Item budget: ₹${formatRupees(
+          order.budget
+        )}`
       : "";
 
   return (
@@ -681,8 +984,12 @@ function buildPricingConfirmationMessage(order) {
     `🏪 Store: ${order.store_name}\n` +
     `🛒 Items: ${order.items}\n` +
     `📍 Deliver to: ${order.delivery_address}${budgetLine}\n\n` +
-    `📏 Delivery distance: ${distance.toFixed(2)} km\n` +
-    `🚚 Delivery charge: ₹${formatRupees(deliveryFee)}\n` +
+    `📏 Delivery distance: ${distance.toFixed(
+      2
+    )} km\n` +
+    `🚚 Delivery charge: ₹${formatRupees(
+      deliveryFee
+    )}\n` +
     `💼 Fetch fee: ₹0\n\n` +
     `Shall I confirm this order?`
   );
@@ -696,7 +1003,9 @@ async function getActiveOrder(
   customerId
 ) {
   const statuses =
-    ACTIVE_ORDER_STATUSES.join(",");
+    ACTIVE_ORDER_STATUSES.join(
+      ","
+    );
 
   const data =
     await supabaseRequest(
@@ -707,7 +1016,9 @@ async function getActiveOrder(
       )})&select=*&order=created_at.desc&limit=1`
     );
 
-  return Array.isArray(data) &&
+  return Array.isArray(
+    data
+  ) &&
     data.length
     ? data[0]
     : null;
@@ -723,7 +1034,9 @@ async function getLatestOrder(
       )}&select=*&order=created_at.desc&limit=1`
     );
 
-  return Array.isArray(data) &&
+  return Array.isArray(
+    data
+  ) &&
     data.length
     ? data[0]
     : null;
@@ -739,7 +1052,9 @@ async function getOrderById(
       )}&select=*&limit=1`
     );
 
-  return Array.isArray(data) &&
+  return Array.isArray(
+    data
+  ) &&
     data.length
     ? data[0]
     : null;
@@ -781,19 +1096,26 @@ async function createOrder({
 
           status,
 
-          item_total: 0,
+          item_total:
+            0,
 
-          fetch_fee: FETCH_FEE,
+          fetch_fee:
+            FETCH_FEE,
 
-          delivery_fee: 0,
+          delivery_fee:
+            0,
 
-          total_amount: 0,
+          total_amount:
+            0,
 
-          shopper_earnings: 0,
+          shopper_earnings:
+            0,
 
-          payment_status: "pending",
+          payment_status:
+            "pending",
 
-          delivery_pricing_status: "pending",
+          delivery_pricing_status:
+            "pending",
 
           delivery_rate_per_km:
             DELIVERY_RATE_PER_KM,
@@ -801,7 +1123,9 @@ async function createOrder({
       }
     );
 
-  return Array.isArray(data)
+  return Array.isArray(
+    data
+  )
     ? data[0]
     : data;
 }
@@ -829,7 +1153,9 @@ async function updateOrder(
       }
     );
 
-  return Array.isArray(data) &&
+  return Array.isArray(
+    data
+  ) &&
     data.length
     ? data[0]
     : null;
@@ -850,7 +1176,9 @@ async function getRecentMessages(
         )}&select=role,message,created_at&order=created_at.desc&limit=12`
       );
 
-    return Array.isArray(data)
+    return Array.isArray(
+      data
+    )
       ? data.reverse()
       : [];
   } catch (error) {
@@ -889,7 +1217,9 @@ async function saveMessage({
             orderId,
 
           phone:
-            normalizePhone(phone),
+            normalizePhone(
+              phone
+            ),
 
           role,
 
@@ -919,7 +1249,9 @@ async function getOpenShopperJob(
       )}&status=eq.offered&select=*&order=offered_at.desc&limit=1`
     );
 
-  return Array.isArray(data) &&
+  return Array.isArray(
+    data
+  ) &&
     data.length
     ? data[0]
     : null;
@@ -935,7 +1267,9 @@ async function getAcceptedShopperJob(
       )}&status=eq.accepted&select=*&order=accepted_at.desc&limit=1`
     );
 
-  return Array.isArray(data) &&
+  return Array.isArray(
+    data
+  ) &&
     data.length
     ? data[0]
     : null;
@@ -972,7 +1306,9 @@ async function createShopperJob(
       }
     );
 
-  return Array.isArray(data)
+  return Array.isArray(
+    data
+  )
     ? data[0]
     : data;
 }
@@ -1000,7 +1336,9 @@ async function updateShopperJob(
       }
     );
 
-  return Array.isArray(data) &&
+  return Array.isArray(
+    data
+  ) &&
     data.length
     ? data[0]
     : null;
@@ -1038,13 +1376,18 @@ async function offerOrderToShopper(
 
   if (!shoppers.length) {
     return {
-      success: false,
-      shopper: null,
-      job: null,
+      success:
+        false,
+      shopper:
+        null,
+      job:
+        null,
     };
   }
 
-  for (const shopper of shoppers) {
+  for (
+    const shopper of shoppers
+  ) {
     try {
       const existing =
         await supabaseRequest(
@@ -1056,7 +1399,9 @@ async function offerOrderToShopper(
         );
 
       const job =
-        Array.isArray(existing) &&
+        Array.isArray(
+          existing
+        ) &&
         existing.length
           ? existing[0]
           : await createShopperJob(
@@ -1094,7 +1439,8 @@ async function offerOrderToShopper(
       );
 
       return {
-        success: true,
+        success:
+          true,
         shopper,
         job,
       };
@@ -1107,9 +1453,12 @@ async function offerOrderToShopper(
   }
 
   return {
-    success: false,
-    shopper: null,
-    job: null,
+    success:
+      false,
+    shopper:
+      null,
+    job:
+      null,
   };
 }
 
@@ -1168,7 +1517,9 @@ async function getPendingSubstitution(
         )}&status=eq.pending&select=*&order=created_at.desc&limit=1`
       );
 
-    return Array.isArray(data) &&
+    return Array.isArray(
+      data
+    ) &&
       data.length
       ? data[0]
       : null;
@@ -1218,7 +1569,9 @@ async function createSubstitutionRequest({
       }
     );
 
-  return Array.isArray(data)
+  return Array.isArray(
+    data
+  )
     ? data[0]
     : data;
 }
@@ -1246,7 +1599,9 @@ async function updateSubstitutionRequest(
       }
     );
 
-  return Array.isArray(data) &&
+  return Array.isArray(
+    data
+  ) &&
     data.length
     ? data[0]
     : null;
@@ -1256,7 +1611,9 @@ function parseSubstitutionCommand(
   text
 ) {
   const raw =
-    String(text || "").trim();
+    String(
+      text || ""
+    ).trim();
 
   const match =
     raw.match(
@@ -1306,7 +1663,9 @@ async function applyApprovedSubstitution(
   let updatedItems;
 
   if (
-    regex.test(currentItems)
+    regex.test(
+      currentItems
+    )
   ) {
     updatedItems =
       currentItems.replace(
@@ -1352,7 +1711,9 @@ async function notifyCustomerForOrder(
     );
 
   const customer =
-    Array.isArray(customers) &&
+    Array.isArray(
+      customers
+    ) &&
     customers.length
       ? customers[0]
       : null;
@@ -1418,13 +1779,17 @@ function extractResponseText(
     }
   }
 
-  return parts.join("\n").trim();
+  return parts.join(
+    "\n"
+  ).trim();
 }
 
 function cleanJsonText(
   text
 ) {
-  return String(text || "")
+  return String(
+    text || ""
+  )
     .trim()
     .replace(
       /^```json/i,
@@ -1492,10 +1857,12 @@ Rules:
     },
 
     active_order:
-      activeOrder || null,
+      activeOrder ||
+      null,
 
     latest_order:
-      latestOrder || null,
+      latestOrder ||
+      null,
 
     conversation:
       history,
@@ -1653,7 +2020,9 @@ Rules:
     );
 
   const decision =
-    JSON.parse(text);
+    JSON.parse(
+      text
+    );
 
   console.log(
     "FETCH AI DECISION:",
@@ -1804,7 +2173,9 @@ async function handleCustomerMessage({
   userMessage,
 }) {
   const normalizedPhone =
-    normalizePhone(phone);
+    normalizePhone(
+      phone
+    );
 
   const customer =
     await getOrCreateCustomer(
@@ -2193,8 +2564,10 @@ async function handleCustomerMessage({
     if (
       activeOrder.delivery_pricing_status !==
         "calculated" ||
-      activeOrder.distance_km == null ||
-      activeOrder.delivery_fee == null
+      activeOrder.distance_km ==
+        null ||
+      activeOrder.delivery_fee ==
+        null
     ) {
       await sendWhatsAppMessage(
         normalizedPhone,
@@ -2285,7 +2658,9 @@ async function handleCustomerMessage({
 
     // A known store is required for the MVP distance calculation.
     const storeRecord =
-      await getStoreByName(store);
+      await getStoreByName(
+        store
+      );
 
     if (!storeRecord) {
       await sendWhatsAppMessage(
@@ -2328,13 +2703,17 @@ async function handleCustomerMessage({
             delivery_address:
               address,
 
-            item_total: 0,
+            item_total:
+              0,
 
-            fetch_fee: FETCH_FEE,
+            fetch_fee:
+              FETCH_FEE,
 
-            delivery_fee: 0,
+            delivery_fee:
+              0,
 
-            total_amount: 0,
+            total_amount:
+              0,
 
             delivery_pricing_status:
               "pending",
@@ -2342,7 +2721,8 @@ async function handleCustomerMessage({
             delivery_pricing_source:
               null,
 
-            priced_at: null,
+            priced_at:
+              null,
 
             status:
               "collecting_details",
@@ -2393,7 +2773,7 @@ async function handleCustomerMessage({
       await sendWhatsAppMessage(
         normalizedPhone,
 
-        `I have your order details 👍\n\n🏪 Store: ${store}\n🛒 Items: ${items}\n📍 Deliver to: ${address}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t calculate the exact road distance right now, so I’m not asking you to confirm yet.`
+        `I have your order details 👍\n\n🏪 Store: ${store}\n🛒 Items: ${items}\n📍 Deliver to: ${address}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t pinpoint that delivery location accurately. Please send a more specific landmark, street/house details, or a WhatsApp location pin so I can calculate the exact delivery charge.`
       );
 
       return;
@@ -2472,16 +2852,30 @@ async function handleCustomerMessage({
     }
 
     // Any order change invalidates the old distance/price.
-    updates.item_total = 0;
-    updates.fetch_fee = FETCH_FEE;
-    updates.delivery_fee = 0;
-    updates.total_amount = 0;
-    updates.distance_km = null;
+    updates.item_total =
+      0;
+
+    updates.fetch_fee =
+      FETCH_FEE;
+
+    updates.delivery_fee =
+      0;
+
+    updates.total_amount =
+      0;
+
+    updates.distance_km =
+      null;
+
     updates.delivery_pricing_status =
       "pending";
+
     updates.delivery_pricing_source =
       null;
-    updates.priced_at = null;
+
+    updates.priced_at =
+      null;
+
     updates.status =
       "collecting_details";
 
@@ -2538,7 +2932,7 @@ async function handleCustomerMessage({
       await sendWhatsAppMessage(
         normalizedPhone,
 
-        "Updated 👍\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t calculate the exact road distance right now, so please wait for my pricing message before confirming."
+        "Updated 👍\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t pinpoint the delivery location accurately. Please send a more specific landmark, street/house detail, or a WhatsApp location pin so I can calculate the exact delivery charge before confirmation."
       );
     }
 
@@ -2562,10 +2956,14 @@ async function handleShopperMessage({
   text,
 }) {
   const normalizedPhone =
-    normalizePhone(phone);
+    normalizePhone(
+      phone
+    );
 
   const rawText =
-    String(text || "").trim();
+    String(
+      text || ""
+    ).trim();
 
   const command =
     rawText.toUpperCase();
@@ -3172,7 +3570,9 @@ export default async function handler(
       "string"
     ) {
       body =
-        JSON.parse(body);
+        JSON.parse(
+          body
+        );
     }
 
     if (
@@ -3199,7 +3599,9 @@ export default async function handler(
 
       body =
         raw
-          ? JSON.parse(raw)
+          ? JSON.parse(
+              raw
+            )
           : {};
     }
 
