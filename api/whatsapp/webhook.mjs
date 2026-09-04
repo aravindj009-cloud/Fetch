@@ -40,18 +40,6 @@ const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
 const FETCH_DISTANCE_USER_AGENT = "Fetch MVP/1.0";
 
-// OpenAI can temporarily return HTTP 429 when the organization
-// or model is rate-limited. Keep retries short and fall back
-// locally instead of making WhatsApp feel broken.
-const OPENAI_MAX_RETRIES = 1;
-const OPENAI_RETRY_DELAY_MS = 1500;
-
-function sleep(ms) {
-  return new Promise((resolve) =>
-    setTimeout(resolve, ms)
-  );
-}
-
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -548,19 +536,29 @@ async function getCoordinatesForStore(store) {
   return coordinates;
 }
 
-async function calculateRoadDistanceKm(
+async function calculateRoadDistanceKmFromCoordinates(
   store,
-  deliveryAddress
+  destinationLatitude,
+  destinationLongitude
 ) {
   const storeCoordinates =
     await getCoordinatesForStore(store);
 
-  const destination =
-    await geocodeAddress(deliveryAddress);
+  const latitude = Number(destinationLatitude);
+  const longitude = Number(destinationLongitude);
+
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude)
+  ) {
+    throw new Error(
+      "Destination coordinates are invalid"
+    );
+  }
 
   const coordinates =
     `${storeCoordinates.longitude},${storeCoordinates.latitude};` +
-    `${destination.longitude},${destination.latitude}`;
+    `${longitude},${latitude}`;
 
   const response = await fetch(
     `${OSRM_URL}/${coordinates}?overview=false&steps=false`,
@@ -594,6 +592,20 @@ async function calculateRoadDistanceKm(
   );
 }
 
+async function calculateRoadDistanceKm(
+  store,
+  deliveryAddress
+) {
+  const destination =
+    await geocodeAddress(deliveryAddress);
+
+  return calculateRoadDistanceKmFromCoordinates(
+    store,
+    destination.latitude,
+    destination.longitude
+  );
+}
+
 function calculateDeliveryFee(distanceKm) {
   const distance = Number(distanceKm);
 
@@ -609,6 +621,74 @@ function calculateDeliveryFee(distanceKm) {
       (distance * DELIVERY_RATE_PER_KM).toFixed(2)
     )
   );
+}
+
+async function applyDeliveryPricingFromCoordinates(
+  order,
+  latitude,
+  longitude
+) {
+  if (!order?.id) {
+    throw new Error(
+      "Order is required for delivery pricing"
+    );
+  }
+
+  const store =
+    await getStoreByName(order.store_name);
+
+  if (!store) {
+    throw new Error(
+      `Store not found in Fetch stores: ${order.store_name}`
+    );
+  }
+
+  const distanceKm =
+    await calculateRoadDistanceKmFromCoordinates(
+      store,
+      latitude,
+      longitude
+    );
+
+  const deliveryFee =
+    calculateDeliveryFee(distanceKm);
+
+  const updated =
+    await updateOrder(
+      order.id,
+      {
+        store_id: store.id,
+        item_total: Number(order.item_total || 0),
+        fetch_fee: FETCH_FEE,
+        delivery_rate_per_km:
+          DELIVERY_RATE_PER_KM,
+        distance_km: distanceKm,
+        delivery_fee: deliveryFee,
+        total_amount:
+          Number(order.item_total || 0) +
+          FETCH_FEE +
+          deliveryFee,
+        delivery_pricing_status:
+          "calculated",
+        delivery_pricing_source:
+          "whatsapp_location_osrm_mvp",
+        payment_status:
+          order.payment_status ||
+          "pending",
+        priced_at:
+          new Date().toISOString(),
+        status:
+          "awaiting_confirmation",
+      }
+    );
+
+  if (!updated) {
+    throw new Error(
+      "Order pricing update returned no order"
+    );
+  }
+
+  return updated;
 }
 
 async function applyDeliveryPricing(order) {
@@ -1516,172 +1596,140 @@ Rules:
       userMessage,
   };
 
-  let response = null;
-  let data = null;
+  const response =
+    await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
 
-  for (
-    let attempt = 0;
-    attempt <= OPENAI_MAX_RETRIES;
-    attempt += 1
-  ) {
-    response =
-      await fetch(
-        "https://api.openai.com/v1/responses",
-        {
-          method: "POST",
+        headers: {
+          Authorization:
+            `Bearer ${OPENAI_API_KEY}`,
 
-          headers: {
-            Authorization:
-              `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type":
+            "application/json",
+        },
 
-            "Content-Type":
-              "application/json",
-          },
+        body: JSON.stringify({
+          model:
+            OPENAI_MODEL,
 
-          body: JSON.stringify({
-            model:
-              OPENAI_MODEL,
+          input: [
+            {
+              role:
+                "system",
 
-            input: [
-              {
-                role:
-                  "system",
-
-                content: [
-                  {
-                    type:
-                      "input_text",
-
-                    text:
-                      systemPrompt,
-                  },
-                ],
-              },
-
-              {
-                role:
-                  "user",
-
-                content: [
-                  {
-                    type:
-                      "input_text",
-
-                    text:
-                      JSON.stringify(
-                        context
-                      ),
-                  },
-                ],
-              },
-            ],
-
-            text: {
-              format: {
-                type:
-                  "json_schema",
-
-                name:
-                  "fetch_agent_decision",
-
-                strict:
-                  true,
-
-                schema: {
+              content: [
+                {
                   type:
-                    "object",
+                    "input_text",
 
-                  additionalProperties:
-                    false,
+                  text:
+                    systemPrompt,
+                },
+              ],
+            },
 
-                  properties: {
-                    intent: {
-                      type:
-                        "string",
+            {
+              role:
+                "user",
 
-                      enum: [
-                        "greeting",
-                        "shopping_request",
-                        "update_order",
-                        "confirm",
-                        "reject",
-                        "status",
-                        "cancel",
-                        "general_question",
-                      ],
-                    },
+              content: [
+                {
+                  type:
+                    "input_text",
 
-                    store_name: {
-                      type:
-                        "string",
-                    },
+                  text:
+                    JSON.stringify(
+                      context
+                    ),
+                },
+              ],
+            },
+          ],
 
-                    items: {
-                      type:
-                        "string",
-                    },
+          text: {
+            format: {
+              type:
+                "json_schema",
 
-                    delivery_address: {
-                      type:
-                        "string",
-                    },
+              name:
+                "fetch_agent_decision",
 
-                    budget: {
-                      type: [
-                        "number",
-                        "null",
-                      ],
-                    },
+              strict:
+                true,
 
-                    reply: {
-                      type:
-                        "string",
-                    },
+              schema: {
+                type:
+                  "object",
+
+                additionalProperties:
+                  false,
+
+                properties: {
+                  intent: {
+                    type:
+                      "string",
+
+                    enum: [
+                      "greeting",
+                      "shopping_request",
+                      "update_order",
+                      "confirm",
+                      "reject",
+                      "status",
+                      "cancel",
+                      "general_question",
+                    ],
                   },
 
-                  required: [
-                    "intent",
-                    "store_name",
-                    "items",
-                    "delivery_address",
-                    "budget",
-                    "reply",
-                  ],
+                  store_name: {
+                    type:
+                      "string",
+                  },
+
+                  items: {
+                    type:
+                      "string",
+                  },
+
+                  delivery_address: {
+                    type:
+                      "string",
+                  },
+
+                  budget: {
+                    type: [
+                      "number",
+                      "null",
+                    ],
+                  },
+
+                  reply: {
+                    type:
+                      "string",
+                  },
                 },
+
+                required: [
+                  "intent",
+                  "store_name",
+                  "items",
+                  "delivery_address",
+                  "budget",
+                  "reply",
+                ],
               },
             },
-          }),
-        }
-      );
+          },
+        }),
+      }
+    );
 
-    data =
-      await response.json();
+  const data =
+    await response.json();
 
-    if (response.ok) {
-      break;
-    }
-
-    if (
-      response.status === 429 &&
-      attempt < OPENAI_MAX_RETRIES
-    ) {
-      console.warn(
-        "FETCH OPENAI RATE LIMITED; RETRYING ONCE..."
-      );
-
-      await sleep(
-        OPENAI_RETRY_DELAY_MS
-      );
-
-      continue;
-    }
-
-    if (response.status === 429) {
-      throw new Error(
-        "OPENAI_RATE_LIMITED: The OpenAI API is temporarily rate-limited."
-      );
-    }
-
+  if (!response.ok) {
     throw new Error(
       `OpenAI ${response.status}: ${JSON.stringify(
         data
@@ -1735,33 +1783,6 @@ function fallbackDecision(
     /^(no|n|nope|cancel|don't|dont)$/i.test(
       text
     );
-
-  const greeting =
-    /^(hi|hello|hey|helo|hii|hiii|namaste|namaskaram|good morning|good afternoon|good evening)$/i.test(
-      text
-    );
-
-  if (greeting) {
-    return {
-      intent:
-        "greeting",
-
-      store_name:
-        "",
-
-      items:
-        "",
-
-      delivery_address:
-        "",
-
-      budget:
-        null,
-
-      reply:
-        "Hi 👋 I’m Fetch. Tell me what you’d like me to fetch, which store, and where to deliver it." ,
-    };
-  }
 
   if (
     yes &&
@@ -1845,114 +1866,6 @@ function fallbackDecision(
     };
   }
 
-  if (
-    activeOrder &&
-    /^(add|also|include|and)\s+/i.test(
-      text
-    )
-  ) {
-    const additionalItems =
-      text.replace(
-        /^(add|also|include|and)\s+/i,
-        ""
-      ).trim();
-
-    if (additionalItems) {
-      return {
-        intent:
-          "update_order",
-
-        store_name:
-          activeOrder.store_name,
-
-        items:
-          `${activeOrder.items}; ${additionalItems}`,
-
-        delivery_address:
-          activeOrder.delivery_address ||
-          customer?.address ||
-          "",
-
-        budget:
-          activeOrder.budget ??
-          null,
-
-        reply:
-          `Added ${additionalItems}. I’ll recalculate the delivery charge before confirmation.`,
-      };
-    }
-  }
-
-  // When an active order exists and the customer sends a short
-  // item message such as "bread" or "milk", treat it as an
-  // addition rather than returning the generic fallback.
-  if (
-    activeOrder &&
-    text.length >= 2 &&
-    text.length <= 80 &&
-    !/[?]$/.test(text) &&
-    !/^(new order|cancel|status|track|help)$/i.test(text)
-  ) {
-    return {
-      intent:
-        "update_order",
-
-      store_name:
-        activeOrder.store_name,
-
-      items:
-        `${activeOrder.items}; ${text}`,
-
-      delivery_address:
-        activeOrder.delivery_address ||
-        customer?.address ||
-        "",
-
-      budget:
-        activeOrder.budget ??
-        null,
-
-      reply:
-        `Added ${text}. I’ll recalculate the delivery charge before confirmation.`,
-    };
-  }
-
-  // Common natural shopping-request shapes. This is only a
-  // temporary fallback for OpenAI rate-limit periods.
-  const shoppingPatterns = [
-    /^(?:i\s+want|i\s+need|fetch|get|buy|please\s+get|can\s+you\s+get)\s+(.+?)\s+(?:from|at)\s+(.+?)\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+)$/i,
-    /^(.+?)\s+(?:from|at)\s+(.+?)\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+)$/i,
-  ];
-
-  for (
-    const pattern of shoppingPatterns
-  ) {
-    const match =
-      text.match(pattern);
-
-    if (match) {
-      return {
-        intent:
-          "shopping_request",
-
-        store_name:
-          match[2].trim(),
-
-        items:
-          match[1].trim(),
-
-        delivery_address:
-          match[3].trim(),
-
-        budget:
-          null,
-
-        reply:
-          `Got it — ${match[1].trim()} from ${match[2].trim()}.`,
-      };
-    }
-  }
-
   return {
     intent:
       "general_question",
@@ -1981,6 +1894,7 @@ function fallbackDecision(
 async function handleCustomerMessage({
   phone,
   userMessage,
+  location = null,
 }) {
   const normalizedPhone =
     normalizePhone(phone);
@@ -2004,6 +1918,123 @@ async function handleCustomerMessage({
     await getRecentMessages(
       customer.id
     );
+
+  /* -----------------------------------------
+     WHATSAPP LOCATION
+  ----------------------------------------- */
+
+  if (
+    location &&
+    Number.isFinite(Number(location.latitude)) &&
+    Number.isFinite(Number(location.longitude))
+  ) {
+    const locationLabel =
+      [
+        location.name,
+        location.address,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(", ");
+
+    if (
+      !activeOrder ||
+      ![
+        "collecting_details",
+        "awaiting_confirmation",
+      ].includes(activeOrder.status)
+    ) {
+      await saveMessage({
+        customerId: customer.id,
+        orderId: latestOrder?.id || null,
+        phone: normalizedPhone,
+        role: "user",
+        message: "WhatsApp location pin shared",
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location 📍. Tell me what you’d like to fetch and which store."
+      );
+
+      return;
+    }
+
+    const deliveryAddress =
+      locationLabel ||
+      activeOrder.delivery_address ||
+      "WhatsApp location";
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: activeOrder.id,
+      phone: normalizedPhone,
+      role: "user",
+      message: "WhatsApp location pin shared",
+    });
+
+    const updatedOrder =
+      await updateOrder(
+        activeOrder.id,
+        {
+          delivery_address: deliveryAddress,
+          distance_km: null,
+          delivery_fee: 0,
+          total_amount: 0,
+          delivery_pricing_status: "pending",
+          delivery_pricing_source: null,
+          priced_at: null,
+          status: "collecting_details",
+        }
+      );
+
+    if (!updatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location, but I couldn’t update the order. Please send the location again."
+      );
+      return;
+    }
+
+    try {
+      const pricedOrder =
+        await applyDeliveryPricingFromCoordinates(
+          updatedOrder,
+          Number(location.latitude),
+          Number(location.longitude)
+        );
+
+      const reply =
+        buildPricingConfirmationMessage(
+          pricedOrder
+        );
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: pricedOrder.id,
+        phone: normalizedPhone,
+        role: "assistant",
+        message: reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+    } catch (error) {
+      console.error(
+        "FETCH WHATSAPP LOCATION PRICING ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your exact location 📍, but I couldn’t calculate the road distance right now. Please send the location pin once more in a moment."
+      );
+    }
+
+    return;
+  }
 
   /* -----------------------------------------
      PENDING SUBSTITUTION
@@ -3256,6 +3287,10 @@ function extractIncomingWhatsAppMessage(
     return null;
   }
 
+  const location =
+    message?.location ||
+    null;
+
   return {
     from:
       normalizePhone(
@@ -3273,6 +3308,25 @@ function extractIncomingWhatsAppMessage(
     type:
       message.type ||
       null,
+
+    location:
+      location
+        ? {
+            latitude:
+              location.latitude,
+
+            longitude:
+              location.longitude,
+
+            name:
+              location.name ||
+              "",
+
+            address:
+              location.address ||
+              "",
+          }
+        : null,
   };
 }
 
@@ -3399,7 +3453,7 @@ export default async function handler(
     if (
       !incoming ||
       !incoming.from ||
-      !incoming.text
+      (!incoming.text && !incoming.location)
     ) {
       return res
         .status(200)
@@ -3415,6 +3469,7 @@ export default async function handler(
     const {
       from,
       text,
+      location,
     } = incoming;
 
     console.log(
@@ -3469,7 +3524,9 @@ export default async function handler(
         phone:
           from,
 
-        text,
+        text:
+          text ||
+          "LOCATION",
       });
     } else {
       await handleCustomerMessage({
@@ -3477,7 +3534,10 @@ export default async function handler(
           from,
 
         userMessage:
-          text,
+          text ||
+          "Shared a WhatsApp location pin",
+
+        location,
       });
     }
 
