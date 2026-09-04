@@ -30,6 +30,10 @@ const ACTIVE_ORDER_STATUSES = [
   "out_for_delivery",
 ];
 
+/* =========================================================
+   HELPERS
+========================================================= */
+
 function normalizePhone(phone) {
   return phone
     ? String(phone).replace(/[^\d]/g, "")
@@ -113,19 +117,26 @@ async function sendWhatsAppMessage(
       `https://graph.facebook.com/v26.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
         method: "POST",
+
         headers: {
           Authorization:
             `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+
           "Content-Type":
             "application/json",
         },
+
         body: JSON.stringify({
           messaging_product:
             "whatsapp",
+
           recipient_type:
             "individual",
+
           to: normalizedTo,
+
           type: "text",
+
           text: {
             preview_url: false,
             body: message,
@@ -154,7 +165,7 @@ async function sendWhatsAppMessage(
 }
 
 /* =========================================================
-   CUSTOMER
+   CUSTOMERS
 ========================================================= */
 
 async function getCustomer(phone) {
@@ -195,10 +206,12 @@ async function getOrCreateCustomer(
         "customers",
         {
           method: "POST",
+
           headers: {
             Prefer:
               "return=representation",
           },
+
           body: JSON.stringify({
             phone:
               normalizedPhone,
@@ -235,10 +248,12 @@ async function updateCustomerAddress(
     )}`,
     {
       method: "PATCH",
+
       headers: {
         Prefer:
           "return=minimal",
       },
+
       body: JSON.stringify({
         address,
       }),
@@ -280,21 +295,27 @@ async function createShopper(
       "shoppers",
       {
         method: "POST",
+
         headers: {
           Prefer:
             "return=representation",
         },
+
         body: JSON.stringify({
           name:
             `Fetch Shopper ${normalizedPhone.slice(
               -4
             )}`,
+
           phone:
             normalizedPhone,
+
           available:
             true,
+
           whatsapp_opted_in:
             true,
+
           last_seen_at:
             new Date().toISOString(),
         }),
@@ -347,10 +368,12 @@ async function updateShopper(
       )}`,
       {
         method: "PATCH",
+
         headers: {
           Prefer:
             "return=representation",
         },
+
         body: JSON.stringify(
           updates
         ),
@@ -433,20 +456,27 @@ async function createOrder({
       "orders",
       {
         method: "POST",
+
         headers: {
           Prefer:
             "return=representation",
         },
+
         body: JSON.stringify({
           customer_id:
             customerId,
+
           store_name:
             storeName,
+
           items,
+
           budget:
             budget ?? null,
+
           delivery_address:
             deliveryAddress,
+
           status,
         }),
       }
@@ -468,10 +498,12 @@ async function updateOrder(
       )}`,
       {
         method: "PATCH",
+
         headers: {
           Prefer:
             "return=representation",
         },
+
         body: JSON.stringify(
           updates
         ),
@@ -485,7 +517,7 @@ async function updateOrder(
 }
 
 /* =========================================================
-   MESSAGES
+   MESSAGE MEMORY
 ========================================================= */
 
 async function getRecentMessages(
@@ -524,18 +556,24 @@ async function saveMessage({
       "messages",
       {
         method: "POST",
+
         headers: {
           Prefer:
             "return=minimal",
         },
+
         body: JSON.stringify({
           customer_id:
             customerId,
+
           order_id:
             orderId,
+
           phone:
             normalizePhone(phone),
+
           role,
+
           message,
         }),
       }
@@ -593,17 +631,22 @@ async function createShopperJob(
       "shopper_jobs",
       {
         method: "POST",
+
         headers: {
           Prefer:
             "return=representation",
         },
+
         body: JSON.stringify({
           order_id:
             orderId,
+
           shopper_id:
             shopperId,
+
           status:
             "offered",
+
           offered_at:
             new Date().toISOString(),
         }),
@@ -626,10 +669,12 @@ async function updateShopperJob(
       )}`,
       {
         method: "PATCH",
+
         headers: {
           Prefer:
             "return=representation",
         },
+
         body: JSON.stringify(
           updates
         ),
@@ -723,6 +768,7 @@ async function offerOrderToShopper(
         {
           status:
             "finding_shopper",
+
           shopper_id:
             null,
         }
@@ -795,17 +841,26 @@ function getOrderStatusText(
 async function getPendingSubstitution(
   orderId
 ) {
-  const data =
-    await supabaseRequest(
-      `substitution_requests?order_id=eq.${encodeURIComponent(
-        orderId
-      )}&status=eq.pending&select=*&order=created_at.desc&limit=1`
+  try {
+    const data =
+      await supabaseRequest(
+        `substitution_requests?order_id=eq.${encodeURIComponent(
+          orderId
+        )}&status=eq.pending&select=*&order=created_at.desc&limit=1`
+      );
+
+    return Array.isArray(data) &&
+      data.length
+      ? data[0]
+      : null;
+  } catch (error) {
+    console.error(
+      "FETCH SUBSTITUTION LOOKUP ERROR:",
+      error
     );
 
-  return Array.isArray(data) &&
-    data.length
-    ? data[0]
-    : null;
+    return null;
+  }
 }
 
 async function createSubstitutionRequest({
@@ -819,19 +874,25 @@ async function createSubstitutionRequest({
       "substitution_requests",
       {
         method: "POST",
+
         headers: {
           Prefer:
             "return=representation",
         },
+
         body: JSON.stringify({
           order_id:
             orderId,
+
           shopper_id:
             shopperId,
+
           original_item:
             originalItem,
+
           proposed_item:
             proposedItem,
+
           status:
             "pending",
         }),
@@ -854,10 +915,12 @@ async function updateSubstitutionRequest(
       )}`,
       {
         method: "PATCH",
+
         headers: {
           Prefer:
             "return=representation",
         },
+
         body: JSON.stringify(
           updates
         ),
@@ -888,6 +951,7 @@ function parseSubstitutionCommand(
   return {
     originalItem:
       match[1].trim(),
+
     proposedItem:
       match[2].trim(),
   };
@@ -922,7 +986,9 @@ async function applyApprovedSubstitution(
 
   let updatedItems;
 
-  if (regex.test(currentItems)) {
+  if (
+    regex.test(currentItems)
+  ) {
     updatedItems =
       currentItems.replace(
         regex,
@@ -979,11 +1045,15 @@ async function notifyCustomerForOrder(
   await saveMessage({
     customerId:
       customer.id,
+
     orderId,
+
     phone:
       customer.phone,
+
     role:
       "assistant",
+
     message,
   });
 
@@ -1096,6 +1166,7 @@ Rules:
       name:
         customer?.name ||
         null,
+
       address:
         customer?.address ||
         null,
@@ -1123,6 +1194,7 @@ Rules:
         headers: {
           Authorization:
             `Bearer ${OPENAI_API_KEY}`,
+
           "Content-Type":
             "application/json",
         },
@@ -1135,10 +1207,12 @@ Rules:
             {
               role:
                 "system",
+
               content: [
                 {
                   type:
                     "input_text",
+
                   text:
                     systemPrompt,
                 },
@@ -1148,10 +1222,12 @@ Rules:
             {
               role:
                 "user",
+
               content: [
                 {
                   type:
                     "input_text",
+
                   text:
                     JSON.stringify(
                       context
@@ -1431,12 +1507,9 @@ async function handleCustomerMessage({
       customer.id
     );
 
-  /*
-    IMPORTANT:
-    Handle a pending substitution BEFORE AI.
-    Therefore YES/NO goes directly to the
-    substitution request.
-  */
+  /* -----------------------------------------
+     PENDING SUBSTITUTION
+  ----------------------------------------- */
 
   if (activeOrder) {
     const pending =
@@ -1673,6 +1746,8 @@ async function handleCustomerMessage({
       );
   }
 
+  /* STATUS */
+
   if (
     decision.intent ===
     "status"
@@ -1714,17 +1789,17 @@ async function handleCustomerMessage({
     return;
   }
 
+  /* CANCEL */
+
   if (
     decision.intent ===
     "cancel"
   ) {
     if (!activeOrder) {
-      const reply =
-        "There isn’t an active order to cancel.";
-
       await sendWhatsAppMessage(
         normalizedPhone,
-        reply
+
+        "There isn’t an active order to cancel."
       );
 
       return;
@@ -1740,11 +1815,14 @@ async function handleCustomerMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Done — I’ve cancelled your order."
     );
 
     return;
   }
+
+  /* REJECT */
 
   if (
     decision.intent ===
@@ -1765,12 +1843,15 @@ async function handleCustomerMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       decision.reply ||
         "Okay — I won’t place that order."
     );
 
     return;
   }
+
+  /* CONFIRM */
 
   if (
     decision.intent ===
@@ -1828,6 +1909,8 @@ async function handleCustomerMessage({
 
     return;
   }
+
+  /* SHOPPING REQUEST */
 
   if (
     decision.intent ===
@@ -1952,6 +2035,8 @@ async function handleCustomerMessage({
     return;
   }
 
+  /* UPDATE ORDER */
+
   if (
     decision.intent ===
       "update_order" &&
@@ -1995,11 +2080,10 @@ async function handleCustomerMessage({
     updates.status =
       "awaiting_confirmation";
 
-    const order =
-      await updateOrder(
-        activeOrder.id,
-        updates
-      );
+    await updateOrder(
+      activeOrder.id,
+      updates
+    );
 
     await sendWhatsAppMessage(
       normalizedPhone,
@@ -2036,59 +2120,29 @@ async function handleShopperMessage({
   const command =
     rawText.toUpperCase();
 
-  let shopper =
+  /*
+    IMPORTANT:
+    This function is ONLY called for a number
+    already registered in the shoppers table.
+  */
+
+  const shopper =
     await getShopperByPhone(
       normalizedPhone
     );
 
-  /*
-    ONLY START/JOIN can create a shopper.
-  */
-
-  if (
-    command === "START" ||
-    command === "JOIN"
-  ) {
-    if (!shopper) {
-      shopper =
-        await getOrCreateShopper(
-          normalizedPhone
-        );
-    } else {
-      await updateShopper(
-        shopper.id,
-        {
-          available:
-            true,
-
-          whatsapp_opted_in:
-            true,
-
-          last_seen_at:
-            new Date().toISOString(),
-        }
-      );
-    }
-
-    await sendWhatsAppMessage(
-      normalizedPhone,
-
-      `Welcome to Fetch Shopper 🛍️\n\nYou’re now active. I’ll send you Fetch jobs here.\n\nCommands:\nACCEPT\nDECLINE\nSHOPPING\nSUBSTITUTE: old item -> new item\nPICKED UP\nOUT FOR DELIVERY\nDELIVERED\nSTATUS`
-    );
-
-    return;
-  }
-
-  /*
-    If the number isn't already a shopper,
-    NEVER create one here.
-  */
-
   if (!shopper) {
+    /*
+      Extra safety layer.
+      Even if this function is accidentally
+      called somewhere else, an unknown number
+      can NEVER become a shopper.
+    */
+
     await sendWhatsAppMessage(
       normalizedPhone,
 
-      "You’re not registered as a Fetch shopper yet. Reply START to join."
+      "You’re not registered as a Fetch shopper. Please contact Fetch to become a shopper."
     );
 
     return;
@@ -2101,6 +2155,35 @@ async function handleShopperMessage({
         new Date().toISOString(),
     }
   );
+
+  /* START */
+
+  if (
+    command === "START" ||
+    command === "JOIN"
+  ) {
+    await updateShopper(
+      shopper.id,
+      {
+        available:
+          true,
+
+        whatsapp_opted_in:
+          true,
+
+        last_seen_at:
+          new Date().toISOString(),
+      }
+    );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      `Welcome back to Fetch Shopper 🛍️\n\nYou’re now active. I’ll send you Fetch jobs here.\n\nCommands:\nACCEPT\nDECLINE\nSHOPPING\nSUBSTITUTE: old item -> new item\nPICKED UP\nOUT FOR DELIVERY\nDELIVERED\nSTATUS`
+    );
+
+    return;
+  }
 
   /* ACCEPT */
 
@@ -2231,6 +2314,7 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Declined. 👍"
     );
 
@@ -2299,7 +2383,7 @@ async function handleShopperMessage({
     await sendWhatsAppMessage(
       normalizedPhone,
 
-      "You don’t have an accepted Fetch job. Reply START to activate your shopper account."
+      "You don’t have an accepted Fetch job right now."
     );
 
     return;
@@ -2713,17 +2797,37 @@ export default async function handler(
     );
 
     /*
-      CRITICAL ROUTING RULE:
+      =======================================================
+      CRITICAL FETCH ROUTING
 
-      Existing shopper -> shopper flow.
+      We ONLY check whether the number already exists
+      in the shoppers table.
 
-      START/JOIN -> may create shopper.
+      If YES:
+          shopper flow
 
-      Everything else from an unknown number
-      -> customer.
+      If NO:
+          customer flow
 
-      In particular:
-      SUBSTITUTE can NEVER create a shopper.
+      There is NO automatic shopper creation here.
+
+      Therefore:
+
+      START from unknown number
+          -> CUSTOMER
+
+      SUBSTITUTE from unknown number
+          -> CUSTOMER
+
+      ACCEPT from unknown number
+          -> CUSTOMER
+
+      SHOPPING from unknown number
+          -> CUSTOMER
+
+      Only a number manually registered in shoppers
+      can ever act as a shopper.
+      =======================================================
     */
 
     const shopper =
@@ -2731,19 +2835,7 @@ export default async function handler(
         from
       );
 
-    const command =
-      text
-        .trim()
-        .toUpperCase();
-
-    const isRegistrationCommand =
-      command === "START" ||
-      command === "JOIN";
-
-    if (
-      shopper ||
-      isRegistrationCommand
-    ) {
+    if (shopper) {
       await handleShopperMessage({
         phone:
           from,
@@ -2773,8 +2865,8 @@ export default async function handler(
     );
 
     /*
-      Always return 200 to Meta so the same
-      webhook event isn't repeatedly retried.
+      Always return 200 to Meta so WhatsApp
+      does not repeatedly retry the event.
     */
 
     return res
