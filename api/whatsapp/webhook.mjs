@@ -408,16 +408,20 @@ function normalizeText(value) {
 }
 
 async function getStoreByName(storeName) {
-  const requested = normalizeText(storeName);
+  const requested =
+    normalizeText(
+      storeName
+    );
 
   if (!requested) {
     return null;
   }
 
   try {
-    const data = await supabaseRequest(
-      "stores?active=eq.true&select=*&order=name.asc&limit=100"
-    );
+    const data =
+      await supabaseRequest(
+        "stores?active=eq.true&select=*&order=name.asc&limit=100"
+      );
 
     if (!Array.isArray(data)) {
       return null;
@@ -426,7 +430,9 @@ async function getStoreByName(storeName) {
     return (
       data.find(
         (store) =>
-          normalizeText(store?.name) === requested
+          normalizeText(
+            store?.name
+          ) === requested
       ) || null
     );
   } catch (error) {
@@ -453,13 +459,17 @@ async function updateStoreLocation(
 
   try {
     await supabaseRequest(
-      `stores?id=eq.${encodeURIComponent(storeId)}`,
+      `stores?id=eq.${encodeURIComponent(
+        storeId
+      )}`,
       {
         method: "PATCH",
+
         headers: {
           Prefer:
             "return=minimal",
         },
+
         body: JSON.stringify({
           latitude,
           longitude,
@@ -474,8 +484,12 @@ async function updateStoreLocation(
   }
 }
 
-function cleanAddressForGeocoding(address) {
-  return String(address || "")
+function cleanAddressForGeocoding(
+  address
+) {
+  return String(
+    address || ""
+  )
     .trim()
     .replace(
       /\b(?:house\s*number|house\s*no\.?|house\s*#|door\s*no\.?|door\s*number)\s*(?:is|=|:)?\s*[a-z0-9\-\/]+/gi,
@@ -508,9 +522,13 @@ function cleanAddressForGeocoding(address) {
     .trim();
 }
 
-function getGeocodingQueries(address) {
+function getGeocodingQueries(
+  address
+) {
   const raw =
-    String(address || "").trim();
+    String(
+      address || ""
+    ).trim();
 
   if (!raw) {
     return [];
@@ -525,7 +543,9 @@ function getGeocodingQueries(address) {
 
   const add = (value) => {
     const query =
-      String(value || "")
+      String(
+        value || ""
+      )
         .trim()
         .replace(
           /\s{2,}/g,
@@ -540,20 +560,18 @@ function getGeocodingQueries(address) {
           query.toLowerCase()
       )
     ) {
-      queries.push(query);
+      queries.push(
+        query
+      );
     }
   };
 
-  // Try the customer's original wording first.
   add(raw);
 
-  // Add useful geographic context.
   add(
     `${cleaned}, Thiruvananthapuram, Kerala, India`
   );
 
-  // Landmark-style addresses often work better when
-  // conversational words are removed.
   const landmarkQuery =
     cleaned
       .replace(
@@ -582,13 +600,14 @@ function getGeocodingQueries(address) {
     `${landmarkQuery}, Thiruvananthapuram, Kerala, India`
   );
 
-  // Try named landmark + locality.
   const localityMatch =
     cleaned.match(
       /^(.*?)(?:,\s*|\s+)([A-Za-z][A-Za-z\s.-]{2,})$/i
     );
 
-  if (localityMatch) {
+  if (
+    localityMatch
+  ) {
     const landmark =
       localityMatch[1].trim();
 
@@ -605,13 +624,14 @@ function getGeocodingQueries(address) {
     }
   }
 
-  // Finally try the cleaned wording by itself.
   add(cleaned);
 
   return queries;
 }
 
-async function geocodeAddress(address) {
+async function geocodeAddress(
+  address
+) {
   const queries =
     getGeocodingQueries(
       address
@@ -642,6 +662,7 @@ async function geocodeAddress(address) {
             headers: {
               Accept:
                 "application/json",
+
               "User-Agent":
                 FETCH_DISTANCE_USER_AGENT,
             },
@@ -672,7 +693,9 @@ async function geocodeAddress(address) {
           JSON.stringify({
             originalAddress:
               address,
+
             query,
+
             displayName:
               result.display_name,
           })
@@ -698,7 +721,8 @@ async function geocodeAddress(address) {
         };
       }
     } catch (error) {
-      lastError = error;
+      lastError =
+        error;
 
       console.error(
         "FETCH GEOCODE ATTEMPT ERROR:",
@@ -758,23 +782,51 @@ async function getCoordinatesForStore(
   return coordinates;
 }
 
-async function calculateRoadDistanceKm(
+async function calculateRoadDistanceKmFromCoordinates(
   store,
-  deliveryAddress
+  destinationCoordinates
 ) {
   const storeCoordinates =
     await getCoordinatesForStore(
       store
     );
 
-  const destination =
-    await geocodeAddress(
-      deliveryAddress
+  if (
+    !destinationCoordinates ||
+    destinationCoordinates.latitude == null ||
+    destinationCoordinates.longitude == null
+  ) {
+    throw new Error(
+      "Destination coordinates are required"
     );
+  }
+
+  const destinationLatitude =
+    Number(
+      destinationCoordinates.latitude
+    );
+
+  const destinationLongitude =
+    Number(
+      destinationCoordinates.longitude
+    );
+
+  if (
+    !Number.isFinite(
+      destinationLatitude
+    ) ||
+    !Number.isFinite(
+      destinationLongitude
+    )
+  ) {
+    throw new Error(
+      "Destination coordinates are invalid"
+    );
+  }
 
   const coordinates =
     `${storeCoordinates.longitude},${storeCoordinates.latitude};` +
-    `${destination.longitude},${destination.latitude}`;
+    `${destinationLongitude},${destinationLatitude}`;
 
   const response =
     await fetch(
@@ -817,6 +869,21 @@ async function calculateRoadDistanceKm(
     ).toFixed(
       DISTANCE_DECIMAL_PLACES
     )
+  );
+}
+
+async function calculateRoadDistanceKm(
+  store,
+  deliveryAddress
+) {
+  const destination =
+    await geocodeAddress(
+      deliveryAddress
+    );
+
+  return calculateRoadDistanceKmFromCoordinates(
+    store,
+    destination
   );
 }
 
@@ -876,6 +943,61 @@ async function applyDeliveryPricing(
       order.delivery_address
     );
 
+  return applyCalculatedDeliveryPricing(
+    order,
+    store,
+    distanceKm,
+    "osm_osrm_mvp"
+  );
+}
+
+async function applyDeliveryPricingFromCoordinates(
+  order,
+  latitude,
+  longitude,
+  source =
+    "whatsapp_location_osrm_mvp"
+) {
+  if (!order?.id) {
+    throw new Error(
+      "Order is required for delivery pricing"
+    );
+  }
+
+  const store =
+    await getStoreByName(
+      order.store_name
+    );
+
+  if (!store) {
+    throw new Error(
+      `Store not found in Fetch stores: ${order.store_name}`
+    );
+  }
+
+  const distanceKm =
+    await calculateRoadDistanceKmFromCoordinates(
+      store,
+      {
+        latitude,
+        longitude,
+      }
+    );
+
+  return applyCalculatedDeliveryPricing(
+    order,
+    store,
+    distanceKm,
+    source
+  );
+}
+
+async function applyCalculatedDeliveryPricing(
+  order,
+  store,
+  distanceKm,
+  pricingSource
+) {
   const deliveryFee =
     calculateDeliveryFee(
       distanceKm
@@ -918,7 +1040,7 @@ async function applyDeliveryPricing(
           "calculated",
 
         delivery_pricing_source:
-          "osm_osrm_mvp",
+          pricingSource,
 
         payment_status:
           order.payment_status ||
@@ -2171,6 +2293,7 @@ function fallbackDecision(
 async function handleCustomerMessage({
   phone,
   userMessage,
+  location = null,
 }) {
   const normalizedPhone =
     normalizePhone(
@@ -2196,6 +2319,185 @@ async function handleCustomerMessage({
     await getRecentMessages(
       customer.id
     );
+
+  /* -----------------------------------------
+     WHATSAPP LOCATION PIN
+  ----------------------------------------- */
+
+  if (
+    location &&
+    Number.isFinite(
+      Number(
+        location.latitude
+      )
+    ) &&
+    Number.isFinite(
+      Number(
+        location.longitude
+      )
+    )
+  ) {
+    const locationLabel =
+      [
+        location.name,
+        location.address,
+      ]
+        .map(
+          (value) =>
+            String(
+              value || ""
+            ).trim()
+        )
+        .filter(Boolean)
+        .join(", ");
+
+    const savedUserMessage =
+      userMessage &&
+      String(
+        userMessage
+      ).trim()
+        ? String(
+            userMessage
+          ).trim()
+        : "Shared a WhatsApp location pin";
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder?.id ||
+        latestOrder?.id ||
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        savedUserMessage,
+    });
+
+    if (
+      !activeOrder ||
+      ![
+        "collecting_details",
+        "awaiting_confirmation",
+      ].includes(
+        activeOrder.status
+      )
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "I received your location 📍, but I don’t have an order waiting for a delivery location yet. First tell me what you’d like to fetch and which store."
+      );
+
+      return;
+    }
+
+    const addressForOrder =
+      locationLabel ||
+      activeOrder.delivery_address ||
+      "WhatsApp location";
+
+    const locationUpdatedOrder =
+      await updateOrder(
+        activeOrder.id,
+        {
+          delivery_address:
+            addressForOrder,
+
+          delivery_fee:
+            0,
+
+          total_amount:
+            0,
+
+          distance_km:
+            null,
+
+          delivery_pricing_status:
+            "pending",
+
+          delivery_pricing_source:
+            null,
+
+          priced_at:
+            null,
+
+          status:
+            "collecting_details",
+        }
+      );
+
+    if (!locationUpdatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "I received your location, but I couldn’t update your order. Please send the location once more."
+      );
+
+      return;
+    }
+
+    try {
+      const pricedOrder =
+        await applyDeliveryPricingFromCoordinates(
+          locationUpdatedOrder,
+
+          Number(
+            location.latitude
+          ),
+
+          Number(
+            location.longitude
+          )
+        );
+
+      const reply =
+        buildPricingConfirmationMessage(
+          pricedOrder
+        );
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          pricedOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "assistant",
+
+        message:
+          reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+    } catch (pricingError) {
+      console.error(
+        "FETCH WHATSAPP LOCATION PRICING ERROR:",
+        pricingError
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "I received your exact WhatsApp location 📍, but I couldn’t calculate the road distance right now. Please try sending the location again in a moment."
+      );
+    }
+
+    return;
+  }
 
   /* -----------------------------------------
      PENDING SUBSTITUTION
@@ -2656,7 +2958,6 @@ async function handleCustomerMessage({
       address
     );
 
-    // A known store is required for the MVP distance calculation.
     const storeRecord =
       await getStoreByName(
         store
@@ -2851,7 +3152,6 @@ async function handleCustomerMessage({
         decision.budget;
     }
 
-    // Any order change invalidates the old distance/price.
     updates.item_total =
       0;
 
@@ -2968,25 +3268,12 @@ async function handleShopperMessage({
   const command =
     rawText.toUpperCase();
 
-  /*
-    IMPORTANT:
-    This function is ONLY called for a number
-    already registered in the shoppers table.
-  */
-
   const shopper =
     await getShopperByPhone(
       normalizedPhone
     );
 
   if (!shopper) {
-    /*
-      Extra safety layer.
-      Even if this function is accidentally
-      called somewhere else, an unknown number
-      can NEVER become a shopper.
-    */
-
     await sendWhatsAppMessage(
       normalizedPhone,
 
@@ -3475,6 +3762,10 @@ function extractIncomingWhatsAppMessage(
     return null;
   }
 
+  const location =
+    message?.location ||
+    null;
+
   return {
     from:
       normalizePhone(
@@ -3492,6 +3783,25 @@ function extractIncomingWhatsAppMessage(
     type:
       message.type ||
       null,
+
+    location:
+      location
+        ? {
+            latitude:
+              location.latitude,
+
+            longitude:
+              location.longitude,
+
+            name:
+              location.name ||
+              "",
+
+            address:
+              location.address ||
+              "",
+          }
+        : null,
   };
 }
 
@@ -3622,7 +3932,10 @@ export default async function handler(
     if (
       !incoming ||
       !incoming.from ||
-      !incoming.text
+      (
+        !incoming.text &&
+        !incoming.location
+      )
     ) {
       return res
         .status(200)
@@ -3638,13 +3951,23 @@ export default async function handler(
     const {
       from,
       text,
+      location,
     } = incoming;
+
+    const effectiveText =
+      text ||
+      (
+        location
+          ? "Shared a WhatsApp location pin"
+          : ""
+      );
 
     console.log(
       "FETCH INCOMING:",
       JSON.stringify({
         from,
         text,
+        location,
       })
     );
 
@@ -3692,7 +4015,8 @@ export default async function handler(
         phone:
           from,
 
-        text,
+        text:
+          effectiveText,
       });
     } else {
       await handleCustomerMessage({
@@ -3700,7 +4024,9 @@ export default async function handler(
           from,
 
         userMessage:
-          text,
+          effectiveText,
+
+        location,
       });
     }
 
@@ -3715,11 +4041,6 @@ export default async function handler(
       "FETCH WEBHOOK ERROR:",
       error
     );
-
-    /*
-      Always return 200 to Meta so WhatsApp
-      does not repeatedly retry the event.
-    */
 
     return res
       .status(200)
