@@ -3250,207 +3250,244 @@ function extractIncomingWhatsAppMessage(
    MAIN WEBHOOK
 ========================================================= */
 
-export default async function handler(
-  request
-) {
+/* =========================================================
+   WEBHOOK VERIFICATION
+========================================================= */
+
+export async function GET(request) {
   try {
-
-    /* -----------------------------------------------------
-       META VERIFICATION
-    ----------------------------------------------------- */
-
-    if (
-      request.method ===
-      "GET"
-    ) {
-      const url =
-        new URL(
-          request.url
-        );
-
-      const mode =
-        url.searchParams.get(
-          "hub.mode"
-        );
-
-      const token =
-        url.searchParams.get(
-          "hub.verify_token"
-        );
-
-      const challenge =
-        url.searchParams.get(
-          "hub.challenge"
-        );
-
-      if (
-        mode ===
-          "subscribe" &&
-        token ===
-          WHATSAPP_VERIFY_TOKEN
-      ) {
-        return textResponse(
-          challenge,
-          200
-        );
-      }
-
-      return textResponse(
-        "Forbidden",
-        403
+    const url =
+      new URL(
+        request.url,
+        `https://${request.headers.host}`
       );
-    }
 
-
-    /* -----------------------------------------------------
-       ONLY POST AFTER THIS
-    ----------------------------------------------------- */
-
-    if (
-      request.method !==
-      "POST"
-    ) {
-      return textResponse(
-        "Method Not Allowed",
-        405
+    const mode =
+      url.searchParams.get(
+        "hub.mode"
       );
-    }
 
+    const token =
+      url.searchParams.get(
+        "hub.verify_token"
+      );
 
-    const body =
-      await request.json();
+    const challenge =
+      url.searchParams.get(
+        "hub.challenge"
+      );
 
     console.log(
-      "FETCH WHATSAPP WEBHOOK:",
-      JSON.stringify(body)
-    );
-
-
-    const incoming =
-      extractIncomingWhatsAppMessage(
-        body
-      );
-
-
-    /*
-     * Meta sends many non-message events.
-     * Return immediately.
-     */
-
-    if (!incoming) {
-      return jsonResponse({
-        success: true,
-      });
-    }
-
-
-    const phone =
-      incoming.from;
-
-    const text =
-      incoming.text;
-
-
-    if (!text) {
-      return jsonResponse({
-        success: true,
-      });
-    }
-
-
-    console.log(
-      "FETCH INCOMING MESSAGE:",
+      "FETCH WEBHOOK VERIFICATION:",
       JSON.stringify({
-        phone,
-        text,
+        mode,
+        tokenReceived: !!token,
+        challengeReceived: !!challenge,
       })
     );
 
-
-    /* -----------------------------------------------------
-       IMPORTANT:
-       SHOPPER ROUTING HAPPENS FIRST
-    ----------------------------------------------------- */
-
-    const existingShopper =
-      await getShopperByPhone(
-        phone
+    if (
+      mode === "subscribe" &&
+      token === WHATSAPP_VERIFY_TOKEN
+    ) {
+      return textResponse(
+        challenge || "",
+        200
       );
+    }
 
+    return textResponse(
+      "Forbidden",
+      403
+    );
+
+  } catch (error) {
+    console.error(
+      "FETCH WEBHOOK GET ERROR:",
+      error
+    );
+
+    return textResponse(
+      "Forbidden",
+      403
+    );
+  }
+}
+
+
+/* =========================================================
+   WEBHOOK POST
+========================================================= */
+
+export async function POST(request) {
+  try {
+    /*
+     * Vercel Node runtime gives us
+     * a Node IncomingMessage rather than
+     * a Web Request.
+     *
+     * Therefore we read request.body
+     * instead of calling request.json().
+     */
+
+    let body = request.body;
 
     /*
-     * START can register a new shopper.
+     * Some runtimes may provide the body
+     * as a string/buffer.
      */
 
     if (
-      isShopperStart(
-        normalizeShopperCommand(
-          text
-        )
-      )
+      typeof body === "string"
     ) {
-      await handleShopperMessage({
-        phone,
-        text,
-      });
-
-      return jsonResponse({
-        success: true,
-      });
-    }
-
-
-    /*
-     * Existing shopper messages go to shopper flow.
-     */
-
-    if (existingShopper) {
-      const handled =
-        await handleShopperMessage({
-          phone,
-          text,
-        });
-
-      if (handled) {
-        return jsonResponse({
-          success: true,
-        });
+      try {
+        body = JSON.parse(body);
+      } catch {
+        return jsonResponse(
+          {
+            error:
+              "Invalid JSON",
+          },
+          400
+        );
       }
     }
 
+    /*
+     * If Vercel has not parsed the body,
+     * collect it manually.
+     */
 
-    /* -----------------------------------------------------
-       OTHERWISE CUSTOMER
-    ----------------------------------------------------- */
+    if (
+      !body ||
+      typeof body !== "object"
+    ) {
+      const chunks = [];
 
-    await handleCustomerMessage({
-      phone,
-      text,
-    });
+      for await (
+        const chunk of request
+      ) {
+        chunks.push(
+          Buffer.from(chunk)
+        );
+      }
 
+      const rawBody =
+        Buffer.concat(
+          chunks
+        ).toString("utf8");
+
+      try {
+        body =
+          JSON.parse(
+            rawBody
+          );
+      } catch {
+        return jsonResponse(
+          {
+            error:
+              "Invalid JSON",
+          },
+          400
+        );
+      }
+    }
+
+    console.log(
+      "FETCH WEBHOOK RECEIVED:",
+      JSON.stringify(
+        body,
+        null,
+        2
+      )
+    );
+
+    /*
+     * Process every Meta entry/change/message.
+     */
+
+    const entries =
+      Array.isArray(
+        body?.entry
+      )
+        ? body.entry
+        : [];
+
+    for (
+      const entry of entries
+    ) {
+      const changes =
+        Array.isArray(
+          entry?.changes
+        )
+          ? entry.changes
+          : [];
+
+      for (
+        const change of changes
+      ) {
+        const value =
+          change?.value;
+
+        if (!value) {
+          continue;
+        }
+
+        const messages =
+          Array.isArray(
+            value.messages
+          )
+            ? value.messages
+            : [];
+
+        for (
+          const message of messages
+        ) {
+          try {
+            await handleIncomingMessage(
+              message
+            );
+          } catch (error) {
+            console.error(
+              "FETCH MESSAGE HANDLING ERROR:",
+              error
+            );
+          }
+        }
+      }
+    }
 
     return jsonResponse({
-      success: true,
+      success:
+        true,
     });
 
   } catch (error) {
     console.error(
-      "FETCH WEBHOOK ERROR:",
+      "FETCH WEBHOOK POST ERROR:",
       error
     );
 
     /*
-     * Always return 200 to Meta after
-     * processing an inbound webhook.
-     * This prevents unnecessary retries
-     * for application-level errors.
+     * Return 200 to Meta so it doesn't
+     * repeatedly resend the same webhook.
      */
 
     return jsonResponse({
-      success: false,
-      error:
-        error?.message ||
-        String(error),
+      success:
+        true,
     });
   }
 }
+
+
+/* =========================================================
+   DEFAULT HANDLER
+========================================================= */
+
+/*
+ * No default handler is required here.
+ *
+ * Vercel automatically detects the
+ * exported GET and POST functions.
+ */
