@@ -1,10 +1,22 @@
 const SUPABASE_URL =
-  process.env.VITE_SUPABASE_URL || "https://skfxzagxlxputwpwxwbe.supabase.co";
-const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
-const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  process.env.VITE_SUPABASE_URL ||
+  "https://skfxzagxlxputwpwxwbe.supabase.co";
+
+const SUPABASE_KEY =
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+const WHATSAPP_ACCESS_TOKEN =
+  process.env.WHATSAPP_ACCESS_TOKEN;
+
+const WHATSAPP_PHONE_NUMBER_ID =
+  process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+const WHATSAPP_VERIFY_TOKEN =
+  process.env.WHATSAPP_VERIFY_TOKEN;
+
+const OPENAI_API_KEY =
+  process.env.OPENAI_API_KEY;
+
 const OPENAI_MODEL = "gpt-5.6-luna";
 
 const ACTIVE_ORDER_STATUSES = [
@@ -17,38 +29,36 @@ const ACTIVE_ORDER_STATUSES = [
   "out_for_delivery",
 ];
 
+/* =========================================================
+   HELPERS
+========================================================= */
+
 function normalizePhone(phone) {
-  return phone ? String(phone).replace(/[^\d]/g, "") : "";
-}
-
-function jsonResponse(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function textResponse(body, status = 200) {
-  return new Response(String(body), {
-    status,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-  });
+  return phone
+    ? String(phone).replace(/[^\d]/g, "")
+    : "";
 }
 
 async function supabaseRequest(path, options = {}) {
   if (!SUPABASE_KEY) {
-    throw new Error("VITE_SUPABASE_PUBLISHABLE_KEY is missing");
+    throw new Error(
+      "VITE_SUPABASE_PUBLISHABLE_KEY is missing"
+    );
   }
 
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    ...options,
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/${path}`,
+    {
+      ...options,
+
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+    }
+  );
 
   const raw = await response.text();
 
@@ -65,7 +75,9 @@ async function supabaseRequest(path, options = {}) {
   if (!response.ok) {
     throw new Error(
       `Supabase ${response.status}: ${
-        typeof data === "string" ? data : JSON.stringify(data)
+        typeof data === "string"
+          ? data
+          : JSON.stringify(data)
       }`
     );
   }
@@ -73,31 +85,54 @@ async function supabaseRequest(path, options = {}) {
   return data;
 }
 
-async function sendWhatsAppMessage(to, message) {
-  if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
-    throw new Error("WhatsApp environment variables are missing");
+async function sendWhatsAppMessage(
+  to,
+  message
+) {
+  if (
+    !WHATSAPP_ACCESS_TOKEN ||
+    !WHATSAPP_PHONE_NUMBER_ID
+  ) {
+    throw new Error(
+      "WhatsApp environment variables are missing"
+    );
   }
 
-  const normalizedTo = normalizePhone(to);
+  const normalizedTo =
+    normalizePhone(to);
 
   console.log(
     "FETCH WHATSAPP SEND:",
-    JSON.stringify({ to: normalizedTo, message })
+    JSON.stringify({
+      to: normalizedTo,
+      message,
+    })
   );
 
   const response = await fetch(
     `https://graph.facebook.com/v26.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {
       method: "POST",
+
       headers: {
-        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
+        Authorization:
+          `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+
+        "Content-Type":
+          "application/json",
       },
+
       body: JSON.stringify({
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
+        messaging_product:
+          "whatsapp",
+
+        recipient_type:
+          "individual",
+
         to: normalizedTo,
+
         type: "text",
+
         text: {
           preview_url: false,
           body: message,
@@ -106,11 +141,14 @@ async function sendWhatsAppMessage(to, message) {
     }
   );
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
   if (!response.ok) {
     throw new Error(
-      `WhatsApp ${response.status}: ${JSON.stringify(data)}`
+      `WhatsApp ${response.status}: ${JSON.stringify(
+        data
+      )}`
     );
   }
 
@@ -122,41 +160,69 @@ async function sendWhatsAppMessage(to, message) {
   return data;
 }
 
-/* CUSTOMERS */
+/* =========================================================
+   CUSTOMERS
+========================================================= */
 
 async function getCustomer(phone) {
-  const data = await supabaseRequest(
-    `customers?phone=eq.${encodeURIComponent(
-      normalizePhone(phone)
-    )}&select=*&limit=1`
-  );
+  const normalizedPhone =
+    normalizePhone(phone);
 
-  return Array.isArray(data) && data.length ? data[0] : null;
+  const data =
+    await supabaseRequest(
+      `customers?phone=eq.${encodeURIComponent(
+        normalizedPhone
+      )}&select=*&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
 }
 
-async function getOrCreateCustomer(phone) {
-  const normalizedPhone = normalizePhone(phone);
+async function getOrCreateCustomer(
+  phone
+) {
+  const normalizedPhone =
+    normalizePhone(phone);
 
-  let customer = await getCustomer(normalizedPhone);
+  let customer =
+    await getCustomer(
+      normalizedPhone
+    );
 
   if (customer) {
     return customer;
   }
 
   try {
-    const data = await supabaseRequest("customers", {
-      method: "POST",
-      headers: {
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify({
-        phone: normalizedPhone,
-      }),
-    });
+    const data =
+      await supabaseRequest(
+        "customers",
+        {
+          method: "POST",
 
-    return Array.isArray(data) ? data[0] : data;
+          headers: {
+            Prefer:
+              "return=representation",
+          },
+
+          body: JSON.stringify({
+            phone:
+              normalizedPhone,
+          }),
+        }
+      );
+
+    return Array.isArray(data)
+      ? data[0]
+      : data;
   } catch (error) {
-    customer = await getCustomer(normalizedPhone);
+    customer =
+      await getCustomer(
+        normalizedPhone
+      );
 
     if (customer) {
       return customer;
@@ -166,16 +232,24 @@ async function getOrCreateCustomer(phone) {
   }
 }
 
-async function updateCustomerAddress(customerId, address) {
+async function updateCustomerAddress(
+  customerId,
+  address
+) {
   if (!address) return;
 
   await supabaseRequest(
-    `customers?id=eq.${encodeURIComponent(customerId)}`,
+    `customers?id=eq.${encodeURIComponent(
+      customerId
+    )}`,
     {
       method: "PATCH",
+
       headers: {
-        Prefer: "return=minimal",
+        Prefer:
+          "return=minimal",
       },
+
       body: JSON.stringify({
         address,
       }),
@@ -183,24 +257,34 @@ async function updateCustomerAddress(customerId, address) {
   );
 }
 
-/* SHOPPERS */
+/* =========================================================
+   SHOPPERS
+========================================================= */
 
-async function getShopperByPhone(phone) {
-  const normalizedPhone = normalizePhone(phone);
+async function getShopperByPhone(
+  phone
+) {
+  const normalizedPhone =
+    normalizePhone(phone);
 
-  const exact = await supabaseRequest(
-    `shoppers?phone=eq.${encodeURIComponent(
-      normalizedPhone
-    )}&select=*&limit=1`
-  );
+  const exact =
+    await supabaseRequest(
+      `shoppers?phone=eq.${encodeURIComponent(
+        normalizedPhone
+      )}&select=*&limit=1`
+    );
 
-  if (Array.isArray(exact) && exact.length) {
+  if (
+    Array.isArray(exact) &&
+    exact.length
+  ) {
     return exact[0];
   }
 
-  const shoppers = await supabaseRequest(
-    "shoppers?select=*&limit=100"
-  );
+  const shoppers =
+    await supabaseRequest(
+      "shoppers?select=*&limit=100"
+    );
 
   if (!Array.isArray(shoppers)) {
     return null;
@@ -208,42 +292,77 @@ async function getShopperByPhone(phone) {
 
   return (
     shoppers.find(
-      (s) => normalizePhone(s.phone) === normalizedPhone
+      (shopper) =>
+        normalizePhone(
+          shopper.phone
+        ) === normalizedPhone
     ) || null
   );
 }
 
-async function createShopper(phone) {
-  const normalizedPhone = normalizePhone(phone);
+async function createShopper(
+  phone
+) {
+  const normalizedPhone =
+    normalizePhone(phone);
 
-  const data = await supabaseRequest("shoppers", {
-    method: "POST",
-    headers: {
-      Prefer: "return=representation",
-    },
-    body: JSON.stringify({
-      name: `Fetch Shopper ${normalizedPhone.slice(-4)}`,
-      phone: normalizedPhone,
-      available: true,
-      whatsapp_opted_in: true,
-      last_seen_at: new Date().toISOString(),
-    }),
-  });
+  const data =
+    await supabaseRequest(
+      "shoppers",
+      {
+        method: "POST",
 
-  return Array.isArray(data) ? data[0] : data;
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify({
+          name:
+            `Fetch Shopper ${normalizedPhone.slice(
+              -4
+            )}`,
+
+          phone:
+            normalizedPhone,
+
+          available: true,
+
+          whatsapp_opted_in:
+            true,
+
+          last_seen_at:
+            new Date().toISOString(),
+        }),
+      }
+    );
+
+  return Array.isArray(data)
+    ? data[0]
+    : data;
 }
 
-async function getOrCreateShopper(phone) {
-  let shopper = await getShopperByPhone(phone);
+async function getOrCreateShopper(
+  phone
+) {
+  let shopper =
+    await getShopperByPhone(
+      phone
+    );
 
   if (shopper) {
     return shopper;
   }
 
   try {
-    return await createShopper(phone);
+    return await createShopper(
+      phone
+    );
   } catch (error) {
-    shopper = await getShopperByPhone(phone);
+    shopper =
+      await getShopperByPhone(
+        phone
+      );
 
     if (shopper) {
       return shopper;
@@ -253,45 +372,90 @@ async function getOrCreateShopper(phone) {
   }
 }
 
-async function updateShopper(shopperId, updates) {
-  const data = await supabaseRequest(
-    `shoppers?id=eq.${encodeURIComponent(shopperId)}`,
-    {
-      method: "PATCH",
-      headers: {
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify(updates),
-    }
-  );
+async function updateShopper(
+  shopperId,
+  updates
+) {
+  const data =
+    await supabaseRequest(
+      `shoppers?id=eq.${encodeURIComponent(
+        shopperId
+      )}`,
+      {
+        method: "PATCH",
 
-  return Array.isArray(data) && data.length ? data[0] : null;
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify(
+          updates
+        ),
+      }
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
 }
 
-/* ORDERS */
+/* =========================================================
+   ORDERS
+========================================================= */
 
-async function getActiveOrder(customerId) {
-  const statusQuery = ACTIVE_ORDER_STATUSES.join(",");
+async function getActiveOrder(
+  customerId
+) {
+  const statusQuery =
+    ACTIVE_ORDER_STATUSES.join(",");
 
-  const data = await supabaseRequest(
-    `orders?customer_id=eq.${encodeURIComponent(
-      customerId
-    )}&status=in.(${encodeURIComponent(
-      statusQuery
-    )})&select=*&order=created_at.desc&limit=1`
-  );
+  const data =
+    await supabaseRequest(
+      `orders?customer_id=eq.${encodeURIComponent(
+        customerId
+      )}&status=in.(${encodeURIComponent(
+        statusQuery
+      )})&select=*&order=created_at.desc&limit=1`
+    );
 
-  return Array.isArray(data) && data.length ? data[0] : null;
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
 }
 
-async function getLatestOrder(customerId) {
-  const data = await supabaseRequest(
-    `orders?customer_id=eq.${encodeURIComponent(
-      customerId
-    )}&select=*&order=created_at.desc&limit=1`
-  );
+async function getLatestOrder(
+  customerId
+) {
+  const data =
+    await supabaseRequest(
+      `orders?customer_id=eq.${encodeURIComponent(
+        customerId
+      )}&select=*&order=created_at.desc&limit=1`
+    );
 
-  return Array.isArray(data) && data.length ? data[0] : null;
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
+}
+
+async function getOrderById(
+  orderId
+) {
+  const data =
+    await supabaseRequest(
+      `orders?id=eq.${encodeURIComponent(
+        orderId
+      )}&select=*&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
 }
 
 async function createOrder({
@@ -302,60 +466,89 @@ async function createOrder({
   deliveryAddress,
   status,
 }) {
-  const data = await supabaseRequest("orders", {
-    method: "POST",
-    headers: {
-      Prefer: "return=representation",
-    },
-    body: JSON.stringify({
-      customer_id: customerId,
-      store_name: storeName,
-      items,
-      budget: budget ?? null,
-      delivery_address: deliveryAddress,
-      status,
-    }),
-  });
+  const data =
+    await supabaseRequest(
+      "orders",
+      {
+        method: "POST",
 
-  return Array.isArray(data) ? data[0] : data;
-}
+        headers: {
+          Prefer:
+            "return=representation",
+        },
 
-async function updateOrder(orderId, updates) {
-  const data = await supabaseRequest(
-    `orders?id=eq.${encodeURIComponent(orderId)}`,
-    {
-      method: "PATCH",
-      headers: {
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify(updates),
-    }
-  );
+        body: JSON.stringify({
+          customer_id:
+            customerId,
 
-  return Array.isArray(data) && data.length ? data[0] : null;
-}
+          store_name:
+            storeName,
 
-async function getOrderById(orderId) {
-  const data = await supabaseRequest(
-    `orders?id=eq.${encodeURIComponent(
-      orderId
-    )}&select=*&limit=1`
-  );
+          items,
 
-  return Array.isArray(data) && data.length ? data[0] : null;
-}
+          budget:
+            budget ?? null,
 
-/* MEMORY */
+          delivery_address:
+            deliveryAddress,
 
-async function getRecentMessages(customerId) {
-  try {
-    const data = await supabaseRequest(
-      `messages?customer_id=eq.${encodeURIComponent(
-        customerId
-      )}&select=role,message,created_at&order=created_at.desc&limit=12`
+          status,
+        }),
+      }
     );
 
-    return Array.isArray(data) ? data.reverse() : [];
+  return Array.isArray(data)
+    ? data[0]
+    : data;
+}
+
+async function updateOrder(
+  orderId,
+  updates
+) {
+  const data =
+    await supabaseRequest(
+      `orders?id=eq.${encodeURIComponent(
+        orderId
+      )}`,
+      {
+        method: "PATCH",
+
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify(
+          updates
+        ),
+      }
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
+}
+
+/* =========================================================
+   MESSAGE MEMORY
+========================================================= */
+
+async function getRecentMessages(
+  customerId
+) {
+  try {
+    const data =
+      await supabaseRequest(
+        `messages?customer_id=eq.${encodeURIComponent(
+          customerId
+        )}&select=role,message,created_at&order=created_at.desc&limit=12`
+      );
+
+    return Array.isArray(data)
+      ? data.reverse()
+      : [];
   } catch (error) {
     console.error(
       "FETCH MESSAGE HISTORY ERROR:",
@@ -374,19 +567,32 @@ async function saveMessage({
   message,
 }) {
   try {
-    await supabaseRequest("messages", {
-      method: "POST",
-      headers: {
-        Prefer: "return=minimal",
-      },
-      body: JSON.stringify({
-        customer_id: customerId,
-        order_id: orderId,
-        phone: normalizePhone(phone),
-        role,
-        message,
-      }),
-    });
+    await supabaseRequest(
+      "messages",
+      {
+        method: "POST",
+
+        headers: {
+          Prefer:
+            "return=minimal",
+        },
+
+        body: JSON.stringify({
+          customer_id:
+            customerId,
+
+          order_id:
+            orderId,
+
+          phone:
+            normalizePhone(phone),
+
+          role,
+
+          message,
+        }),
+      }
+    );
   } catch (error) {
     console.error(
       "FETCH SAVE MESSAGE ERROR:",
@@ -395,64 +601,114 @@ async function saveMessage({
   }
 }
 
-/* SHOPPER JOBS */
+/* =========================================================
+   SHOPPER JOBS
+========================================================= */
 
-async function getOpenShopperJob(shopperId) {
-  const data = await supabaseRequest(
-    `shopper_jobs?shopper_id=eq.${encodeURIComponent(
-      shopperId
-    )}&status=eq.offered&select=*&order=offered_at.desc&limit=1`
-  );
+async function getOpenShopperJob(
+  shopperId
+) {
+  const data =
+    await supabaseRequest(
+      `shopper_jobs?shopper_id=eq.${encodeURIComponent(
+        shopperId
+      )}&status=eq.offered&select=*&order=offered_at.desc&limit=1`
+    );
 
-  return Array.isArray(data) && data.length ? data[0] : null;
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
 }
 
-async function getAcceptedShopperJob(shopperId) {
-  const data = await supabaseRequest(
-    `shopper_jobs?shopper_id=eq.${encodeURIComponent(
-      shopperId
-    )}&status=eq.accepted&select=*&order=accepted_at.desc&limit=1`
-  );
+async function getAcceptedShopperJob(
+  shopperId
+) {
+  const data =
+    await supabaseRequest(
+      `shopper_jobs?shopper_id=eq.${encodeURIComponent(
+        shopperId
+      )}&status=eq.accepted&select=*&order=accepted_at.desc&limit=1`
+    );
 
-  return Array.isArray(data) && data.length ? data[0] : null;
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
 }
 
-async function createShopperJob(orderId, shopperId) {
-  const data = await supabaseRequest("shopper_jobs", {
-    method: "POST",
-    headers: {
-      Prefer: "return=representation",
-    },
-    body: JSON.stringify({
-      order_id: orderId,
-      shopper_id: shopperId,
-      status: "offered",
-      offered_at: new Date().toISOString(),
-    }),
-  });
+async function createShopperJob(
+  orderId,
+  shopperId
+) {
+  const data =
+    await supabaseRequest(
+      "shopper_jobs",
+      {
+        method: "POST",
 
-  return Array.isArray(data) ? data[0] : data;
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify({
+          order_id:
+            orderId,
+
+          shopper_id:
+            shopperId,
+
+          status:
+            "offered",
+
+          offered_at:
+            new Date().toISOString(),
+        }),
+      }
+    );
+
+  return Array.isArray(data)
+    ? data[0]
+    : data;
 }
 
-async function updateShopperJob(jobId, updates) {
-  const data = await supabaseRequest(
-    `shopper_jobs?id=eq.${encodeURIComponent(jobId)}`,
-    {
-      method: "PATCH",
-      headers: {
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify(updates),
-    }
-  );
+async function updateShopperJob(
+  jobId,
+  updates
+) {
+  const data =
+    await supabaseRequest(
+      `shopper_jobs?id=eq.${encodeURIComponent(
+        jobId
+      )}`,
+      {
+        method: "PATCH",
 
-  return Array.isArray(data) && data.length ? data[0] : null;
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify(
+          updates
+        ),
+      }
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
 }
 
-async function getAvailableShoppers(excludedIds = []) {
-  const data = await supabaseRequest(
-    "shoppers?available=eq.true&whatsapp_opted_in=eq.true&select=*&limit=100"
-  );
+async function getAvailableShoppers(
+  excludedIds = []
+) {
+  const data =
+    await supabaseRequest(
+      "shoppers?available=eq.true&whatsapp_opted_in=eq.true&select=*&limit=100"
+    );
 
   if (!Array.isArray(data)) {
     return [];
@@ -460,7 +716,9 @@ async function getAvailableShoppers(excludedIds = []) {
 
   return data.filter(
     (shopper) =>
-      !excludedIds.includes(shopper.id) &&
+      !excludedIds.includes(
+        shopper.id
+      ) &&
       !shopper.current_order_id
   );
 }
@@ -469,9 +727,10 @@ async function offerOrderToShopper(
   order,
   excludedIds = []
 ) {
-  const shoppers = await getAvailableShoppers(
-    excludedIds
-  );
+  const shoppers =
+    await getAvailableShoppers(
+      excludedIds
+    );
 
   if (!shoppers.length) {
     return {
@@ -483,16 +742,18 @@ async function offerOrderToShopper(
 
   for (const shopper of shoppers) {
     try {
-      const existing = await supabaseRequest(
-        `shopper_jobs?order_id=eq.${encodeURIComponent(
-          order.id
-        )}&shopper_id=eq.${encodeURIComponent(
-          shopper.id
-        )}&status=eq.offered&select=*&limit=1`
-      );
+      const existing =
+        await supabaseRequest(
+          `shopper_jobs?order_id=eq.${encodeURIComponent(
+            order.id
+          )}&shopper_id=eq.${encodeURIComponent(
+            shopper.id
+          )}&status=eq.offered&select=*&limit=1`
+        );
 
       const job =
-        Array.isArray(existing) && existing.length
+        Array.isArray(existing) &&
+        existing.length
           ? existing[0]
           : await createShopperJob(
               order.id,
@@ -504,9 +765,11 @@ async function offerOrderToShopper(
         `🏪 Store: ${order.store_name}\n` +
         `🛒 Items: ${order.items}\n` +
         `📍 Deliver to: ${order.delivery_address}\n` +
-        (order.budget != null
-          ? `💰 Budget: ₹${order.budget}\n`
-          : "") +
+        (
+          order.budget != null
+            ? `💰 Budget: ₹${order.budget}\n`
+            : ""
+        ) +
         `\nReply *ACCEPT* to take this job.\n` +
         `Reply *DECLINE* to skip it.`;
 
@@ -515,10 +778,16 @@ async function offerOrderToShopper(
         shopperMessage
       );
 
-      await updateOrder(order.id, {
-        status: "finding_shopper",
-        shopper_id: null,
-      });
+      await updateOrder(
+        order.id,
+        {
+          status:
+            "finding_shopper",
+
+          shopper_id:
+            null,
+        }
+      );
 
       return {
         success: true,
@@ -540,7 +809,13 @@ async function offerOrderToShopper(
   };
 }
 
-function getOrderStatusText(status) {
+/* =========================================================
+   ORDER STATUS
+========================================================= */
+
+function getOrderStatusText(
+  status
+) {
   switch (status) {
     case "collecting_details":
       return "I’m still collecting the details for your order.";
@@ -574,11 +849,238 @@ function getOrderStatusText(status) {
   }
 }
 
-/* OPENAI */
+/* =========================================================
+   SUBSTITUTIONS
+========================================================= */
 
-function extractResponseText(data) {
+async function getPendingSubstitution(
+  orderId
+) {
+  const data =
+    await supabaseRequest(
+      `substitution_requests?order_id=eq.${encodeURIComponent(
+        orderId
+      )}&status=eq.pending&select=*&order=created_at.desc&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
+}
+
+async function createSubstitutionRequest({
+  orderId,
+  shopperId,
+  originalItem,
+  proposedItem,
+}) {
+  const data =
+    await supabaseRequest(
+      "substitution_requests",
+      {
+        method: "POST",
+
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify({
+          order_id:
+            orderId,
+
+          shopper_id:
+            shopperId,
+
+          original_item:
+            originalItem,
+
+          proposed_item:
+            proposedItem,
+
+          status:
+            "pending",
+        }),
+      }
+    );
+
+  return Array.isArray(data)
+    ? data[0]
+    : data;
+}
+
+async function updateSubstitutionRequest(
+  id,
+  updates
+) {
+  const data =
+    await supabaseRequest(
+      `substitution_requests?id=eq.${encodeURIComponent(
+        id
+      )}`,
+      {
+        method: "PATCH",
+
+        headers: {
+          Prefer:
+            "return=representation",
+        },
+
+        body: JSON.stringify(
+          updates
+        ),
+      }
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
+}
+
+function parseSubstitutionCommand(
+  text
+) {
+  const raw =
+    String(text || "").trim();
+
+  const match =
+    raw.match(
+      /^SUBSTITUTE\s*:?\s*(.+?)\s*(?:->|=>|WITH|TO)\s*(.+)$/i
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    originalItem:
+      match[1].trim(),
+
+    proposedItem:
+      match[2].trim(),
+  };
+}
+
+async function applyApprovedSubstitution(
+  order,
+  substitution
+) {
+  const original =
+    substitution.original_item.trim();
+
+  const proposed =
+    substitution.proposed_item.trim();
+
+  const currentItems =
+    String(
+      order.items || ""
+    ).trim();
+
+  const escaped =
+    original.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+  const exactReplacement =
+    new RegExp(
+      escaped,
+      "i"
+    );
+
+  let updatedItems;
+
   if (
-    typeof data?.output_text === "string" &&
+    exactReplacement.test(
+      currentItems
+    )
+  ) {
+    updatedItems =
+      currentItems.replace(
+        exactReplacement,
+        `${proposed} (substituted for ${original})`
+      );
+  } else {
+    updatedItems =
+      `${currentItems}; ${proposed} (substituted for ${original})`;
+  }
+
+  return updateOrder(
+    order.id,
+    {
+      items:
+        updatedItems,
+    }
+  );
+}
+
+/* =========================================================
+   CUSTOMER NOTIFICATION
+========================================================= */
+
+async function notifyCustomerForOrder(
+  orderId,
+  message
+) {
+  const order =
+    await getOrderById(
+      orderId
+    );
+
+  if (!order?.customer_id) {
+    return;
+  }
+
+  const customers =
+    await supabaseRequest(
+      `customers?id=eq.${encodeURIComponent(
+        order.customer_id
+      )}&select=*&limit=1`
+    );
+
+  const customer =
+    Array.isArray(customers) &&
+    customers.length
+      ? customers[0]
+      : null;
+
+  if (!customer?.phone) {
+    return;
+  }
+
+  await saveMessage({
+    customerId:
+      customer.id,
+
+    orderId,
+
+    phone:
+      customer.phone,
+
+    role:
+      "assistant",
+
+    message,
+  });
+
+  await sendWhatsAppMessage(
+    customer.phone,
+    message
+  );
+}
+
+/* =========================================================
+   OPENAI
+========================================================= */
+
+function extractResponseText(
+  data
+) {
+  if (
+    typeof data?.output_text ===
+      "string" &&
     data.output_text.trim()
   ) {
     return data.output_text.trim();
@@ -586,10 +1088,21 @@ function extractResponseText(data) {
 
   const pieces = [];
 
-  for (const item of data?.output || []) {
-    for (const content of item?.content || []) {
-      if (typeof content?.text === "string") {
-        pieces.push(content.text);
+  for (
+    const item of
+      data?.output || []
+  ) {
+    for (
+      const content of
+        item?.content || []
+    ) {
+      if (
+        typeof content?.text ===
+        "string"
+      ) {
+        pieces.push(
+          content.text
+        );
       }
     }
   }
@@ -597,12 +1110,23 @@ function extractResponseText(data) {
   return pieces.join("\n").trim();
 }
 
-function cleanJsonText(text) {
+function cleanJsonText(
+  text
+) {
   return String(text || "")
     .trim()
-    .replace(/^```json/i, "")
-    .replace(/^```/i, "")
-    .replace(/```$/i, "")
+    .replace(
+      /^```json/i,
+      ""
+    )
+    .replace(
+      /^```/i,
+      ""
+    )
+    .replace(
+      /```$/i,
+      ""
+    )
     .trim();
 }
 
@@ -614,7 +1138,9 @@ async function callFetchAI({
   customer,
 }) {
   if (!OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is missing");
+    throw new Error(
+      "OPENAI_API_KEY is missing"
+    );
   }
 
   const systemPrompt = `
@@ -624,7 +1150,7 @@ Your job is to understand natural customer messages and help them order items fr
 
 Understand English, Malayalam, Manglish, Hindi, Tamil, Telugu, Kannada, mixed languages, typos, slang and short messages.
 
-Examples you must understand:
+Examples:
 - "vere nthoke und?" means "what else is there?"
 - "add 10 eggs" means add 10 eggs to the current order
 - "where is my order?" means status
@@ -636,157 +1162,218 @@ Rules:
 1. Never invent a store, item, address or price.
 2. Keep replies natural and concise for WhatsApp.
 3. If the customer gives enough information for store + items + delivery address, prepare a shopping request.
-4. If information is missing, ask for only the missing information.
+4. If information is missing, ask only for the missing information.
 5. If an active order exists, understand updates such as adding/removing items or changing the address.
-6. A confirmation means the customer wants the order placed. Do not claim a shopper accepted until the system tells you that.
-7. Do not say the order is delivered unless the database status is delivered.
-8. Reply in the customer's language/style when practical.
+6. A confirmation means the customer wants the order placed.
+7. Do not claim a shopper accepted until the system tells you.
+8. Do not say an order is delivered unless the database says delivered.
+9. Reply in the customer's language/style when practical.
+10. If the customer says "new order", treat the next shopping request as a new request rather than pretending the old order is still being modified.
 
-Return only the requested JSON structure.
+Return only the requested JSON.
 `;
 
   const context = {
     customer: {
-      name: customer?.name || null,
-      address: customer?.address || null,
+      name:
+        customer?.name ||
+        null,
+
+      address:
+        customer?.address ||
+        null,
     },
 
-    active_order: activeOrder || null,
+    active_order:
+      activeOrder || null,
 
-    latest_order: latestOrder || null,
+    latest_order:
+      latestOrder || null,
 
-    conversation: history,
+    conversation:
+      history,
 
-    current_message: userMessage,
+    current_message:
+      userMessage,
   };
 
-  const response = await fetch(
-    "https://api.openai.com/v1/responses",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+  const response =
+    await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
 
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
+        headers: {
+          Authorization:
+            `Bearer ${OPENAI_API_KEY}`,
 
-        input: [
-          {
-            role: "system",
-            content: [
-              {
-                type: "input_text",
-                text: systemPrompt,
-              },
-            ],
-          },
+          "Content-Type":
+            "application/json",
+        },
 
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: JSON.stringify(context),
-              },
-            ],
-          },
-        ],
+        body: JSON.stringify({
+          model:
+            OPENAI_MODEL,
 
-        text: {
-          format: {
-            type: "json_schema",
-            name: "fetch_agent_decision",
-            strict: true,
+          input: [
+            {
+              role:
+                "system",
 
-            schema: {
-              type: "object",
+              content: [
+                {
+                  type:
+                    "input_text",
 
-              additionalProperties: false,
-
-              properties: {
-                intent: {
-                  type: "string",
-
-                  enum: [
-                    "greeting",
-                    "shopping_request",
-                    "update_order",
-                    "confirm",
-                    "reject",
-                    "status",
-                    "cancel",
-                    "general_question",
-                  ],
+                  text:
+                    systemPrompt,
                 },
-
-                store_name: {
-                  type: "string",
-                },
-
-                items: {
-                  type: "string",
-                },
-
-                delivery_address: {
-                  type: "string",
-                },
-
-                budget: {
-                  type: ["number", "null"],
-                },
-
-                reply: {
-                  type: "string",
-                },
-              },
-
-              required: [
-                "intent",
-                "store_name",
-                "items",
-                "delivery_address",
-                "budget",
-                "reply",
               ],
             },
-          },
-        },
-      }),
-    }
-  );
 
-  const data = await response.json();
+            {
+              role:
+                "user",
+
+              content: [
+                {
+                  type:
+                    "input_text",
+
+                  text:
+                    JSON.stringify(
+                      context
+                    ),
+                },
+              ],
+            },
+          ],
+
+          text: {
+            format: {
+              type:
+                "json_schema",
+
+              name:
+                "fetch_agent_decision",
+
+              strict:
+                true,
+
+              schema: {
+                type:
+                  "object",
+
+                additionalProperties:
+                  false,
+
+                properties: {
+                  intent: {
+                    type:
+                      "string",
+
+                    enum: [
+                      "greeting",
+                      "shopping_request",
+                      "update_order",
+                      "confirm",
+                      "reject",
+                      "status",
+                      "cancel",
+                      "general_question",
+                    ],
+                  },
+
+                  store_name: {
+                    type:
+                      "string",
+                  },
+
+                  items: {
+                    type:
+                      "string",
+                  },
+
+                  delivery_address: {
+                    type:
+                      "string",
+                  },
+
+                  budget: {
+                    type: [
+                      "number",
+                      "null",
+                    ],
+                  },
+
+                  reply: {
+                    type:
+                      "string",
+                  },
+                },
+
+                required: [
+                  "intent",
+                  "store_name",
+                  "items",
+                  "delivery_address",
+                  "budget",
+                  "reply",
+                ],
+              },
+            },
+          },
+        }),
+      }
+    );
+
+  const data =
+    await response.json();
 
   if (!response.ok) {
     throw new Error(
-      `OpenAI ${response.status}: ${JSON.stringify(data)}`
+      `OpenAI ${response.status}: ${JSON.stringify(
+        data
+      )}`
     );
   }
 
-  const text = cleanJsonText(
-    extractResponseText(data)
-  );
+  const text =
+    cleanJsonText(
+      extractResponseText(
+        data
+      )
+    );
 
-  const decision = JSON.parse(text);
+  const decision =
+    JSON.parse(text);
 
   console.log(
     "FETCH AI DECISION:",
-    JSON.stringify(decision)
+    JSON.stringify(
+      decision
+    )
   );
 
   return decision;
 }
+
+/* =========================================================
+   AI FALLBACK
+========================================================= */
 
 function fallbackDecision(
   userMessage,
   activeOrder,
   customer
 ) {
-  const text = String(userMessage || "").trim();
+  const text =
+    String(
+      userMessage || ""
+    ).trim();
 
-  const lower = text.toLowerCase();
+  const lower =
+    text.toLowerCase();
 
   const yes =
     /^(yes|y|yeah|yep|ya|ok|okay|sure|go ahead|confirm|confirmed)$/i.test(
@@ -794,44 +1381,63 @@ function fallbackDecision(
     );
 
   const no =
-    /^(no|n|nope|cancel|don't|dont)$/i.test(text);
+    /^(no|n|nope|cancel|don't|dont)$/i.test(
+      text
+    );
 
   if (
     yes &&
-    activeOrder?.status === "awaiting_confirmation"
+    activeOrder?.status ===
+      "awaiting_confirmation"
   ) {
     return {
-      intent: "confirm",
+      intent:
+        "confirm",
 
-      store_name: activeOrder.store_name,
+      store_name:
+        activeOrder.store_name,
 
-      items: activeOrder.items,
+      items:
+        activeOrder.items,
 
       delivery_address:
         activeOrder.delivery_address ||
         customer?.address ||
         "",
 
-      budget: activeOrder.budget ?? null,
+      budget:
+        activeOrder.budget ??
+        null,
 
-      reply: "Confirmed 👍",
+      reply:
+        "Confirmed 👍",
     };
   }
 
-  if (no && activeOrder) {
+  if (
+    no &&
+    activeOrder
+  ) {
     return {
-      intent: "reject",
+      intent:
+        "reject",
 
-      store_name: activeOrder.store_name,
+      store_name:
+        activeOrder.store_name,
 
-      items: activeOrder.items,
+      items:
+        activeOrder.items,
 
       delivery_address:
-        activeOrder.delivery_address || "",
+        activeOrder.delivery_address ||
+        "",
 
-      budget: activeOrder.budget ?? null,
+      budget:
+        activeOrder.budget ??
+        null,
 
-      reply: "Okay — I won’t place that order.",
+      reply:
+        "Okay — I won’t place that order.",
     };
   }
 
@@ -841,119 +1447,350 @@ function fallbackDecision(
     )
   ) {
     return {
-      intent: "status",
+      intent:
+        "status",
 
-      store_name: "",
+      store_name:
+        "",
 
-      items: "",
+      items:
+        "",
 
-      delivery_address: "",
+      delivery_address:
+        "",
 
-      budget: null,
+      budget:
+        null,
 
-      reply: "Let me check your order status.",
+      reply:
+        "Let me check your order status.",
     };
   }
 
   return {
-    intent: "general_question",
+    intent:
+      "general_question",
 
-    store_name: "",
+    store_name:
+      "",
 
-    items: "",
+    items:
+      "",
 
-    delivery_address: "",
+    delivery_address:
+      "",
 
-    budget: null,
+    budget:
+      null,
 
     reply:
       "Tell me what you’d like me to fetch, which store, and where to deliver it.",
   };
 }
 
-/* CUSTOMER ENGINE */
+/* =========================================================
+   CUSTOMER ENGINE
+========================================================= */
 
 async function handleCustomerMessage({
   phone,
   userMessage,
 }) {
-  const normalizedPhone = normalizePhone(phone);
+  const normalizedPhone =
+    normalizePhone(phone);
 
   const customer =
-    await getOrCreateCustomer(normalizedPhone);
+    await getOrCreateCustomer(
+      normalizedPhone
+    );
 
   const activeOrder =
-    await getActiveOrder(customer.id);
+    await getActiveOrder(
+      customer.id
+    );
 
   const latestOrder =
-    await getLatestOrder(customer.id);
+    await getLatestOrder(
+      customer.id
+    );
 
   const history =
-    await getRecentMessages(customer.id);
+    await getRecentMessages(
+      customer.id
+    );
+
+  /*
+    IMPORTANT:
+    If a shopper has asked for a substitution,
+    YES/NO is handled here BEFORE the AI.
+  */
+
+  if (activeOrder) {
+    const pendingSubstitution =
+      await getPendingSubstitution(
+        activeOrder.id
+      );
+
+    if (pendingSubstitution) {
+      const answer =
+        String(
+          userMessage || ""
+        ).trim();
+
+      const approved =
+        /^(yes|y|yeah|yep|ya|ok|okay|sure|approve|approved|go ahead|confirm|confirmed)$/i.test(
+          answer
+        );
+
+      const rejected =
+        /^(no|n|nope|reject|rejected|don't|dont|cancel)$/i.test(
+          answer
+        );
+
+      if (
+        approved ||
+        rejected
+      ) {
+        if (approved) {
+          const updatedOrder =
+            await applyApprovedSubstitution(
+              activeOrder,
+              pendingSubstitution
+            );
+
+          await updateSubstitutionRequest(
+            pendingSubstitution.id,
+            {
+              status:
+                "approved",
+
+              customer_response:
+                userMessage,
+
+              resolved_at:
+                new Date().toISOString(),
+            }
+          );
+
+          const reply =
+            `Done 👍 I’ve approved the substitution to ${pendingSubstitution.proposed_item}.`;
+
+          await saveMessage({
+            customerId:
+              customer.id,
+
+            orderId:
+              updatedOrder?.id ||
+              activeOrder.id,
+
+            phone:
+              normalizedPhone,
+
+            role:
+              "assistant",
+
+            message:
+              reply,
+          });
+
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            reply
+          );
+
+          if (
+            pendingSubstitution.shopper_id
+          ) {
+            const shopperRows =
+              await supabaseRequest(
+                `shoppers?id=eq.${encodeURIComponent(
+                  pendingSubstitution.shopper_id
+                )}&select=*&limit=1`
+              );
+
+            const shopper =
+              Array.isArray(
+                shopperRows
+              ) &&
+              shopperRows.length
+                ? shopperRows[0]
+                : null;
+
+            if (shopper?.phone) {
+              await sendWhatsAppMessage(
+                shopper.phone,
+
+                `✅ Customer approved the substitution.\n\nReplace ${pendingSubstitution.original_item} with ${pendingSubstitution.proposed_item}.`
+              );
+            }
+          }
+        } else {
+          await updateSubstitutionRequest(
+            pendingSubstitution.id,
+            {
+              status:
+                "rejected",
+
+              customer_response:
+                userMessage,
+
+              resolved_at:
+                new Date().toISOString(),
+            }
+          );
+
+          const reply =
+            "No problem 👍 Please keep the original item if it’s available.";
+
+          await saveMessage({
+            customerId:
+              customer.id,
+
+            orderId:
+              activeOrder.id,
+
+            phone:
+              normalizedPhone,
+
+            role:
+              "assistant",
+
+            message:
+              reply,
+          });
+
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            reply
+          );
+
+          if (
+            pendingSubstitution.shopper_id
+          ) {
+            const shopperRows =
+              await supabaseRequest(
+                `shoppers?id=eq.${encodeURIComponent(
+                  pendingSubstitution.shopper_id
+                )}&select=*&limit=1`
+              );
+
+            const shopper =
+              Array.isArray(
+                shopperRows
+              ) &&
+              shopperRows.length
+                ? shopperRows[0]
+                : null;
+
+            if (shopper?.phone) {
+              await sendWhatsAppMessage(
+                shopper.phone,
+
+                `❌ Customer rejected the substitution.\n\nPlease keep ${pendingSubstitution.original_item} if it’s available.`
+              );
+            }
+          }
+        }
+
+        await saveMessage({
+          customerId:
+            customer.id,
+
+          orderId:
+            activeOrder.id,
+
+          phone:
+            normalizedPhone,
+
+          role:
+            "user",
+
+          message:
+            userMessage,
+        });
+
+        return;
+      }
+    }
+  }
 
   await saveMessage({
-    customerId: customer.id,
+    customerId:
+      customer.id,
 
     orderId:
       activeOrder?.id ||
       latestOrder?.id ||
       null,
 
-    phone: normalizedPhone,
+    phone:
+      normalizedPhone,
 
-    role: "user",
+    role:
+      "user",
 
-    message: userMessage,
+    message:
+      userMessage,
   });
 
   let decision;
 
   try {
-    decision = await callFetchAI({
-      userMessage,
-      history,
-      activeOrder,
-      latestOrder,
-      customer,
-    });
+    decision =
+      await callFetchAI({
+        userMessage,
+        history,
+        activeOrder,
+        latestOrder,
+        customer,
+      });
   } catch (error) {
     console.error(
       "FETCH AI ERROR:",
       error
     );
 
-    decision = fallbackDecision(
-      userMessage,
-      activeOrder,
-      customer
-    );
+    decision =
+      fallbackDecision(
+        userMessage,
+        activeOrder,
+        customer
+      );
   }
-
-  let order = activeOrder;
 
   /* STATUS */
 
-  if (decision.intent === "status") {
+  if (
+    decision.intent ===
+    "status"
+  ) {
     const statusOrder =
-      activeOrder || latestOrder;
+      activeOrder ||
+      latestOrder;
 
-    const reply = statusOrder
-      ? getOrderStatusText(
-          statusOrder.status
-        )
-      : "I don’t see an order for you yet. Tell me what you’d like to buy.";
+    const reply =
+      statusOrder
+        ? getOrderStatusText(
+            statusOrder.status
+          )
+        : "I don’t see an order for you yet. Tell me what you’d like to buy.";
 
     await saveMessage({
-      customerId: customer.id,
+      customerId:
+        customer.id,
 
       orderId:
-        statusOrder?.id || null,
+        statusOrder?.id ||
+        null,
 
-      phone: normalizedPhone,
+      phone:
+        normalizedPhone,
 
-      role: "assistant",
+      role:
+        "assistant",
 
-      message: reply,
+      message:
+        reply,
     });
 
     await sendWhatsAppMessage(
@@ -966,19 +1803,26 @@ async function handleCustomerMessage({
 
   /* CANCEL */
 
-  if (decision.intent === "cancel") {
+  if (
+    decision.intent ===
+    "cancel"
+  ) {
     if (!activeOrder) {
       const reply =
         "There isn’t an active order to cancel.";
 
       await saveMessage({
-        customerId: customer.id,
+        customerId:
+          customer.id,
 
-        phone: normalizedPhone,
+        phone:
+          normalizedPhone,
 
-        role: "assistant",
+        role:
+          "assistant",
 
-        message: reply,
+        message:
+          reply,
       });
 
       await sendWhatsAppMessage(
@@ -989,23 +1833,32 @@ async function handleCustomerMessage({
       return;
     }
 
-    await updateOrder(activeOrder.id, {
-      status: "cancelled",
-    });
+    await updateOrder(
+      activeOrder.id,
+      {
+        status:
+          "cancelled",
+      }
+    );
 
     const reply =
       "Done — I’ve cancelled your order.";
 
     await saveMessage({
-      customerId: customer.id,
+      customerId:
+        customer.id,
 
-      orderId: activeOrder.id,
+      orderId:
+        activeOrder.id,
 
-      phone: normalizedPhone,
+      phone:
+        normalizedPhone,
 
-      role: "assistant",
+      role:
+        "assistant",
 
-      message: reply,
+      message:
+        reply,
     });
 
     await sendWhatsAppMessage(
@@ -1018,14 +1871,21 @@ async function handleCustomerMessage({
 
   /* REJECT */
 
-  if (decision.intent === "reject") {
+  if (
+    decision.intent ===
+    "reject"
+  ) {
     if (
       activeOrder?.status ===
       "awaiting_confirmation"
     ) {
-      await updateOrder(activeOrder.id, {
-        status: "cancelled",
-      });
+      await updateOrder(
+        activeOrder.id,
+        {
+          status:
+            "cancelled",
+        }
+      );
     }
 
     const reply =
@@ -1033,16 +1893,21 @@ async function handleCustomerMessage({
       "Okay — I won’t place that order.";
 
     await saveMessage({
-      customerId: customer.id,
+      customerId:
+        customer.id,
 
       orderId:
-        activeOrder?.id || null,
+        activeOrder?.id ||
+        null,
 
-      phone: normalizedPhone,
+      phone:
+        normalizedPhone,
 
-      role: "assistant",
+      role:
+        "assistant",
 
-      message: reply,
+      message:
+        reply,
     });
 
     await sendWhatsAppMessage(
@@ -1055,7 +1920,10 @@ async function handleCustomerMessage({
 
   /* CONFIRM */
 
-  if (decision.intent === "confirm") {
+  if (
+    decision.intent ===
+    "confirm"
+  ) {
     if (
       !activeOrder ||
       activeOrder.status !==
@@ -1065,13 +1933,17 @@ async function handleCustomerMessage({
         "I don’t have an order waiting for confirmation. Tell me what you’d like to fetch.";
 
       await saveMessage({
-        customerId: customer.id,
+        customerId:
+          customer.id,
 
-        phone: normalizedPhone,
+        phone:
+          normalizedPhone,
 
-        role: "assistant",
+        role:
+          "assistant",
 
-        message: reply,
+        message:
+          reply,
       });
 
       await sendWhatsAppMessage(
@@ -1082,26 +1954,33 @@ async function handleCustomerMessage({
       return;
     }
 
-    order = await updateOrder(
-      activeOrder.id,
-      {
-        status: "finding_shopper",
-      }
-    );
+    const order =
+      await updateOrder(
+        activeOrder.id,
+        {
+          status:
+            "finding_shopper",
+        }
+      );
 
     const confirmReply =
       "Confirmed 👍 I’m finding a shopper for your order now.";
 
     await saveMessage({
-      customerId: customer.id,
+      customerId:
+        customer.id,
 
-      orderId: order.id,
+      orderId:
+        order.id,
 
-      phone: normalizedPhone,
+      phone:
+        normalizedPhone,
 
-      role: "assistant",
+      role:
+        "assistant",
 
-      message: confirmReply,
+      message:
+        confirmReply,
     });
 
     await sendWhatsAppMessage(
@@ -1110,22 +1989,29 @@ async function handleCustomerMessage({
     );
 
     const dispatch =
-      await offerOrderToShopper(order);
+      await offerOrderToShopper(
+        order
+      );
 
     if (dispatch.success) {
       const reply =
         "🛍️ I’ve sent your order to an available shopper.\n\nI’ll let you know as soon as someone accepts it.";
 
       await saveMessage({
-        customerId: customer.id,
+        customerId:
+          customer.id,
 
-        orderId: order.id,
+        orderId:
+          order.id,
 
-        phone: normalizedPhone,
+        phone:
+          normalizedPhone,
 
-        role: "assistant",
+        role:
+          "assistant",
 
-        message: reply,
+        message:
+          reply,
       });
 
       await sendWhatsAppMessage(
@@ -1137,15 +2023,20 @@ async function handleCustomerMessage({
         "Your order is confirmed, but I couldn’t find an available shopper right now. I’ll keep it in the queue.";
 
       await saveMessage({
-        customerId: customer.id,
+        customerId:
+          customer.id,
 
-        orderId: order.id,
+        orderId:
+          order.id,
 
-        phone: normalizedPhone,
+        phone:
+          normalizedPhone,
 
-        role: "assistant",
+        role:
+          "assistant",
 
-        message: reply,
+        message:
+          reply,
       });
 
       await sendWhatsAppMessage(
@@ -1169,11 +2060,12 @@ async function handleCustomerMessage({
     const items =
       decision.items?.trim();
 
-    const deliveryAddress = (
-      decision.delivery_address ||
-      customer.address ||
-      ""
-    ).trim();
+    const deliveryAddress =
+      (
+        decision.delivery_address ||
+        customer.address ||
+        ""
+      ).trim();
 
     if (
       !storeName ||
@@ -1185,17 +2077,21 @@ async function handleCustomerMessage({
         "Sure. Tell me the items, the store, and the delivery location.";
 
       await saveMessage({
-        customerId: customer.id,
+        customerId:
+          customer.id,
 
         orderId:
           activeOrder?.id ||
           null,
 
-        phone: normalizedPhone,
+        phone:
+          normalizedPhone,
 
-        role: "assistant",
+        role:
+          "assistant",
 
-        message: reply,
+        message:
+          reply,
       });
 
       await sendWhatsAppMessage(
@@ -1211,48 +2107,57 @@ async function handleCustomerMessage({
       deliveryAddress
     );
 
+    let order;
+
     if (
       activeOrder &&
       [
         "collecting_details",
         "awaiting_confirmation",
-      ].includes(activeOrder.status)
+      ].includes(
+        activeOrder.status
+      )
     ) {
-      order = await updateOrder(
-        activeOrder.id,
-        {
-          store_name: storeName,
+      order =
+        await updateOrder(
+          activeOrder.id,
+          {
+            store_name:
+              storeName,
+
+            items,
+
+            budget:
+              decision.budget ??
+              activeOrder.budget ??
+              null,
+
+            delivery_address:
+              deliveryAddress,
+
+            status:
+              "awaiting_confirmation",
+          }
+        );
+    } else {
+      order =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName,
 
           items,
 
           budget:
             decision.budget ??
-            activeOrder.budget ??
             null,
 
-          delivery_address:
-            deliveryAddress,
+          deliveryAddress,
 
           status:
             "awaiting_confirmation",
-        }
-      );
-    } else {
-      order = await createOrder({
-        customerId: customer.id,
-
-        storeName,
-
-        items,
-
-        budget:
-          decision.budget ?? null,
-
-        deliveryAddress,
-
-        status:
-          "awaiting_confirmation",
-      });
+        });
     }
 
     const reply =
@@ -1262,15 +2167,20 @@ async function handleCustomerMessage({
         : `Sure – ${items} from ${storeName}, delivered to ${deliveryAddress}. Shall I place this order?`;
 
     await saveMessage({
-      customerId: customer.id,
+      customerId:
+        customer.id,
 
-      orderId: order.id,
+      orderId:
+        order.id,
 
-      phone: normalizedPhone,
+      phone:
+        normalizedPhone,
 
-      role: "assistant",
+      role:
+        "assistant",
 
-      message: reply,
+      message:
+        reply,
     });
 
     await sendWhatsAppMessage(
@@ -1290,12 +2200,16 @@ async function handleCustomerMessage({
   ) {
     const updates = {};
 
-    if (decision.store_name?.trim()) {
+    if (
+      decision.store_name?.trim()
+    ) {
       updates.store_name =
         decision.store_name.trim();
     }
 
-    if (decision.items?.trim()) {
+    if (
+      decision.items?.trim()
+    ) {
       updates.items =
         decision.items.trim();
     }
@@ -1312,7 +2226,9 @@ async function handleCustomerMessage({
       );
     }
 
-    if (decision.budget != null) {
+    if (
+      decision.budget != null
+    ) {
       updates.budget =
         decision.budget;
     }
@@ -1320,25 +2236,31 @@ async function handleCustomerMessage({
     updates.status =
       "awaiting_confirmation";
 
-    order = await updateOrder(
-      activeOrder.id,
-      updates
-    );
+    const order =
+      await updateOrder(
+        activeOrder.id,
+        updates
+      );
 
     const reply =
       decision.reply ||
       "Updated your order. Shall I place it?";
 
     await saveMessage({
-      customerId: customer.id,
+      customerId:
+        customer.id,
 
-      orderId: order.id,
+      orderId:
+        order.id,
 
-      phone: normalizedPhone,
+      phone:
+        normalizedPhone,
 
-      role: "assistant",
+      role:
+        "assistant",
 
-      message: reply,
+      message:
+        reply,
     });
 
     await sendWhatsAppMessage(
@@ -1356,17 +2278,21 @@ async function handleCustomerMessage({
     "Hi! I’m Fetch. Tell me what you’d like me to buy, which store, and where to deliver it.";
 
   await saveMessage({
-    customerId: customer.id,
+    customerId:
+      customer.id,
 
     orderId:
       activeOrder?.id ||
       null,
 
-    phone: normalizedPhone,
+    phone:
+      normalizedPhone,
 
-    role: "assistant",
+    role:
+      "assistant",
 
-    message: reply,
+    message:
+      reply,
   });
 
   await sendWhatsAppMessage(
@@ -1375,57 +2301,9 @@ async function handleCustomerMessage({
   );
 }
 
-/* CUSTOMER NOTIFICATION */
-
-async function notifyCustomerForOrder(
-  orderId,
-  message
-) {
-  const order =
-    await getOrderById(orderId);
-
-  if (!order?.customer_id) {
-    return;
-  }
-
-  const customer =
-    await supabaseRequest(
-      `customers?id=eq.${encodeURIComponent(
-        order.customer_id
-      )}&select=*&limit=1`
-    );
-
-  const customerRow =
-    Array.isArray(customer) &&
-    customer.length
-      ? customer[0]
-      : null;
-
-  if (!customerRow?.phone) {
-    return;
-  }
-
-  await saveMessage({
-    customerId:
-      customerRow.id,
-
-    orderId,
-
-    phone:
-      customerRow.phone,
-
-    role: "assistant",
-
-    message,
-  });
-
-  await sendWhatsAppMessage(
-    customerRow.phone,
-    message
-  );
-}
-
-/* SHOPPER ENGINE */
+/* =========================================================
+   SHOPPER ENGINE
+========================================================= */
 
 async function handleShopperMessage({
   phone,
@@ -1434,10 +2312,11 @@ async function handleShopperMessage({
   const normalizedPhone =
     normalizePhone(phone);
 
+  const rawText =
+    String(text || "").trim();
+
   const command =
-    String(text || "")
-      .trim()
-      .toUpperCase();
+    rawText.toUpperCase();
 
   let shopper =
     await getShopperByPhone(
@@ -1459,7 +2338,8 @@ async function handleShopperMessage({
       await updateShopper(
         shopper.id,
         {
-          available: true,
+          available:
+            true,
 
           whatsapp_opted_in:
             true,
@@ -1472,7 +2352,8 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      `Welcome to Fetch Shopper 🛍️\n\nYou’re now active. I’ll send you nearby Fetch jobs here.\n\nCommands:\nACCEPT\nDECLINE\nSHOPPING\nPICKED UP\nOUT FOR DELIVERY\nDELIVERED\nSTATUS`
+
+      `Welcome to Fetch Shopper 🛍️\n\nYou’re now active. I’ll send you Fetch jobs here.\n\nCommands:\nACCEPT\nDECLINE\nSHOPPING\nSUBSTITUTE: old item -> new item\nPICKED UP\nOUT FOR DELIVERY\nDELIVERED\nSTATUS`
     );
 
     return;
@@ -1481,6 +2362,7 @@ async function handleShopperMessage({
   if (!shopper) {
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "You’re not registered as a Fetch shopper yet. Reply START to join."
     );
 
@@ -1497,7 +2379,9 @@ async function handleShopperMessage({
 
   /* ACCEPT */
 
-  if (command === "ACCEPT") {
+  if (
+    command === "ACCEPT"
+  ) {
     const job =
       await getOpenShopperJob(
         shopper.id
@@ -1506,6 +2390,7 @@ async function handleShopperMessage({
     if (!job) {
       await sendWhatsAppMessage(
         normalizedPhone,
+
         "You don’t have a new Fetch job waiting right now."
       );
 
@@ -1521,12 +2406,14 @@ async function handleShopperMessage({
       await updateShopperJob(
         job.id,
         {
-          status: "declined",
+          status:
+            "declined",
         }
       );
 
       await sendWhatsAppMessage(
         normalizedPhone,
+
         "That Fetch job is no longer available."
       );
 
@@ -1536,7 +2423,8 @@ async function handleShopperMessage({
     await updateShopperJob(
       job.id,
       {
-        status: "accepted",
+        status:
+          "accepted",
 
         accepted_at:
           new Date().toISOString(),
@@ -1557,7 +2445,8 @@ async function handleShopperMessage({
     await updateShopper(
       shopper.id,
       {
-        available: false,
+        available:
+          false,
 
         current_order_id:
           order.id,
@@ -1569,11 +2458,13 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Accepted ✅\n\nReply SHOPPING when you start shopping."
     );
 
     await notifyCustomerForOrder(
       order.id,
+
       "✅ A Fetch shopper has accepted your order. They’ll start shopping soon."
     );
 
@@ -1582,7 +2473,9 @@ async function handleShopperMessage({
 
   /* DECLINE */
 
-  if (command === "DECLINE") {
+  if (
+    command === "DECLINE"
+  ) {
     const job =
       await getOpenShopperJob(
         shopper.id
@@ -1591,6 +2484,7 @@ async function handleShopperMessage({
     if (!job) {
       await sendWhatsAppMessage(
         normalizedPhone,
+
         "You don’t have a new Fetch job waiting right now."
       );
 
@@ -1605,7 +2499,8 @@ async function handleShopperMessage({
     await updateShopperJob(
       job.id,
       {
-        status: "declined",
+        status:
+          "declined",
       }
     );
 
@@ -1621,7 +2516,8 @@ async function handleShopperMessage({
           status:
             "finding_shopper",
 
-          shopper_id: null,
+          shopper_id:
+            null,
         }
       );
 
@@ -1636,10 +2532,15 @@ async function handleShopperMessage({
 
   /* STATUS */
 
-  if (command === "STATUS") {
-    if (!shopper.current_order_id) {
+  if (
+    command === "STATUS"
+  ) {
+    if (
+      !shopper.current_order_id
+    ) {
       await sendWhatsAppMessage(
         normalizedPhone,
+
         "You don’t have an active Fetch order."
       );
 
@@ -1653,6 +2554,7 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       order
         ? getOrderStatusText(
             order.status
@@ -1671,6 +2573,7 @@ async function handleShopperMessage({
   if (!job) {
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "You don’t have an accepted Fetch job. Reply START to activate your shopper account."
     );
 
@@ -1685,7 +2588,62 @@ async function handleShopperMessage({
   if (!order) {
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "I couldn’t find the order linked to your job."
+    );
+
+    return;
+  }
+
+  /* =======================================================
+     SUBSTITUTION
+  ======================================================= */
+
+  const substitution =
+    parseSubstitutionCommand(
+      rawText
+    );
+
+  if (substitution) {
+    const pending =
+      await getPendingSubstitution(
+        order.id
+      );
+
+    if (pending) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "There is already a substitution waiting for the customer’s response."
+      );
+
+      return;
+    }
+
+    await createSubstitutionRequest({
+      orderId:
+        order.id,
+
+      shopperId:
+        shopper.id,
+
+      originalItem:
+        substitution.originalItem,
+
+      proposedItem:
+        substitution.proposedItem,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      `📨 Substitution request sent.\n\n${substitution.originalItem} → ${substitution.proposedItem}\n\nI’ll tell you as soon as the customer responds.`
+    );
+
+    await notifyCustomerForOrder(
+      order.id,
+
+      `⚠️ Your Fetch shopper has a substitution request.\n\n${substitution.originalItem} is unavailable.\n\nThey propose: ${substitution.proposedItem}\n\nReply YES to approve or NO to reject.`
     );
 
     return;
@@ -1700,17 +2658,20 @@ async function handleShopperMessage({
     await updateOrder(
       order.id,
       {
-        status: "shopping",
+        status:
+          "shopping",
       }
     );
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Shopping started 🛒"
     );
 
     await notifyCustomerForOrder(
       order.id,
+
       "🛒 Your Fetch shopper has started shopping for your order."
     );
 
@@ -1727,17 +2688,20 @@ async function handleShopperMessage({
     await updateOrder(
       order.id,
       {
-        status: "picked_up",
+        status:
+          "picked_up",
       }
     );
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Items picked up ✅\n\nReply OUT FOR DELIVERY when you’re on the way."
     );
 
     await notifyCustomerForOrder(
       order.id,
+
       "📦 Your Fetch shopper has picked up your items."
     );
 
@@ -1748,7 +2712,7 @@ async function handleShopperMessage({
 
   if (
     command ===
-      "OUT FOR DELIVERY"
+    "OUT FOR DELIVERY"
   ) {
     await updateOrder(
       order.id,
@@ -1760,11 +2724,13 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Out for delivery 🚴"
     );
 
     await notifyCustomerForOrder(
       order.id,
+
       "🚴 Your Fetch order is on the way."
     );
 
@@ -1780,14 +2746,16 @@ async function handleShopperMessage({
     await updateOrder(
       order.id,
       {
-        status: "delivered",
+        status:
+          "delivered",
       }
     );
 
     await updateShopperJob(
       job.id,
       {
-        status: "completed",
+        status:
+          "completed",
 
         completed_at:
           new Date().toISOString(),
@@ -1797,7 +2765,8 @@ async function handleShopperMessage({
     await updateShopper(
       shopper.id,
       {
-        available: true,
+        available:
+          true,
 
         current_order_id:
           null,
@@ -1809,11 +2778,13 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Delivered 🎉\n\nYou’re available for the next Fetch job."
     );
 
     await notifyCustomerForOrder(
       order.id,
+
       "🎉 Your Fetch order has been delivered. Enjoy!"
     );
 
@@ -1822,11 +2793,14 @@ async function handleShopperMessage({
 
   await sendWhatsAppMessage(
     normalizedPhone,
-    "I didn’t recognise that command. Use ACCEPT, DECLINE, SHOPPING, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
+
+    "I didn’t recognise that command. Use ACCEPT, DECLINE, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
   );
 }
 
-/* WHATSAPP MESSAGE EXTRACTION */
+/* =========================================================
+   WHATSAPP MESSAGE EXTRACTION
+========================================================= */
 
 function extractIncomingWhatsAppMessage(
   body
@@ -1843,39 +2817,47 @@ function extractIncomingWhatsAppMessage(
   }
 
   return {
-    from: normalizePhone(
-      message.from
-    ),
+    from:
+      normalizePhone(
+        message.from
+      ),
 
     text:
       message?.text?.body?.trim() ||
       "",
 
     messageId:
-      message.id || null,
+      message.id ||
+      null,
 
     type:
-      message.type || null,
+      message.type ||
+      null,
   };
 }
 
-/* VERCEL NODE HANDLER */
+/* =========================================================
+   VERCEL HANDLER
+========================================================= */
 
 export default async function handler(
   req,
   res
 ) {
   try {
-    /* META WEBHOOK VERIFICATION */
+    /* META VERIFICATION */
 
-    if (req.method === "GET") {
-      const url = new URL(
-        req.url,
-        `https://${
-          req.headers.host ||
-          "localhost"
-        }`
-      );
+    if (
+      req.method === "GET"
+    ) {
+      const url =
+        new URL(
+          req.url,
+          `https://${
+            req.headers.host ||
+            "localhost"
+          }`
+        );
 
       const mode =
         url.searchParams.get(
@@ -1899,33 +2881,53 @@ export default async function handler(
       ) {
         return res
           .status(200)
-          .send(challenge || "");
+          .send(
+            challenge || ""
+          );
       }
 
       return res
         .status(403)
-        .send("Forbidden");
+        .send(
+          "Forbidden"
+        );
     }
 
-    if (req.method !== "POST") {
+    if (
+      req.method !== "POST"
+    ) {
       return res
         .status(405)
-        .send("Method Not Allowed");
+        .send(
+          "Method Not Allowed"
+        );
     }
 
-    let body = req.body;
+    let body =
+      req.body;
 
-    /* Vercel may already parse JSON. */
+    /*
+      Vercel may already parse
+      the JSON body.
+    */
 
-    if (typeof body === "string") {
-      body = JSON.parse(body);
+    if (
+      typeof body ===
+      "string"
+    ) {
+      body =
+        JSON.parse(body);
     }
 
-    /* If body is still unavailable, read stream. */
+    /*
+      If the body hasn't been
+      parsed, read the stream.
+    */
 
     if (
       !body ||
-      typeof body !== "object"
+      typeof body !==
+        "object"
     ) {
       const chunks = [];
 
@@ -1938,12 +2940,16 @@ export default async function handler(
       }
 
       const raw =
-        Buffer.concat(chunks)
-          .toString("utf8");
+        Buffer.concat(
+          chunks
+        ).toString(
+          "utf8"
+        );
 
-      body = raw
-        ? JSON.parse(raw)
-        : {};
+      body =
+        raw
+          ? JSON.parse(raw)
+          : {};
     }
 
     console.log(
@@ -1968,8 +2974,11 @@ export default async function handler(
       return res
         .status(200)
         .json({
-          success: true,
-          ignored: true,
+          success:
+            true,
+
+          ignored:
+            true,
         });
     }
 
@@ -2011,27 +3020,38 @@ export default async function handler(
         "DELIVERED",
         "DELIVERED DONE",
         "STATUS",
-      ].includes(command);
+      ].includes(
+        command
+      ) ||
+      /^SUBSTITUTE\s*:?/i.test(
+        text.trim()
+      );
 
     if (
       shopper ||
       isShopperCommand
     ) {
       await handleShopperMessage({
-        phone: from,
+        phone:
+          from,
+
         text,
       });
     } else {
       await handleCustomerMessage({
-        phone: from,
-        userMessage: text,
+        phone:
+          from,
+
+        userMessage:
+          text,
       });
     }
 
     return res
       .status(200)
       .json({
-        success: true,
+        success:
+          true,
       });
   } catch (error) {
     console.error(
@@ -2039,12 +3059,17 @@ export default async function handler(
       error
     );
 
-    /* Always acknowledge Meta. */
+    /*
+      Always acknowledge Meta.
+      This prevents repeated
+      webhook delivery.
+    */
 
     return res
       .status(200)
       .json({
-        success: false,
+        success:
+          false,
       });
   }
 }
