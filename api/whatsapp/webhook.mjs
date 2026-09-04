@@ -1582,6 +1582,10 @@ Rules:
 8. Never claim delivery unless the database status is delivered.
 9. Match the customer's language/style where practical.
 10. Return only the JSON requested.
+11. The items field must contain ONLY actual products the customer wants Fetch to buy. NEVER copy greetings, confirmations, cancellations, questions, store names, addresses, or previous conversation messages into the items field.
+12. When an active order exists, treat active_order.items as the source of truth. Only change the item list when the CURRENT customer message clearly adds, removes, or replaces products.
+13. Do not use old conversation history to invent or append products. The current customer message is the authority for the requested change.
+14. If the current message is a confirmation such as YES, keep the items field exactly equal to the active order items.
 `;
 
   const context = {
@@ -2069,6 +2073,226 @@ function fallbackDecision(
 
 
 /* =========================================================
+   CUSTOMER COMMAND / ITEM SAFETY
+========================================================= */
+
+function isCancellationRequest(text) {
+  const value = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .replace(/\s+/g, " ");
+
+  if (!value) return false;
+
+  const directPatterns = [
+    /^cancel$/i,
+    /^cancel it$/i,
+    /^cancel this$/i,
+    /^cancel the order$/i,
+    /^cancel my order$/i,
+    /^cancel this order$/i,
+    /^please cancel (?:it|this|the order|my order)$/i,
+    /^i (?:want|need) to cancel (?:it|this|the order|my order)$/i,
+    /^i want (?:to )?cancel (?:it|this|the order|my order)$/i,
+    /^don'?t want (?:this|the) order$/i,
+    /^i don'?t want (?:this|the) order$/i,
+  ];
+
+  if (
+    directPatterns.some(
+      (pattern) => pattern.test(value)
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    /\bcancel\b/i.test(value) &&
+    /\border\b|\bit\b|\bthis\b|\bmy\b/i.test(value)
+  );
+}
+
+function extractAdditionalItemsFromMessage(text) {
+  let value = String(text || "").trim();
+
+  value = value.replace(
+    /^(?:add|also add|include|also include|plus|and)\s+/i,
+    ""
+  ).trim();
+
+  value = value.replace(
+    /\s+(?:from|at)\s+.+?(?=\s+(?:deliver(?:ed)?|delivery|to)\s+|$)/i,
+    ""
+  ).trim();
+
+  value = value.replace(
+    /\s+(?:deliver(?:ed)?|delivery)\s+to\s+.+$/i,
+    ""
+  ).trim();
+
+  value = value.replace(
+    /\s+to\s+.+$/i,
+    ""
+  ).trim();
+
+  return value;
+}
+
+function extractItemsFromShoppingMessage(text) {
+  const value = String(text || "").trim();
+
+  const patterns = [
+    /^(?:i\s+want|i\s+need|fetch|get|buy|order|please\s+get|can\s+you\s+get)\s+(.+?)\s+(?:from|at)\s+.+?(?:\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+.+)?$/i,
+    /^(.+?)\s+(?:from|at)\s+.+?(?:\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+.+)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+
+    if (match?.[1]?.trim()) {
+      return match[1].trim();
+    }
+  }
+
+  return "";
+}
+
+function looksLikeContaminatedItems(items) {
+  const value = String(items || "").trim();
+
+  if (!value) return true;
+
+  const lower = value.toLowerCase();
+
+  const badSignals = [
+    /\bplease\s+confirm\b/i,
+    /\bconfirm\s+(?:my|the)\s+order\b/i,
+    /\bcancel\s+(?:the|my|this)\s+order\b/i,
+    /\bwhere\s+is\s+(?:my|the)\s+order\b/i,
+    /\bdelivery\s+charges?\b/i,
+    /\bdelivery\s+distance\b/i,
+    /\bfetch\s+fee\b/i,
+    /\bshall\s+i\s+confirm\b/i,
+    /\bupdated\s*[👍]?\b/i,
+    /\bconfirmed\s*[👍]?\b/i,
+    /\byes\b/i,
+    /\bno\b/i,
+    /\bcancel\b/i,
+    /\bplease\b.*\bconfirm\b/i,
+  ];
+
+  if (
+    badSignals.some(
+      (pattern) => pattern.test(value)
+    )
+  ) {
+    return true;
+  }
+
+  // Conversation pollution in the previous bug commonly appeared
+  // as multiple semicolon-separated sentences. A legitimate short
+  // item list can still contain semicolons, so only flag it when
+  // several segments look conversational.
+  const segments = value
+    .split(";")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (segments.length >= 3) {
+    const conversationalSegments = segments.filter(
+      (segment) =>
+        /\b(yes|okay|ok|confirm|confirmed|cancel|please|order|updated|shall|where)\b/i.test(
+          segment
+        )
+    );
+
+    if (conversationalSegments.length >= 1) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function cancelOrderAndReleaseShopper(order) {
+  if (!order?.id) return;
+
+  const jobs =
+    await supabaseRequest(
+      `shopper_jobs?order_id=eq.${encodeURIComponent(
+        order.id
+      )}&status=in.(offered,accepted)&select=*&limit=100`
+    );
+
+  const jobList = Array.isArray(jobs)
+    ? jobs
+    : [];
+
+  for (const job of jobList) {
+    await updateShopperJob(
+      job.id,
+      {
+        status: "cancelled",
+      }
+    );
+
+    if (job.shopper_id) {
+      const shoppers =
+        await supabaseRequest(
+          `shoppers?id=eq.${encodeURIComponent(
+            job.shopper_id
+          )}&select=*&limit=1`
+        );
+
+      const shopper =
+        Array.isArray(shoppers) &&
+        shoppers.length
+          ? shoppers[0]
+          : null;
+
+      if (shopper) {
+        const shopperUpdates = {
+          last_seen_at:
+            new Date().toISOString(),
+        };
+
+        if (
+          shopper.current_order_id ===
+          order.id
+        ) {
+          shopperUpdates.available = true;
+          shopperUpdates.current_order_id = null;
+        }
+
+        await updateShopper(
+          shopper.id,
+          shopperUpdates
+        );
+
+        if (
+          job.status === "accepted" &&
+          shopper.phone
+        ) {
+          await sendWhatsAppMessage(
+            shopper.phone,
+            `❌ This Fetch order has been cancelled by the customer. You no longer need to fulfil it.`
+          );
+        }
+      }
+    }
+  }
+
+  await updateOrder(
+    order.id,
+    {
+      status: "cancelled",
+      shopper_id: null,
+    }
+  );
+}
+
+/* =========================================================
    CUSTOMER ENGINE
 ========================================================= */
 
@@ -2099,6 +2323,92 @@ async function handleCustomerMessage({
     await getRecentMessages(
       customer.id
     );
+
+  /* -----------------------------------------
+     DETERMINISTIC CANCELLATION
+  ----------------------------------------- */
+
+  if (isCancellationRequest(userMessage)) {
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder?.id ||
+        latestOrder?.id ||
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    if (!activeOrder) {
+      const reply =
+        "There isn’t an active order to cancel.";
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          latestOrder?.id ||
+          null,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "assistant",
+
+        message:
+          reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return;
+    }
+
+    await cancelOrderAndReleaseShopper(
+      activeOrder
+    );
+
+    const reply =
+      "Done — I’ve cancelled your order.";
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
 
   /* -----------------------------------------
      WHATSAPP LOCATION
@@ -2454,6 +2764,59 @@ async function handleCustomerMessage({
         activeOrder,
         customer
       );
+  }
+
+  /* -----------------------------------------
+     SAFETY NORMALIZATION OF AI ORDER FIELDS
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    decision.intent === "update_order"
+  ) {
+    const currentItems =
+      String(
+        activeOrder.items ||
+        ""
+      ).trim();
+
+    if (
+      looksLikeContaminatedItems(
+        decision.items
+      )
+    ) {
+      const additionalItems =
+        extractAdditionalItemsFromMessage(
+          userMessage
+        );
+
+      if (additionalItems) {
+        decision.items =
+          currentItems
+            ? `${currentItems}; ${additionalItems}`
+            : additionalItems;
+      } else {
+        decision.items =
+          currentItems;
+      }
+    }
+  }
+
+  if (
+    decision.intent === "shopping_request" &&
+    looksLikeContaminatedItems(
+      decision.items
+    )
+  ) {
+    const extractedItems =
+      extractItemsFromShoppingMessage(
+        userMessage
+      );
+
+    if (extractedItems) {
+      decision.items =
+        extractedItems;
+    }
   }
 
   /* STATUS */
