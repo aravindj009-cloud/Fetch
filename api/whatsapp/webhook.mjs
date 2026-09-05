@@ -1170,17 +1170,61 @@ async function offerOrderToShopper(
               shopper.id
             );
 
+      const hasCustomerCoordinates =
+        Number.isFinite(
+          Number(order.customer_latitude)
+        ) &&
+        Number.isFinite(
+          Number(order.customer_longitude)
+        );
+
+      const storeName =
+        String(
+          order.store_name || ""
+        ).trim();
+
+      const isFlexibleStore =
+        !storeName ||
+        /^any available local store$/i.test(
+          storeName
+        ) ||
+        /^pending(?: nearby)? store$/i.test(
+          storeName
+        );
+
+      const destinationLine =
+        order.delivery_address
+          ? `📍 Deliver to: ${order.delivery_address}\n`
+          : "📍 Delivery location: customer will share location\n";
+
+      const locationPinLine =
+        hasCustomerCoordinates
+          ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+              `${Number(order.customer_latitude)},${Number(
+                order.customer_longitude
+              )}`
+            )}\n`
+          : "";
+
+      const storeInstruction =
+        isFlexibleStore
+          ? "🏪 Store: Any suitable nearby/local shop\n"
+          : `🏪 Store: ${storeName}\n`;
+
+      const shopperInstruction =
+        isFlexibleStore
+          ? "Please find the requested item at a suitable nearby shop, check the product price, and decide the delivery fee."
+          : "Please check the product price at the requested store and decide the delivery fee.";
+
       const message =
         `🛍️ *New Fetch Job*\n\n` +
-        `🏪 Store: ${order.store_name}\n` +
+        storeInstruction +
         `🛒 Items: ${order.items}\n` +
-        `📍 Deliver to: ${order.delivery_address}\n` +
-        (
-          order.budget != null
-            ? `💰 Budget: ₹${order.budget}\n`
-            : ""
-        ) +
-        `\nReply *ACCEPT* to take this job.\n` +
+        destinationLine +
+        locationPinLine +
+        `\n${shopperInstruction}\n` +
+        `Delivery fee: minimum ₹20 per order and may increase based on the KM.\n\n` +
+        `Reply *ACCEPT* to take this job.\n` +
         `Reply *DECLINE* to skip it.`;
 
       await sendWhatsAppMessage(
