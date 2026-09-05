@@ -3969,6 +3969,23 @@ function canCustomerCancelOrder(
   );
 }
 
+
+function isCustomerOrderDetailsQuestion(text) {
+  const value =
+    cleanConversationText(
+      text
+    ).toLowerCase();
+
+  return (
+    /^(?:details|order details|my order details|show details|show my order details)$/i.test(
+      value
+    ) ||
+    /^(?:show|share|send|give)\s+(?:me\s+)?(?:the\s+)?(?:order|latest order)\s+details$/i.test(
+      value
+    )
+  );
+}
+
 /* =========================================================
    CUSTOMER ENGINE
 ========================================================= */
@@ -5970,6 +5987,57 @@ async function handleCustomerMessage({
     return;
   }
 
+  /* -----------------------------------------
+     CUSTOMER ORDER DETAILS
+  ----------------------------------------- */
+
+  if (
+    isCustomerOrderDetailsQuestion(
+      userMessage
+    )
+  ) {
+    const order =
+      activeOrder ||
+      latestOrder;
+
+    if (!order) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I don’t have a Fetch order for you yet. Tell me what you’d like me to fetch."
+      );
+      return;
+    }
+
+    const reply =
+      buildSingleOrderSummary(
+        order
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
   let decision;
 
   try {
@@ -7110,6 +7178,18 @@ function buildShopperLastOrderMessage(order) {
   );
 }
 
+
+function isShopperCurrentDetailsQuestion(text) {
+  const value =
+    cleanConversationText(
+      text
+    ).toLowerCase();
+
+  return /^(?:details|order details|job details|current order|current job|show details|show my order details|show my job details)$/i.test(
+    value
+  );
+}
+
 /* =========================================================
    SHOPPER ENGINE
 ========================================================= */
@@ -7527,6 +7607,55 @@ async function handleShopperMessage({
             order.status
           )
         : "I couldn’t find your active Fetch order."
+    );
+
+    return;
+  }
+
+  /* CURRENT ORDER / JOB DETAILS */
+
+  if (
+    isShopperCurrentDetailsQuestion(
+      rawText
+    )
+  ) {
+    const acceptedJob =
+      await getAcceptedShopperJob(
+        shopper.id
+      );
+
+    if (
+      acceptedJob
+    ) {
+      const currentOrder =
+        await getOrderById(
+          acceptedJob.order_id
+        );
+
+      if (
+        currentOrder
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          buildShopperLastOrderMessage(
+            currentOrder
+          )
+        );
+
+        return;
+      }
+    }
+
+    const latestOrder =
+      await getShopperLastOrder(
+        shopper.id
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      buildShopperLastOrderMessage(
+        latestOrder
+      )
     );
 
     return;
