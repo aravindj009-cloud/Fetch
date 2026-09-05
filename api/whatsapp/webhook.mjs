@@ -1499,15 +1499,66 @@ async function offerOrderToShopper(
       job: null,
       reason:
         "missing_order",
-      offeredCount:
-        0,
     };
   }
 
   /*
-    One order may be offered to MANY shoppers.
-    The first shopper to ACCEPT atomically claims the order.
+    HARD RULE:
+    An order can have only ONE currently offered job.
+    Never broadcast the same order to multiple shoppers.
   */
+  const existingOffers =
+    await supabaseRequest(
+      `shopper_jobs?order_id=eq.${encodeURIComponent(
+        order.id
+      )}&status=eq.offered&select=*&order=offered_at.asc&limit=10`
+    );
+
+  if (
+    Array.isArray(
+      existingOffers
+    ) &&
+    existingOffers.length
+  ) {
+    const existingJob =
+      existingOffers[0];
+
+    const existingShopperRows =
+      existingJob?.shopper_id
+        ? await supabaseRequest(
+            `shoppers?id=eq.${encodeURIComponent(
+              existingJob.shopper_id
+            )}&select=*&limit=1`
+          )
+        : [];
+
+    const existingShopper =
+      Array.isArray(
+        existingShopperRows
+      ) &&
+      existingShopperRows.length
+        ? existingShopperRows[0]
+        : null;
+
+    /*
+      Idempotent dispatch:
+      if the order is already offered, the caller should treat
+      it as successfully dispatched rather than telling the
+      customer that no shopper is available.
+    */
+    return {
+      success: true,
+      shopper:
+        existingShopper,
+      job:
+        existingJob,
+      reason:
+        "already_offered",
+      reused:
+        true,
+    };
+  }
+
   const existingJobs =
     await supabaseRequest(
       `shopper_jobs?order_id=eq.${encodeURIComponent(
@@ -1515,14 +1566,20 @@ async function offerOrderToShopper(
       )}&select=shopper_id,status&limit=100`
     );
 
-  const existingShopperIds =
+  const previouslyTriedShopperIds =
     Array.isArray(
       existingJobs
     )
       ? existingJobs
           .filter(
             (job) =>
-              job?.shopper_id
+              job?.shopper_id &&
+              [
+                "declined",
+                "cancelled",
+              ].includes(
+                job.status
+              )
           )
           .map(
             (job) =>
@@ -1535,7 +1592,7 @@ async function offerOrderToShopper(
       ...new Set(
         [
           ...excludedIds,
-          ...existingShopperIds,
+          ...previouslyTriedShopperIds,
         ].filter(Boolean)
       ),
     ];
@@ -1546,9 +1603,10 @@ async function offerOrderToShopper(
     );
 
   /*
-    If a particular shopper has just become available,
-    dispatch only to that shopper.
-    Otherwise, dispatch to every eligible shopper.
+    Keep selection deterministic:
+    if a queue retry explicitly specifies a shopper, use them.
+    Otherwise rotate through currently available shoppers by
+    least-recently-seen.
   */
   if (
     preferredShopperId
@@ -1588,330 +1646,206 @@ async function offerOrderToShopper(
   if (
     !shoppers.length
   ) {
-    const activeOfferExists =
-      Array.isArray(
-        existingJobs
-      ) &&
-      existingJobs.some(
-        (job) =>
-          job?.status ===
-          "offered"
-      );
-
     return {
-      success:
-        activeOfferExists,
+      success: false,
       shopper: null,
       job: null,
       reason:
-        activeOfferExists
-          ? "already_offered"
-          : "no_available_shopper",
-      offeredCount:
-        0,
+        "no_available_shopper",
     };
   }
 
-  let offeredCount =
-    0;
-
-  let firstShopper =
-    null;
-
-  let firstJob =
-    null;
-
-  for (
-    const shopper of
-      shoppers
-  ) {
-    let createdJob =
-      null;
-
-    try {
-      createdJob =
-        await createShopperJob(
-          order.id,
-          shopper.id
-        );
-
-      const hasCustomerCoordinates =
-        Number.isFinite(
-          Number(
-            order.customer_latitude
-          )
-        ) &&
-        Number.isFinite(
-          Number(
-            order.customer_longitude
-          )
-        );
-
-      const storeName =
-        String(
-          order.store_name ||
-          ""
-        ).trim();
-
-      const isFlexibleStore =
-        !storeName ||
-        /^any available local store$/i.test(
-          storeName
-        ) ||
-        /^pending(?: nearby)? store$/i.test(
-          storeName
-        );
-
-      const destinationLine =
-        order.delivery_address
-          ? `📍 Deliver to: ${order.delivery_address}\n`
-          : "📍 Delivery location: customer will share location\n";
-
-      const locationPinLine =
-        hasCustomerCoordinates
-          ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-              `${Number(
-                order.customer_latitude
-              )},${Number(
-                order.customer_longitude
-              )}`
-            )}\n`
-          : "";
-
-      const storeInstruction =
-        isFlexibleStore
-          ? "🏪 Store: Any suitable nearby/local shop\n"
-          : `🏪 Store: ${storeName}\n`;
-
-      const shopperInstruction =
-        isFlexibleStore
-          ? "Please find the requested item at a suitable nearby shop, check the product price, and decide the delivery fee."
-          : "Please check the product price at the requested store and decide the delivery fee.";
-
-      const message =
-        `🛍️ *New Fetch Job*\n\n` +
-        storeInstruction +
-        `🛒 Items: ${order.items}\n` +
-        destinationLine +
-        locationPinLine +
-        `\n${shopperInstruction}\n` +
-        `Delivery fee: minimum ₹20 per order and may increase based on the KM.\n\n` +
-        `Reply *ACCEPT* to take this job.\n` +
-        `Reply *DECLINE* to skip it.\n\n` +
-        `⚡ The first shopper to accept gets this order.`;
-
-      await sendWhatsAppMessage(
-        shopper.phone,
-        message
-      );
-
-      offeredCount +=
-        1;
-
-      if (
-        !firstShopper
-      ) {
-        firstShopper =
-          shopper;
-
-        firstJob =
-          createdJob;
-      }
-    } catch (error) {
-      console.error(
-        "FETCH DISPATCH SHOPPER ERROR:",
-        error
-      );
-
-      /*
-        If this shopper's WhatsApp send failed, cancel only that
-        shopper's offer. Other shoppers must still get their offers.
-      */
-      if (
-        createdJob?.id
-      ) {
-        try {
-          await updateShopperJob(
-            createdJob.id,
-            {
-              status:
-                "cancelled",
-            }
-          );
-        } catch (cleanupError) {
-          console.error(
-            "FETCH DISPATCH CLEANUP ERROR:",
-            cleanupError
-          );
-        }
-      }
-    }
-  }
-
   /*
-    If at least one shopper successfully received the offer,
-    this order is considered successfully dispatched.
+    Send to exactly ONE shopper and return immediately.
   */
-  if (
-    offeredCount > 0
-  ) {
+  const shopper =
+    shoppers[0];
+
+  let createdJob = null;
+
+  try {
+    createdJob =
+      await createShopperJob(
+        order.id,
+        shopper.id
+      );
+
+    const hasCustomerCoordinates =
+      Number.isFinite(
+        Number(
+          order.customer_latitude
+        )
+      ) &&
+      Number.isFinite(
+        Number(
+          order.customer_longitude
+        )
+      );
+
+    const storeName =
+      String(
+        order.store_name ||
+        ""
+      ).trim();
+
+    const isFlexibleStore =
+      !storeName ||
+      /^any available local store$/i.test(
+        storeName
+      ) ||
+      /^pending(?: nearby)? store$/i.test(
+        storeName
+      );
+
+    const destinationLine =
+      order.delivery_address
+        ? `📍 Deliver to: ${order.delivery_address}\n`
+        : "📍 Delivery location: customer will share location\n";
+
+    const locationPinLine =
+      hasCustomerCoordinates
+        ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+            `${Number(
+              order.customer_latitude
+            )},${Number(
+              order.customer_longitude
+            )}`
+          )}\n`
+        : "";
+
+    const storeInstruction =
+      isFlexibleStore
+        ? "🏪 Store: Any suitable nearby/local shop\n"
+        : `🏪 Store: ${storeName}\n`;
+
+    const shopperInstruction =
+      isFlexibleStore
+        ? "Please find the requested item at a suitable nearby shop, check the product price, and decide the delivery fee."
+        : "Please check the product price at the requested store and decide the delivery fee.";
+
+    const message =
+      `🛍️ *New Fetch Job*\n\n` +
+      storeInstruction +
+      `🛒 Items: ${order.items}\n` +
+      destinationLine +
+      locationPinLine +
+      `\n${shopperInstruction}\n` +
+      `Delivery fee: minimum ₹20 per order and may increase based on the KM.\n\n` +
+      `Reply *ACCEPT* to take this job.\n` +
+      `Reply *DECLINE* to skip it.`;
+
+    await sendWhatsAppMessage(
+      shopper.phone,
+      message
+    );
+
+    /*
+      The order remains unassigned until ACCEPT.
+      The offered job is the current dispatch lock.
+    */
     return {
       success: true,
-      shopper:
-        firstShopper,
+      shopper,
       job:
-        firstJob,
-      reason:
-        "offered_to_available_shoppers",
-      offeredCount,
+        createdJob,
     };
-  }
+  } catch (error) {
+    /*
+      Two webhook executions can reach the same order at nearly
+      the same time. The database unique index protects the order.
+      When the insert loses that race, reuse the existing offer.
+    */
+    if (
+      String(
+        error?.message ||
+          ""
+      ).includes(
+        "Supabase 409"
+      )
+    ) {
+      const racedOffers =
+        await supabaseRequest(
+          `shopper_jobs?order_id=eq.${encodeURIComponent(
+            order.id
+          )}&status=eq.offered&select=*&order=offered_at.asc&limit=1`
+        );
 
-  /*
-    An existing active offer can still mean the order is already
-    in the shopper race.
-  */
-  const remainingOffers =
-    Array.isArray(
-      existingJobs
-    )
-      ? existingJobs.filter(
-          (job) =>
-            job?.status ===
-            "offered"
-        )
-      : [];
+      if (
+        Array.isArray(
+          racedOffers
+        ) &&
+        racedOffers.length
+      ) {
+        const racedJob =
+          racedOffers[0];
 
-  return {
-    success:
-      remainingOffers.length >
-      0,
-    shopper: null,
-    job: null,
-    reason:
-      remainingOffers.length
-        ? "already_offered"
-        : "dispatch_error",
-    offeredCount:
-      0,
-  };
-}
+        const racedShopperRows =
+          racedJob?.shopper_id
+            ? await supabaseRequest(
+                `shoppers?id=eq.${encodeURIComponent(
+                  racedJob.shopper_id
+                )}&select=*&limit=1`
+              )
+            : [];
 
-async function claimOrderForShopper(
-  orderId,
-  shopperId
-) {
-  if (
-    !orderId ||
-    !shopperId
-  ) {
-    return null;
-  }
+        const racedShopper =
+          Array.isArray(
+            racedShopperRows
+          ) &&
+          racedShopperRows.length
+            ? racedShopperRows[0]
+            : null;
 
-  /*
-    Atomic first-accept rule:
-    only a finding_shopper order with no shopper_id can be claimed.
-    PostgREST/PostgreSQL performs this conditional update atomically.
-  */
-  const data =
-    await supabaseRequest(
-      `orders?id=eq.${encodeURIComponent(
-        orderId
-      )}&status=eq.finding_shopper&shopper_id=is.null`,
-      {
-        method:
-          "PATCH",
+        return {
+          success:
+            true,
 
-        headers: {
-          Prefer:
-            "return=representation",
-        },
+          shopper:
+            racedShopper,
 
-        body:
-          JSON.stringify({
-            shopper_id:
-              shopperId,
+          job:
+            racedJob,
 
+          reason:
+            "already_offered_race_recovered",
+
+          reused:
+            true,
+        };
+      }
+    }
+
+    console.error(
+      "FETCH DISPATCH SHOPPER ERROR:",
+      error
+    );
+
+    if (
+      createdJob?.id
+    ) {
+      try {
+        await updateShopperJob(
+          createdJob.id,
+          {
             status:
-              "shopper_assigned",
-          }),
+              "cancelled",
+          }
+        );
+      } catch (cleanupError) {
+        console.error(
+          "FETCH DISPATCH CLEANUP ERROR:",
+          cleanupError
+        );
       }
-    );
-
-  return Array.isArray(data) &&
-    data.length
-    ? data[0]
-    : null;
-}
-
-async function cancelOtherOffersAfterAcceptance(
-  orderId,
-  winningShopperId
-) {
-  const offers =
-    await supabaseRequest(
-      `shopper_jobs?order_id=eq.${encodeURIComponent(
-        orderId
-      )}&status=eq.offered&select=id,shopper_id&limit=100`
-    );
-
-  if (
-    !Array.isArray(
-      offers
-    )
-  ) {
-    return;
-  }
-
-  for (
-    const offer of
-      offers
-  ) {
-    if (
-      !offer?.id ||
-      offer.shopper_id ===
-        winningShopperId
-    ) {
-      continue;
     }
 
-    await updateShopperJob(
-      offer.id,
-      {
-        status:
-          "cancelled",
-      }
-    );
-
-    if (
-      !offer.shopper_id
-    ) {
-      continue;
-    }
-
-    const shopperRows =
-      await supabaseRequest(
-        `shoppers?id=eq.${encodeURIComponent(
-          offer.shopper_id
-        )}&select=*&limit=1`
-      );
-
-    const loser =
-      Array.isArray(
-        shopperRows
-      ) &&
-      shopperRows.length
-        ? shopperRows[0]
-        : null;
-
-    if (
-      loser?.phone
-    ) {
-      await sendWhatsAppMessage(
-        loser.phone,
-        "Sorry 🙏 This Fetch order was already Fetched by another shopper. Please wait for the next Fetch order."
-      );
-    }
+    return {
+      success: false,
+      shopper: null,
+      job: null,
+      reason:
+        "dispatch_error",
+    };
   }
 }
 
@@ -2301,9 +2235,7 @@ Rules:
 18. A WhatsApp location pin is delivery-location information, not a product request and must never be turned into items.
 19. "my orders", "order history", and "show my orders" mean show the customer’s recent Fetch orders; they are not new shopping requests.
 20. When a shopper becomes available, Fetch should automatically offer the oldest waiting order first. The customer should not have to resubmit the order.
-21. A new Fetch order may be offered to every currently eligible available shopper. The first shopper to ACCEPT atomically wins the order.
-22. Once one shopper wins, all other offers for that same order are cancelled and those shoppers must be told the order was already Fetched by another shopper.
-23. Never tell a losing shopper that they can still accept an order after another shopper has claimed it.
+21. Only one shopper may receive an active offer for an order at a time. A second shopper must never receive the same active job unless the first shopper has declined or the offer has been cancelled/expired.
 22. When a shopper declines, the order remains queued and the next eligible shopper may be offered that same order.
 20. If the customer mentions an order reference such as #ABC123 or identifies an order by item/store, use that order for status or cancellation; never guess when more than one order matches.
 21. "cancel order #ABC123" must cancel only that exact customer order if it is still active.
@@ -2953,6 +2885,107 @@ function normalizeCustomerText(text) {
     .replace(/\s+/g, ' ');
 }
 
+
+function looksLikeBareShoppingRequest(
+  text
+) {
+  const value =
+    normalizeCustomerText(
+      text
+    );
+
+  if (!value) {
+    return false;
+  }
+
+  const lower =
+    value.toLowerCase();
+
+  if (
+    isPureConversationControl?.(value)
+  ) {
+    return false;
+  }
+
+  if (
+    isNewOrderPrompt?.(value) ||
+    isEtaQuestion?.(value) ||
+    isCancellationRequest?.(value)
+  ) {
+    return false;
+  }
+
+  if (
+    /^(?:who|what|when|where|why|how|can you|could you|do you|did you|is there|are there|tell me|show me|status|help|hello|hi|hey)\b/i.test(
+      value
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    value.length < 2 ||
+    value.length > 180
+  ) {
+    return false;
+  }
+
+  return (
+    /\b(?:cake|kitkat|munch|lays|chips|glue|limca|coke|bread|eggs?|milk|medicine|tablet|paracetamol|biscuit|biscuits|chocolate|water|juice|coffee|tea|rice|sugar|salt|soap|shampoo|snacks?|flowers?|grocery|groceries)\b/i.test(
+      lower
+    ) ||
+    /^(?:a|an|some|one|two|three|1|2|3|4|5|6|7|8|9|10)\s+\S+/i.test(
+      value
+    )
+  );
+}
+
+function cleanBareShoppingItems(
+  text
+) {
+  let value =
+    normalizeCustomerText(
+      text
+    );
+
+  value =
+    value.replace(
+      /^(?:a|an)\s+/i,
+      ""
+    );
+
+  return cleanNewOrderItems(
+    value
+  );
+}
+
+function extractBareShoppingRequest(
+  text
+) {
+  if (
+    !looksLikeBareShoppingRequest(
+      text
+    )
+  ) {
+    return null;
+  }
+
+  const items =
+    cleanBareShoppingItems(
+      text
+    );
+
+  if (!items) {
+    return null;
+  }
+
+  return {
+    items,
+    store: "",
+    address: "",
+  };
+}
+
 function extractFlexibleShoppingRequest(text) {
   const value =
     normalizeCustomerText(text);
@@ -3136,7 +3169,8 @@ function extractFlexibleShoppingRequest(text) {
     };
   }
 
-  return null;
+  return extractBareShoppingRequest(value);
+
 }
 
 
@@ -3259,7 +3293,8 @@ function extractDeterministicShoppingRequest(text) {
     };
   }
 
-  return null;
+  return extractBareShoppingRequest(value);
+
 }
 
 
@@ -5061,7 +5096,7 @@ async function handleCustomerMessage({
               ? `📍 Deliver to: ${deliveryAddress}\n`
               : ""
           ) +
-          `\nI’ve sent the order to all available Fetch shoppers nearby. Whoever accepts first will take the job. They’ll check the product price and delivery fee and send the details to you for approval.`
+          `\nI’ve sent the order to an available shopper. They’ll check the product price and send it to you for approval.`
         );
       } else {
         await sendWhatsAppMessage(
@@ -5109,6 +5144,11 @@ async function handleCustomerMessage({
         ).trim()
       );
 
+    /*
+      The requested store is free-form customer data.
+      It does NOT need to exist in the stores table.
+      Unknown stores are still valid Fetch orders.
+    */
     const storeName =
       requestedStore &&
       !looksLikeNearbyStoreRequest(
@@ -6799,6 +6839,47 @@ async function handleCustomerMessage({
       );
   }
 
+
+  /*
+    Customer language is intentionally open-ended.
+    If they simply name an item, Fetch treats it as a shopping
+    request instead of requiring a command phrase.
+  */
+  if (
+    decision.intent ===
+      "general_question" &&
+    looksLikeBareShoppingRequest(
+      userMessage
+    )
+  ) {
+    const bareRequest =
+      extractBareShoppingRequest(
+        userMessage
+      );
+
+    if (
+      bareRequest
+    ) {
+      decision.intent =
+        "shopping_request";
+
+      decision.items =
+        bareRequest.items;
+
+      decision.store_name =
+        "";
+
+      decision.delivery_address =
+        "";
+
+      decision.budget =
+        null;
+
+      decision.reply =
+        `Got it 👍 I’ll fetch ${bareRequest.items}.`;
+    }
+  }
+
   /* -----------------------------------------
      SAFETY NORMALIZATION OF AI ORDER FIELDS
   ----------------------------------------- */
@@ -7352,7 +7433,7 @@ async function handleCustomerMessage({
     normalizedPhone,
 
     decision.reply ||
-      "Hi! I’m Fetch. Tell me what you’d like me to buy, which store, and where to deliver it."
+      "Hi! I’m Fetch. Tell me what you need. You can name a specific store, or leave the store open and I’ll handle the sourcing."
   );
 }
 
@@ -8291,6 +8372,7 @@ async function handleShopperMessage({
     if (!job) {
       await sendWhatsAppMessage(
         normalizedPhone,
+
         "You don’t have a new Fetch job waiting right now."
       );
 
@@ -8307,6 +8389,36 @@ async function handleShopperMessage({
         job.id,
         {
           status:
+            "declined",
+        }
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "That Fetch job is no longer available."
+      );
+
+      return;
+    }
+
+    if (
+      ![
+        "finding_shopper",
+        "shopper_assigned",
+      ].includes(
+        order.status
+      ) ||
+      (
+        order.shopper_id &&
+        order.shopper_id !==
+          shopper.id
+      )
+    ) {
+      await updateShopperJob(
+        job.id,
+        {
+          status:
             "cancelled",
         }
       );
@@ -8319,61 +8431,27 @@ async function handleShopperMessage({
       return;
     }
 
-    /*
-      First-accept-wins:
-      exactly one shopper can successfully update the order from
-      finding_shopper + no shopper to shopper_assigned.
-    */
-    const claimedOrder =
-      await claimOrderForShopper(
-        order.id,
-        shopper.id
-      );
+    await updateShopperJob(
+      job.id,
+      {
+        status:
+          "accepted",
 
-    if (
-      !claimedOrder
-    ) {
-      await updateShopperJob(
-        job.id,
-        {
-          status:
-            "cancelled",
-        }
-      );
+        accepted_at:
+          new Date().toISOString(),
+      }
+    );
 
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "Sorry 🙏 This Fetch order was already Fetched by another shopper. Please wait for the next Fetch order."
-      );
+    await updateOrder(
+      order.id,
+      {
+        shopper_id:
+          shopper.id,
 
-      return;
-    }
-
-    const acceptedJob =
-      await updateShopperJob(
-        job.id,
-        {
-          status:
-            "accepted",
-
-          accepted_at:
-            new Date().toISOString(),
-        }
-      );
-
-    if (
-      !acceptedJob
-    ) {
-      /*
-        The order has already been atomically claimed. Keep the
-        shopper bound to it even if the job confirmation has a
-        transient database issue.
-      */
-      console.error(
-        "FETCH ACCEPT JOB UPDATE FAILED:",
-        job.id
-      );
-    }
+        status:
+          "shopper_assigned",
+      }
+    );
 
     await updateShopper(
       shopper.id,
@@ -8382,7 +8460,7 @@ async function handleShopperMessage({
           false,
 
         current_order_id:
-          claimedOrder.id,
+          order.id,
 
         last_seen_at:
           new Date().toISOString(),
@@ -8390,18 +8468,8 @@ async function handleShopperMessage({
     );
 
     /*
-      Cancel every other shopper's offer and immediately tell them
-      that another shopper got the order first.
-    */
-    await cancelOtherOffersAfterAcceptance(
-      claimedOrder.id,
-      shopper.id
-    );
-
-    /*
-      Remove this winning shopper's other outstanding offers.
-      They accepted one job, so they are no longer available for
-      those offers.
+      Remove stale offers so an old order can never be
+      accidentally accepted later by this shopper.
     */
     const staleOffers =
       await supabaseRequest(
@@ -8429,9 +8497,6 @@ async function handleShopperMessage({
           }
         );
 
-        /*
-          The other order remains available to other shoppers.
-        */
         if (
           staleJob.order_id
         ) {
@@ -8443,9 +8508,16 @@ async function handleShopperMessage({
           if (
             staleOrder &&
             !staleOrder.shopper_id &&
-            staleOrder.status ===
-              "finding_shopper"
+            [
+              "finding_shopper",
+            ].includes(
+              staleOrder.status
+            )
           ) {
+            /*
+              Leave the stale order in the queue. It can be
+              offered to another shopper later.
+            */
             await updateOrder(
               staleOrder.id,
               {
@@ -8461,11 +8533,11 @@ async function handleShopperMessage({
     await sendWhatsAppMessage(
       normalizedPhone,
 
-      "Accepted ✅\n\nYou Fetched this order first. Please check the product price and decide the delivery fee. Reply like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery price is decided by the shopper; prices may vary. Minimum is ₹20 per order and may increase based on the KM."
+      "Accepted ✅\n\nPlease check the product price and decide the delivery fee. Reply like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery price is decided by the shopper; prices may vary. Minimum is ₹20 per order and may increase based on the KM."
     );
 
     await notifyCustomerForOrder(
-      claimedOrder.id,
+      order.id,
 
       "✅ A Fetch shopper has accepted your order. They’ll start shopping soon."
     );
