@@ -1192,10 +1192,42 @@ async function getOpenShopperJob(
 async function getAcceptedShopperJob(
   shopperId
 ) {
+  /*
+    IMPORTANT:
+    A shopper can have many historical "accepted" job rows.
+    Never choose the latest accepted row globally.
+
+    The shopper.current_order_id is the authoritative
+    pointer to the ONE order the shopper is currently working on.
+  */
+  const shoppers =
+    await supabaseRequest(
+      `shoppers?id=eq.${encodeURIComponent(
+        shopperId
+      )}&select=current_order_id&limit=1`
+    );
+
+  const shopper =
+    Array.isArray(
+      shoppers
+    ) &&
+    shoppers.length
+      ? shoppers[0]
+      : null;
+
+  const currentOrderId =
+    shopper?.current_order_id;
+
+  if (!currentOrderId) {
+    return null;
+  }
+
   const data =
     await supabaseRequest(
       `shopper_jobs?shopper_id=eq.${encodeURIComponent(
         shopperId
+      )}&order_id=eq.${encodeURIComponent(
+        currentOrderId
       )}&status=eq.accepted&select=*&order=accepted_at.desc&limit=1`
     );
 
@@ -2991,7 +3023,7 @@ function isNewOrderPrompt(text) {
   const value =
     cleanConversationText(text).toLowerCase();
 
-  return /^(new order|new fetch order|start new order|start a new order|place a new order|another order|i want another order|i need another order|i want a new order|i need a new order|new fetch|start another order)$/.test(
+  return /^(new order|new fetch order|start new order|start a new order|place a new order|another order|i want a new order|i need a new order)$/.test(
     value
   );
 }
@@ -3064,38 +3096,6 @@ function buildHumanEtaReply(order) {
     default:
       return "I’m checking the latest status of your order.";
   }
-}
-
-
-function isNewOrderAwaitingItemReply(
-  history
-) {
-  if (
-    !Array.isArray(history) ||
-    !history.length
-  ) {
-    return false;
-  }
-
-  const lastAssistant =
-    [...history]
-      .reverse()
-      .find(
-        (message) =>
-          message?.role ===
-          "assistant"
-      );
-
-  if (!lastAssistant) {
-    return false;
-  }
-
-  return /let'?s start a new order|what would you like me to fetch/i.test(
-    String(
-      lastAssistant.message ||
-      ""
-    )
-  );
 }
 
 function buildHumanNewOrderReply() {
@@ -4062,68 +4062,6 @@ async function handleCustomerMessage({
     await getRecentMessages(
       customer.id
     );
-
-  /*
-    -------------------------------------------------------
-    NEW ORDER CONVERSATION GUARD
-
-    After Fetch says "Let’s start a new order", a reply such as
-    YES / OK / SURE must NOT confirm an older active order.
-    The customer still needs to tell Fetch what the new order is.
-  */
-
-  if (
-    isNewOrderAwaitingItemReply(
-      history
-    ) &&
-    isSimpleConfirmation(
-      userMessage
-    )
-  ) {
-    const reply =
-      "Sure 👍 What would you like me to fetch for the new order?";
-
-    await saveMessage({
-      customerId:
-        customer.id,
-
-      orderId:
-        null,
-
-      phone:
-        normalizedPhone,
-
-      role:
-        "user",
-
-      message:
-        userMessage,
-    });
-
-    await saveMessage({
-      customerId:
-        customer.id,
-
-      orderId:
-        null,
-
-      phone:
-        normalizedPhone,
-
-      role:
-        "assistant",
-
-      message:
-        reply,
-    });
-
-    await sendWhatsAppMessage(
-      normalizedPhone,
-      reply
-    );
-
-    return;
-  }
 
   /*
     -------------------------------------------------------
@@ -7350,7 +7288,10 @@ async function dispatchNextQueuedOrder(
       ? shoppers[0]
       : null;
 
-  if (!shopper) {
+  if (
+    !shopper ||
+    shopper.current_order_id
+  ) {
     return {
       success: false,
       reason: "shopper_not_available",
@@ -7589,6 +7530,16 @@ async function handleShopperMessage({
   if (
     command === "ACCEPT"
   ) {
+    if (
+      shopper.current_order_id
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You’re already working on an active Fetch order. Finish that order before accepting another job."
+      );
+      return;
+    }
+
     const job =
       await getOpenShopperJob(
         shopper.id
@@ -7621,6 +7572,35 @@ async function handleShopperMessage({
       await sendWhatsAppMessage(
         normalizedPhone,
 
+        "That Fetch job is no longer available."
+      );
+
+      return;
+    }
+
+    if (
+      ![
+        "finding_shopper",
+        "shopper_assigned",
+      ].includes(
+        order.status
+      ) ||
+      (
+        order.shopper_id &&
+        order.shopper_id !==
+          shopper.id
+      )
+    ) {
+      await updateShopperJob(
+        job.id,
+        {
+          status:
+            "cancelled",
+        }
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
         "That Fetch job is no longer available."
       );
 
@@ -7662,6 +7642,69 @@ async function handleShopperMessage({
           new Date().toISOString(),
       }
     );
+
+    /*
+      Remove stale offers so an old order can never be
+      accidentally accepted later by this shopper.
+    */
+    const staleOffers =
+      await supabaseRequest(
+        `shopper_jobs?shopper_id=eq.${encodeURIComponent(
+          shopper.id
+        )}&status=eq.offered&id=neq.${encodeURIComponent(
+          job.id
+        )}&select=id,order_id&limit=100`
+      );
+
+    if (
+      Array.isArray(
+        staleOffers
+      )
+    ) {
+      for (
+        const staleJob of
+          staleOffers
+      ) {
+        await updateShopperJob(
+          staleJob.id,
+          {
+            status:
+              "cancelled",
+          }
+        );
+
+        if (
+          staleJob.order_id
+        ) {
+          const staleOrder =
+            await getOrderById(
+              staleJob.order_id
+            );
+
+          if (
+            staleOrder &&
+            !staleOrder.shopper_id &&
+            [
+              "finding_shopper",
+            ].includes(
+              staleOrder.status
+            )
+          ) {
+            /*
+              Leave the stale order in the queue. It can be
+              offered to another shopper later.
+            */
+            await updateOrder(
+              staleOrder.id,
+              {
+                status:
+                  "finding_shopper",
+              }
+            );
+          }
+        }
+      }
+    }
 
     await sendWhatsAppMessage(
       normalizedPhone,
@@ -7717,6 +7760,9 @@ async function handleShopperMessage({
       "Declined. 👍"
     );
 
+    let replacementSent =
+      false;
+
     if (order) {
       await updateOrder(
         order.id,
@@ -7729,24 +7775,34 @@ async function handleShopperMessage({
         }
       );
 
-      await offerOrderToShopper(
-        order,
-        [shopper.id]
-      );
+      const replacement =
+        await offerOrderToShopper(
+          order,
+          [shopper.id]
+        );
+
+      replacementSent =
+        Boolean(
+          replacement?.success
+        );
     }
 
-    const nextDispatch =
-      await dispatchNextQueuedOrder(
-        shopper.id
-      );
-
     if (
-      nextDispatch.success
+      !replacementSent
     ) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "I’ve sent you the next waiting Fetch job."
-      );
+      const nextDispatch =
+        await dispatchNextQueuedOrder(
+          shopper.id
+        );
+
+      if (
+        nextDispatch.success
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I’ve sent you the next waiting Fetch job."
+        );
+      }
     }
 
     return;
@@ -8441,6 +8497,19 @@ async function handleShopperMessage({
       await sendWhatsAppMessage(
         normalizedPhone,
         "I’ve also sent you the next waiting Fetch job."
+      );
+    }
+
+    /*
+      Safety check: the receipt must belong to the exact order
+      completed by this shopper job.
+    */
+    if (
+      receiptOrder.id !==
+      order.id
+    ) {
+      throw new Error(
+        "ORDER_BINDING_MISMATCH: completed order does not match receipt order"
       );
     }
 
