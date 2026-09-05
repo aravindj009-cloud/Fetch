@@ -1581,7 +1581,11 @@ Rules:
 7. Never claim a shopper accepted unless the system does so.
 8. Never claim delivery unless the database status is delivered.
 9. Match the customer's language/style where practical.
-10. Return only the JSON requested.
+10. The "items" field must contain ONLY products explicitly requested in the latest customer message.
+11. Never copy old customer messages, assistant replies, confirmations, cancellations, store names, pricing text, or conversation history into "items".
+12. For a clearly new shopping request, treat the latest message as a new order rather than modifying an older order.
+13. For an item addition, add only the item explicitly mentioned in the latest message.
+14. Return only the JSON requested.
 11. The items field must contain ONLY actual products the customer wants Fetch to buy. NEVER copy greetings, confirmations, cancellations, questions, store names, addresses, or previous conversation messages into the items field.
 12. When an active order exists, treat active_order.items as the source of truth. Only change the item list when the CURRENT customer message clearly adds, removes, or replaces products.
 13. Do not use old conversation history to invent or append products. The current customer message is the authority for the requested change.
@@ -1606,7 +1610,12 @@ Rules:
       latestOrder || null,
 
     conversation:
-      history,
+      history
+        .filter(
+          (message) =>
+            message?.role === "assistant"
+        )
+        .slice(-3),
 
     current_message:
       userMessage,
@@ -1980,41 +1989,7 @@ function fallbackDecision(
     }
   }
 
-  // When an active order exists and the customer sends a short
-  // item message such as "bread" or "milk", treat it as an
-  // addition rather than returning the generic fallback.
-  if (
-    activeOrder &&
-    text.length >= 2 &&
-    text.length <= 80 &&
-    !/[?]$/.test(text) &&
-    !/^(new order|cancel|status|track|help)$/i.test(text)
-  ) {
-    return {
-      intent:
-        "update_order",
-
-      store_name:
-        activeOrder.store_name,
-
-      items:
-        `${activeOrder.items}; ${text}`,
-
-      delivery_address:
-        activeOrder.delivery_address ||
-        customer?.address ||
-        "",
-
-      budget:
-        activeOrder.budget ??
-        null,
-
-      reply:
-        `Added ${text}. I’ll recalculate the delivery charge before confirmation.`,
-    };
-  }
-
-  // Common natural shopping-request shapes. This is only a
+    // Common natural shopping-request shapes. This is only a
   // temporary fallback for OpenAI rate-limit periods.
   const shoppingPatterns = [
     /^(?:i\s+want|i\s+need|fetch|get|buy|please\s+get|can\s+you\s+get)\s+(.+?)\s+(?:from|at)\s+(.+?)\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+)$/i,
@@ -2050,6 +2025,39 @@ function fallbackDecision(
     }
   }
 
+  // Only treat a short message as an addition when it is not an explicit new-order request.
+  if (
+    activeOrder &&
+    !isExplicitNewOrderRequest(text) &&
+    text.length >= 2 &&
+    text.length <= 80 &&
+    !/[?]$/.test(text) &&
+    !/^(new order|cancel|status|track|help)$/i.test(text)
+  ) {
+    return {
+      intent:
+        "update_order",
+
+      store_name:
+        activeOrder.store_name,
+
+      items:
+        `${activeOrder.items}; ${text}`,
+
+      delivery_address:
+        activeOrder.delivery_address ||
+        customer?.address ||
+        "",
+
+      budget:
+        activeOrder.budget ??
+        null,
+
+      reply:
+        `Added ${text}. I’ll recalculate the delivery charge before confirmation.`,
+    };
+  }
+
   return {
     intent:
       "general_question",
@@ -2076,47 +2084,89 @@ function fallbackDecision(
    CUSTOMER COMMAND / ITEM SAFETY
 ========================================================= */
 
-function isSimpleConfirmation(text) {
-  const value = String(text || "")
+function normalizeCustomerText(text) {
+  return String(text || '')
     .trim()
-    .toLowerCase()
-    .replace(/[.!?]+$/g, "")
-    .replace(/\s+/g, " ");
+    .replace(/\s+/g, ' ');
+}
 
-  return /^(yes|y|yeah|yep|ya|ok|okay|sure|go ahead|confirm|confirmed|please confirm|please confirm my order)$/.test(
-    value
+function extractDeterministicShoppingRequest(text) {
+  const value = normalizeCustomerText(text);
+  if (!value) return null;
+
+  const explicitPattern =
+    /^(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order)\s+(.+?)\s+(?:from|at)\s+(.+?)(?:\s*,?\s*(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+))?$/i;
+
+  const match = value.match(explicitPattern);
+  if (!match) return null;
+
+  return {
+    items: cleanNewOrderItems(match[1]),
+    store: match[2].trim(),
+    address: match[3]?.trim() || "",
+  };
+}
+
+function cleanNewOrderItems(items) {
+  return String(items || "")
+    .trim()
+    .replace(/\b(?:yes|yeah|yep|ya|okay|ok|sure)\b/gi, " ")
+    .replace(/\b(?:please\s+confirm(?:\s+my\s+order)?|confirm(?:\s+my\s+order)?)\b/gi, " ")
+    .replace(/\b(?:cancel(?:\s+the|\s+my)?\s+order)\b/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^[,;.\s]+|[,;.\s]+$/g, "")
+    .trim();
+}
+
+function looksLikeNearbyStoreRequest(text) {
+  const value = normalizeCustomerText(text).toLowerCase();
+  return (
+    /\b(?:any|some|any\s+local|local|nearby|nearest|closest)\b/.test(value) &&
+    /\b(?:shop|shops|store|stores)\b/.test(value)
   );
+}
+
+function isExplicitNewOrderRequest(text) {
+  const value = normalizeCustomerText(text).toLowerCase();
+  if (!value) return false;
+
+  return (
+    /^(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order)\b/i.test(value) ||
+    /^(?:enikku|ente|enikk)\b.*\b(?:venam|venda|tharanam)\b/i.test(value) ||
+    /^(?:mujhe|mere\s+liye)\b.*\b(?:chahiye|chaahiye|lene|lao)\b/i.test(value) ||
+    /^(?:enakku)\b.*\b(?:venum|vendum)\b/i.test(value) ||
+    /^(?:naaku)\b.*\b(?:kavali|kaavali)\b/i.test(value) ||
+    /^(?:nanage)\b.*\b(?:beku)\b/i.test(value)
+  );
+}
+
+function isSimpleConfirmation(text) {
+  const value = normalizeCustomerText(text)
+    .toLowerCase()
+    .replace(/[.!?]+$/g, '');
+
+  return /^(yes|y|yeah|yep|ya|ok|okay|sure|go ahead|confirm|confirmed|please confirm|please confirm my order)$/.test(value);
 }
 
 function isSimpleRejection(text) {
-  const value = String(text || "")
-    .trim()
+  const value = normalizeCustomerText(text)
     .toLowerCase()
-    .replace(/[.!?]+$/g, "")
-    .replace(/\s+/g, " ");
+    .replace(/[.!?]+$/g, '');
 
-  return /^(no|n|nope|reject|rejected|no thanks|not now)$/.test(
-    value
-  );
+  return /^(no|n|nope|reject|rejected|no thanks|not now)$/.test(value);
 }
 
 function isPureConversationControl(text) {
-  const value = String(text || "")
-    .trim()
+  const value = normalizeCustomerText(text)
     .toLowerCase()
-    .replace(/[.!?]+$/g, "")
-    .replace(/\s+/g, " ");
+    .replace(/[.!?]+$/g, '');
 
   return (
     isSimpleConfirmation(value) ||
     isSimpleRejection(value) ||
     isCancellationRequest(value) ||
-    /^(hi|hello|hey|helo|hii|hiii|thanks|thank you|shukriya)$/.test(
-      value
-    ) ||
-    /^(where is my order|order status|track my order|track order)$/.test(
-      value
-    )
+    /^(hi|hello|hey|helo|hii|hiii|thanks|thank you|shukriya)$/.test(value) ||
+    /^(where is my order|order status|track my order|track order)$/.test(value)
   );
 }
 
@@ -2367,6 +2417,148 @@ async function handleCustomerMessage({
     await getRecentMessages(
       customer.id
     );
+
+  /* -----------------------------------------
+     DETERMINISTIC NEW ORDER ISOLATION
+  ----------------------------------------- */
+
+  const deterministicRequest =
+    extractDeterministicShoppingRequest(
+      userMessage
+    );
+
+  if (
+    deterministicRequest &&
+    isExplicitNewOrderRequest(userMessage)
+  ) {
+    const cleanItems =
+      cleanNewOrderItems(
+        deterministicRequest.items
+      );
+
+    if (!cleanItems) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Tell me what you’d like me to fetch."
+      );
+      return;
+    }
+
+    // A clearly new request MUST NOT reuse the previous
+    // active order. This is the core protection against
+    // old items and old conversation text leaking into a
+    // new order.
+    const requestedStore =
+      deterministicRequest.store;
+
+    const nearbyRequest =
+      looksLikeNearbyStoreRequest(
+        requestedStore
+      ) ||
+      /\b(?:any|local|nearby|nearest|closest)\b[\s\S]*\b(?:shop|store)s?\b/i.test(
+        userMessage
+      );
+
+    if (nearbyRequest) {
+      await saveMessage({
+        customerId:
+          customer.id,
+        orderId:
+          null,
+        phone:
+          normalizedPhone,
+        role:
+          "user",
+        message:
+          userMessage,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍 I’ll treat this as a new order for: ${cleanItems}. I just need the specific store for the current MVP, or I can add nearby-store discovery next.`
+      );
+
+      return;
+    }
+
+    const storeRecord =
+      await getStoreByName(
+        requestedStore
+      );
+
+    if (storeRecord) {
+      const deliveryAddress =
+        deterministicRequest.address ||
+        customer.address ||
+        "";
+
+      const newOrder =
+        await createOrder({
+          customerId:
+            customer.id,
+          storeName:
+            storeRecord.name,
+          items:
+            cleanItems,
+          budget:
+            null,
+          deliveryAddress:
+            deliveryAddress,
+          status:
+            "collecting_details",
+        });
+
+      if (!deliveryAddress) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n\nPlease share the delivery address or WhatsApp location pin 📍.`
+        );
+        return;
+      }
+
+      try {
+        const pricedOrder =
+          await applyDeliveryPricing(
+            newOrder
+          );
+
+        const reply =
+          buildPricingConfirmationMessage(
+            pricedOrder
+          );
+
+        await saveMessage({
+          customerId:
+            customer.id,
+          orderId:
+            pricedOrder.id,
+          phone:
+            normalizedPhone,
+          role:
+            "assistant",
+          message:
+            reply,
+        });
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          reply
+        );
+      } catch (pricingError) {
+        console.error(
+          "FETCH DETERMINISTIC NEW ORDER PRICING ERROR:",
+          pricingError
+        );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n📍 Deliver to: ${deliveryAddress}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nPlease share your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
+        );
+      }
+
+      return;
+    }
+  }
 
   /* -----------------------------------------
      DETERMINISTIC CANCELLATION
@@ -2963,19 +3155,30 @@ async function handleCustomerMessage({
   }
 
   if (
-    decision.intent === "shopping_request" &&
-    looksLikeContaminatedItems(
-      decision.items
-    )
+    decision.intent === "shopping_request"
   ) {
+    const deterministicParts =
+      extractDeterministicShoppingRequest(
+        userMessage
+      );
+
     const extractedItems =
+      deterministicParts?.items ||
       extractItemsFromShoppingMessage(
         userMessage
       );
 
     if (extractedItems) {
       decision.items =
-        extractedItems;
+        cleanNewOrderItems(
+          extractedItems
+        );
+    } else if (
+      looksLikeContaminatedItems(
+        decision.items
+      )
+    ) {
+      decision.items = "";
     }
   }
 
