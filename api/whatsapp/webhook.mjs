@@ -1805,6 +1805,8 @@ Rules:
 17. "thank you", "thanks", ETA/status questions, and rating messages are conversational and must not be added to items.
 18. A WhatsApp location pin is delivery-location information, not a product request and must never be turned into items.
 19. "my orders", "order history", and "show my orders" mean show the customer’s recent Fetch orders; they are not new shopping requests.
+20. If the customer mentions an order reference such as #ABC123 or identifies an order by item/store, use that order for status or cancellation; never guess when more than one order matches.
+21. "cancel order #ABC123" must cancel only that exact customer order if it is still active.
 `;
 
   const context = {
@@ -3288,6 +3290,274 @@ async function cancelOrderAndReleaseShopper(order) {
   );
 }
 
+
+/* =========================================================
+   ORDER-SPECIFIC CUSTOMER ACTIONS
+========================================================= */
+
+function extractOrderReference(text) {
+  const value =
+    cleanConversationText(
+      text
+    );
+
+  const match =
+    value.match(
+      /#?([A-F0-9]{6,32})\b/i
+    );
+
+  return match
+    ? match[1].toUpperCase()
+    : null;
+}
+
+function extractOrderAction(text) {
+  const value =
+    cleanConversationText(
+      text
+    ).toLowerCase();
+
+  const hasStatus =
+    /\b(?:status|where\s+is|where'?s|track|tracking|update|eta|when\s+will)\b/.test(
+      value
+    );
+
+  const hasCancel =
+    /\bcancel\b/.test(
+      value
+    );
+
+  if (hasCancel) {
+    return "cancel";
+  }
+
+  if (hasStatus) {
+    return "status";
+  }
+
+  return null;
+}
+
+function extractOrderSearchPhrase(text) {
+  let value =
+    cleanConversationText(
+      text
+    ).toLowerCase();
+
+  value =
+    value
+      .replace(
+        /\b(?:status|where\s+is|where'?s|track|tracking|update|eta|when\s+will)\b/g,
+        " "
+      )
+      .replace(
+        /\bcancel\b/g,
+        " "
+      )
+      .replace(
+        /\b(?:my|the|an|a|order|orders|delivery|deliver|please|can|you|tell|me|what|is|of|for|about|on)\b/g,
+        " "
+      )
+      .replace(
+        /#?[a-f0-9]{6,32}\b/gi,
+        " "
+      )
+      .replace(
+        /\s+/g,
+        " "
+      )
+      .trim();
+
+  return value;
+}
+
+async function resolveCustomerOrder(
+  customerId,
+  text
+) {
+  const orders =
+    await getCustomerOrders(
+      customerId,
+      20
+    );
+
+  if (!orders.length) {
+    return {
+      order: null,
+      matches: [],
+      reason: "none",
+    };
+  }
+
+  const reference =
+    extractOrderReference(
+      text
+    );
+
+  if (reference) {
+    const exact =
+      orders.filter(
+        (order) =>
+          String(
+            order?.id || ""
+          )
+            .replace(
+              /-/g,
+              ""
+            )
+            .toUpperCase()
+            .startsWith(
+              reference
+            )
+      );
+
+    if (
+      exact.length === 1
+    ) {
+      return {
+        order:
+          exact[0],
+        matches:
+          exact,
+        reason:
+          "reference",
+      };
+    }
+
+    if (
+      exact.length > 1
+    ) {
+      return {
+        order: null,
+        matches: exact,
+        reason:
+          "ambiguous_reference",
+      };
+    }
+
+    return {
+      order: null,
+      matches: [],
+      reason:
+        "reference_not_found",
+    };
+  }
+
+  const phrase =
+    extractOrderSearchPhrase(
+      text
+    );
+
+  if (!phrase) {
+    return {
+      order: null,
+      matches: [],
+      reason:
+        "no_search_phrase",
+    };
+  }
+
+  const terms =
+    phrase
+      .split(" ")
+      .filter(
+        (term) =>
+          term.length >= 2
+      );
+
+  const matches =
+    orders.filter(
+      (order) => {
+        const haystack =
+          [
+            order?.items,
+            order?.store_name,
+          ]
+            .join(" ")
+            .toLowerCase();
+
+        return (
+          terms.length > 0 &&
+          terms.every(
+            (term) =>
+              haystack.includes(
+                term
+              )
+          )
+        );
+      }
+    );
+
+  if (
+    matches.length === 1
+  ) {
+    return {
+      order:
+        matches[0],
+      matches,
+      reason:
+        "phrase",
+    };
+  }
+
+  if (
+    matches.length > 1
+  ) {
+    return {
+      order: null,
+      matches,
+      reason:
+        "ambiguous_phrase",
+    };
+  }
+
+  return {
+    order: null,
+    matches: [],
+    reason:
+      "not_found",
+  };
+}
+
+function buildOrderChoiceMessage(
+  matches,
+  action
+) {
+  const verb =
+    action === "cancel"
+      ? "cancel"
+      : "check";
+
+  const lines =
+    matches.map(
+      (order) =>
+        `• #${shortOrderReference(
+          order.id
+        )} — ${order.items || "Items"} — ${formatOrderHistoryStatus(
+          order.status
+        )}`
+    );
+
+  return (
+    `I found more than one order. Which one would you like to ${verb}?\n\n` +
+    lines.join("\n") +
+    `\n\nReply with the order number, for example #${shortOrderReference(
+      matches[0].id
+    )}.`
+  );
+}
+
+function canCustomerCancelOrder(
+  order
+) {
+  return Boolean(
+    order &&
+    ACTIVE_ORDER_STATUSES.includes(
+      order.status
+    )
+  );
+}
+
 /* =========================================================
    CUSTOMER ENGINE
 ========================================================= */
@@ -3917,6 +4187,182 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
+     ORDER-SPECIFIC STATUS / CANCEL
+  ----------------------------------------- */
+
+  const explicitOrderAction =
+    extractOrderAction(
+      userMessage
+    );
+
+  const hasExplicitOrderReference =
+    Boolean(
+      extractOrderReference(
+        userMessage
+      )
+    );
+
+  const looksLikeOrderAction =
+    explicitOrderAction &&
+    (
+      hasExplicitOrderReference ||
+      /\b(?:my|the|this|that)\s+order\b/i.test(
+        userMessage
+      ) ||
+      /\b(?:status|where(?:'s| is)?|track|tracking|cancel)\b[\s\S]*\b(?:my|the|this|that)\b[\s\S]*\border\b/i.test(
+        userMessage
+      ) ||
+      /\b(?:status|where(?:'s| is)?|track|tracking|cancel)\b[\s\S]*\b(?:order|delivery)\b/i.test(
+        userMessage
+      )
+    );
+
+  if (
+    looksLikeOrderAction
+  ) {
+    const resolved =
+      await resolveCustomerOrder(
+        customer.id,
+        userMessage
+      );
+
+    if (
+      resolved.order
+    ) {
+      if (
+        explicitOrderAction ===
+        "status"
+      ) {
+        const reply =
+          buildSingleOrderSummary(
+            resolved.order
+          );
+
+        await saveMessage({
+          customerId:
+            customer.id,
+
+          orderId:
+            resolved.order.id,
+
+          phone:
+            normalizedPhone,
+
+          role:
+            "assistant",
+
+          message:
+            reply,
+        });
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          reply
+        );
+
+        return;
+      }
+
+      if (
+        explicitOrderAction ===
+        "cancel"
+      ) {
+        if (
+          !canCustomerCancelOrder(
+            resolved.order
+          )
+        ) {
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            `Order #${shortOrderReference(
+              resolved.order.id
+            )} is already ${formatOrderHistoryStatus(
+              resolved.order.status
+            )} and can’t be cancelled.`
+          );
+
+          return;
+        }
+
+        await cancelOrderAndReleaseShopper(
+          resolved.order
+        );
+
+        await saveMessage({
+          customerId:
+            customer.id,
+
+          orderId:
+            resolved.order.id,
+
+          phone:
+            normalizedPhone,
+
+          role:
+            "assistant",
+
+          message:
+            `Cancelled order #${shortOrderReference(
+              resolved.order.id
+            )}.`,
+        });
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Done 👍 I’ve cancelled order #${shortOrderReference(
+            resolved.order.id
+          )}.`
+        );
+
+        return;
+      }
+    }
+
+    if (
+      resolved.matches.length > 1
+    ) {
+      const reply =
+        buildOrderChoiceMessage(
+          resolved.matches,
+          explicitOrderAction
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return;
+    }
+
+    if (
+      resolved.reason ===
+        "reference_not_found"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `I couldn’t find order #${extractOrderReference(
+          userMessage
+        )}. Try "MY ORDERS" to see your recent orders.`
+      );
+
+      return;
+    }
+
+    if (
+      resolved.reason ===
+        "not_found"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t match that to one of your recent orders. Try MY ORDERS and send me the order number."
+      );
+
+      return;
+    }
+  }
+
+  /* -----------------------------------------
      SIMPLE MVP: CUSTOMER PAYMENT TO SHOPPER
   ----------------------------------------- */
 
@@ -4138,7 +4584,11 @@ async function handleCustomerMessage({
      DETERMINISTIC CANCELLATION
   -----------------------------------------
 
-  if (isCancellationRequest(userMessage)) {
+  if (
+    isCancellationRequest(userMessage) &&
+    !extractOrderReference(userMessage) &&
+    !/\b(?:my|the|this|that)\s+order\b/i.test(userMessage)
+  ) {
     await saveMessage({
       customerId:
         customer.id,
@@ -4160,7 +4610,7 @@ async function handleCustomerMessage({
 
     if (!activeOrder) {
       const reply =
-        "There isn’t an active order to cancel.";
+        "There isn’t an active order to cancel. Try MY ORDERS to see your recent orders.";
 
       await saveMessage({
         customerId:
