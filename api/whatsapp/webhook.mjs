@@ -3409,6 +3409,224 @@ async function getPendingOrderActionFromConversation(
   return null;
 }
 
+
+/* =========================================================
+   CUSTOMER ORDER MODIFICATIONS
+========================================================= */
+
+function parseOrderModification(text) {
+  const raw =
+    cleanConversationText(
+      text
+    );
+
+  const lower =
+    raw.toLowerCase();
+
+  let match =
+    lower.match(
+      /^(?:add|also\s+add|include)\s+(.+)$/i
+    );
+
+  if (match) {
+    return {
+      type: "add",
+      value:
+        match[1].trim(),
+    };
+  }
+
+  match =
+    raw.match(
+      /^(?:remove|delete|take\s+out)\s+(.+)$/i
+    );
+
+  if (match) {
+    return {
+      type: "remove",
+      value:
+        match[1].trim(),
+    };
+  }
+
+  match =
+    raw.match(
+      /^(?:change|replace)\s+(.+?)\s+(?:to|with)\s+(.+)$/i
+    );
+
+  if (match) {
+    return {
+      type: "replace",
+      from:
+        match[1].trim(),
+      to:
+        match[2].trim(),
+    };
+  }
+
+  match =
+    raw.match(
+      /^(?:delivery\s+address|deliver\s+to|change\s+(?:the\s+)?delivery\s+(?:address|location))\s*:?\s*(.+)$/i
+    );
+
+  if (match) {
+    return {
+      type: "address",
+      value:
+        match[1].trim(),
+    };
+  }
+
+  return null;
+}
+
+function canModifyOrder(order) {
+  return Boolean(
+    order &&
+    [
+      "collecting_details",
+      "awaiting_confirmation",
+      "awaiting_customer_price_confirmation",
+      "payment_pending",
+      "finding_shopper",
+      "shopper_assigned",
+      "shopping",
+    ].includes(
+      order.status
+    )
+  );
+}
+
+function applyOrderItemModification(
+  currentItems,
+  modification
+) {
+  const items =
+    String(
+      currentItems || ""
+    ).trim();
+
+  if (
+    !items ||
+    !modification
+  ) {
+    return null;
+  }
+
+  if (
+    modification.type ===
+      "add"
+  ) {
+    return `${items}; ${modification.value}`;
+  }
+
+  if (
+    modification.type ===
+      "remove"
+  ) {
+    const target =
+      modification.value;
+
+    const escaped =
+      target.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+
+    const regex =
+      new RegExp(
+        `(?:^|;\\s*)${escaped}(?:\\s*;|\\s*$)`,
+        "i"
+      );
+
+    let updated =
+      items.replace(
+        regex,
+        ""
+      );
+
+    if (
+      updated === items
+    ) {
+      updated =
+        items.replace(
+          new RegExp(
+            escaped,
+            "i"
+          ),
+          ""
+        );
+    }
+
+    updated =
+      updated
+        .replace(
+          /;\s*;/g,
+          ";"
+        )
+        .replace(
+          /^\s*;\s*|\s*;\s*$/g,
+          ""
+        )
+        .replace(
+          /\s{2,}/g,
+          " "
+        )
+        .trim();
+
+    return updated;
+  }
+
+  if (
+    modification.type ===
+      "replace"
+  ) {
+    const escaped =
+      modification.from.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+
+    const regex =
+      new RegExp(
+        escaped,
+        "i"
+      );
+
+    return regex.test(
+      items
+    )
+      ? items.replace(
+          regex,
+          modification.to
+        )
+      : null;
+  }
+
+  return null;
+}
+
+function buildOrderModificationMessage(
+  order,
+  modification
+) {
+  const verb =
+    modification.type === "add"
+      ? `added ${modification.value}`
+      : modification.type === "remove"
+        ? `removed ${modification.value}`
+        : modification.type === "replace"
+          ? `changed ${modification.from} to ${modification.to}`
+          : `updated your delivery address to ${modification.value}`;
+
+  return (
+    `Updated 👍 I’ve ${verb}.\n\n` +
+    `🛒 Items: ${order.items}\n` +
+    `🏪 Store: ${order.store_name}\n` +
+    `📍 Deliver to: ${order.delivery_address || "location to be confirmed"}`
+  );
+}
+
 /* =========================================================
    ORDER-SPECIFIC CUSTOMER ACTIONS
 ========================================================= */
