@@ -2912,7 +2912,7 @@ function isShopperAvailabilityMessage(text) {
       text
     ).toLowerCase();
 
-  return /^(?:available|available for next job|ready for next job|ready for a job|i'?m ready|im ready|ready|make me available|set me available|free now|i'?m free|im free)$/.test(
+  return /^(?:available|available for next job|available for next order|ready for next job|ready for next order|ready for a job|i'?m ready|im ready|ready|make me available|set me available|free now|i'?m free|im free|i'?m available|im available)$/.test(
     value
   );
 }
@@ -7023,6 +7023,93 @@ function buildShopperPayoutMessage(
 }
 
 
+
+async function getShopperLastOrder(shopperId) {
+  const data =
+    await supabaseRequest(
+      `orders?shopper_id=eq.${encodeURIComponent(
+        shopperId
+      )}&select=*&order=created_at.desc&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
+}
+
+function isShopperLastOrderQuestion(text) {
+  const value =
+    cleanConversationText(
+      text
+    ).toLowerCase();
+
+  return (
+    /(?:last|latest|recent)\s+(?:order|job)/.test(
+      value
+    ) ||
+    /order\s+details/.test(
+      value
+    ) ||
+    /details\s+(?:of|for)\s+(?:the\s+)?(?:last|latest|recent)\s+order/.test(
+      value
+    ) ||
+    /can\s+you\s+(?:share|show|send)\s+(?:me\s+)?(?:the\s+)?(?:order|job)\s+details/.test(
+      value
+    ) ||
+    /what\s+(?:was|is)\s+(?:my\s+)?(?:last|latest)\s+order/.test(
+      value
+    )
+  );
+}
+
+function buildShopperLastOrderMessage(order) {
+  if (!order) {
+    return (
+      "I don’t have a previous Fetch order for you yet."
+    );
+  }
+
+  const status =
+    formatOrderHistoryStatus(
+      order.status
+    );
+
+  const productPrice =
+    Number(
+      order.item_total || 0
+    );
+
+  const deliveryFee =
+    Number(
+      order.delivery_fee || 0
+    );
+
+  const total =
+    Number(
+      order.total_amount || 0
+    );
+
+  return (
+    `📦 Your latest Fetch order\n\n` +
+    `#${shortOrderReference(
+      order.id
+    )}\n` +
+    `🛒 Items: ${order.items || "Items"}\n` +
+    `🏪 Store: ${order.store_name || "Store"}\n` +
+    `📍 Deliver to: ${order.delivery_address || "Customer location"}\n` +
+    `📌 Status: ${status}\n\n` +
+    `🧾 Product price: ₹${formatRupees(productPrice)}\n` +
+    `🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n` +
+    `💰 Total: ₹${formatRupees(total)}\n` +
+    `💵 Your delivery earnings: ₹${formatRupees(
+      order.shopper_delivery_earnings ||
+      order.delivery_fee ||
+      0
+    )}`
+  );
+}
+
 /* =========================================================
    SHOPPER ENGINE
 ========================================================= */
@@ -7088,7 +7175,7 @@ async function handleShopperMessage({
     ) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "You’re already assigned to an active Fetch order. Finish that order before taking another job."
+        "You’re still assigned to an active Fetch order. Finish that order first; once you send DELIVERED, you can say AVAILABLE FOR NEXT JOB."
       );
       return;
     }
@@ -7444,6 +7531,41 @@ async function handleShopperMessage({
 
     return;
   }
+
+  /* LAST ORDER / ORDER DETAILS */
+
+  if (
+    isShopperLastOrderQuestion(
+      rawText
+    )
+  ) {
+    try {
+      const lastOrder =
+        await getShopperLastOrder(
+          shopper.id
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildShopperLastOrderMessage(
+          lastOrder
+        )
+      );
+    } catch (error) {
+      console.error(
+        "FETCH SHOPPER LAST ORDER ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t load your last order details right now. Please try again."
+      );
+    }
+
+    return;
+  }
+
 
   const job =
     await getAcceptedShopperJob(
@@ -7954,7 +8076,7 @@ async function handleShopperMessage({
   await sendWhatsAppMessage(
     normalizedPhone,
 
-    "I didn’t recognise that command. You can send your UPI ID or UPI-linked mobile number, plus ACCEPT, PRICE, DELIVERY FEE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
+    "I didn’t recognise that command. You can send UPI/payment details, ACCEPT, PRICE + DELIVERY FEE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED, AVAILABLE, EARNINGS, PAYOUT, LAST ORDER or STATUS."
   );
 }
 
