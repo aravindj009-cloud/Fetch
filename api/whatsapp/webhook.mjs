@@ -794,6 +794,164 @@ function buildPricingConfirmationMessage(order) {
   );
 }
 
+
+async function getCustomerOrders(
+  customerId,
+  limit = 10
+) {
+  const safeLimit =
+    Math.max(
+      1,
+      Math.min(
+        Number(limit) || 10,
+        20
+      )
+    );
+
+  const data =
+    await supabaseRequest(
+      `orders?customer_id=eq.${encodeURIComponent(
+        customerId
+      )}&select=id,store_name,items,delivery_address,status,item_total,delivery_fee,total_amount,payment_status,created_at&order=created_at.desc&limit=${safeLimit}`
+    );
+
+  return Array.isArray(data)
+    ? data
+    : [];
+}
+
+function shortOrderReference(id) {
+  return String(id || "")
+    .replace(/-/g, "")
+    .slice(0, 6)
+    .toUpperCase();
+}
+
+function formatOrderHistoryStatus(
+  status
+) {
+  switch (status) {
+    case "collecting_details":
+      return "collecting details";
+
+    case "finding_shopper":
+      return "finding shopper";
+
+    case "shopper_assigned":
+      return "shopper accepted";
+
+    case "awaiting_customer_price_confirmation":
+      return "waiting for your approval";
+
+    case "payment_pending":
+      return "waiting for payment";
+
+    case "shopping":
+      return "shopping";
+
+    case "picked_up":
+      return "picked up";
+
+    case "out_for_delivery":
+      return "out for delivery";
+
+    case "delivered":
+      return "delivered";
+
+    case "cancelled":
+      return "cancelled";
+
+    default:
+      return status || "unknown";
+  }
+}
+
+function buildCustomerOrderHistoryMessage(
+  orders
+) {
+  if (!orders.length) {
+    return (
+      "You don’t have any Fetch orders yet."
+    );
+  }
+
+  const lines =
+    orders.map(
+      (order) => {
+        const reference =
+          shortOrderReference(
+            order.id
+          );
+
+        const itemText =
+          String(
+            order.items ||
+              "Items"
+          )
+            .replace(
+              /\s+/g,
+              " "
+            )
+            .trim();
+
+        const storeText =
+          String(
+            order.store_name ||
+              "Any available local store"
+          )
+            .trim();
+
+        const status =
+          formatOrderHistoryStatus(
+            order.status
+          );
+
+        return (
+          `• #${reference} — ${itemText}\n` +
+          `  ${storeText} — ${status}`
+        );
+      }
+    );
+
+  return (
+    `📦 Your recent Fetch orders\n\n` +
+    lines.join("\n\n") +
+    `\n\nReply STATUS to check your latest active order.`
+  );
+}
+
+function buildSingleOrderSummary(
+  order
+) {
+  if (!order) {
+    return (
+      "I don’t see a Fetch order yet. Tell me what you’d like to fetch."
+    );
+  }
+
+  const total =
+    Number(
+      order.total_amount || 0
+    );
+
+  return (
+    `📦 Order #${shortOrderReference(
+      order.id
+    )}\n\n` +
+    `🛒 Items: ${order.items || "Items"}\n` +
+    `🏪 Store: ${order.store_name || "Any available local store"}\n` +
+    `📍 Deliver to: ${order.delivery_address || "Delivery location not set"}\n\n` +
+    `Status: ${formatOrderHistoryStatus(
+      order.status
+    )}\n` +
+    (
+      total > 0
+        ? `💰 Total: ₹${formatRupees(total)}\n`
+        : ""
+    )
+  );
+}
+
 /* =========================================================
    ORDERS
 ========================================================= */
@@ -1646,6 +1804,7 @@ Rules:
 16. After an order is delivered, a message containing a rating from 1 to 5 is customer feedback, not a new product order.
 17. "thank you", "thanks", ETA/status questions, and rating messages are conversational and must not be added to items.
 18. A WhatsApp location pin is delivery-location information, not a product request and must never be turned into items.
+19. "my orders", "order history", and "show my orders" mean show the customer’s recent Fetch orders; they are not new shopping requests.
 `;
 
   const context = {
@@ -2112,7 +2271,7 @@ function fallbackDecision(
         null,
 
       reply:
-        "Let me check your order status.",
+        buildSingleOrderSummary(activeOrder || null),
     };
   }
 
@@ -3708,6 +3867,56 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
+     CUSTOMER ORDER HISTORY
+  ----------------------------------------- */
+
+  const customerCommand =
+    cleanConversationText(
+      userMessage
+    ).toLowerCase();
+
+  if (
+    /^(my orders|my order|order history|orders|show my orders)$/.test(
+      customerCommand
+    )
+  ) {
+    const orders =
+      await getCustomerOrders(
+        customer.id,
+        10
+      );
+
+    const reply =
+      buildCustomerOrderHistoryMessage(
+        orders
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  /* -----------------------------------------
      SIMPLE MVP: CUSTOMER PAYMENT TO SHOPPER
   ----------------------------------------- */
 
@@ -4753,8 +4962,8 @@ async function handleCustomerMessage({
 
     const reply =
       order
-        ? getOrderStatusText(
-            order.status
+        ? buildSingleOrderSummary(
+            order
           )
         : "I don’t see an order for you yet. Tell me what you’d like to buy.";
 
