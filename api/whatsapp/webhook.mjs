@@ -5244,7 +5244,7 @@ async function getShopperEarningsSummary(shopperId) {
     await supabaseRequest(
       `orders?shopper_id=eq.${encodeURIComponent(
         shopperId
-      )}&status=eq.delivered&select=id,shopper_delivery_earnings,created_at&order=created_at.desc&limit=200`
+      )}&status=eq.delivered&select=id,items,store_name,shopper_delivery_earnings,shopper_earnings_paid,created_at&order=created_at.desc&limit=200`
     );
 
   const orders =
@@ -5252,16 +5252,30 @@ async function getShopperEarningsSummary(shopperId) {
       ? data
       : [];
 
-  const now =
-    new Date();
-
   const todayKey =
-    now.toISOString()
-      .slice(0, 10);
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone:
+          "Asia/Kolkata",
+        year:
+          "numeric",
+        month:
+          "2-digit",
+        day:
+          "2-digit",
+      }
+    ).format(
+      new Date()
+    );
 
   let todayEarnings = 0;
   let totalEarnings = 0;
+  let availableEarnings = 0;
+  let paidOut = 0;
   let completedOrders = 0;
+
+  const recentEarningOrders = [];
 
   for (const order of orders) {
     const amount =
@@ -5270,39 +5284,126 @@ async function getShopperEarningsSummary(shopperId) {
         0
       );
 
-    if (
+    const safeAmount =
       Number.isFinite(amount)
-    ) {
-      totalEarnings += amount;
-    }
+        ? amount
+        : 0;
 
     completedOrders += 1;
+    totalEarnings += safeAmount;
+
+    const paid =
+      order?.shopper_earnings_paid ===
+      true;
+
+    if (paid) {
+      paidOut += safeAmount;
+    } else {
+      availableEarnings +=
+        safeAmount;
+    }
 
     const created =
       String(
         order?.created_at || ""
       );
 
+    const createdKey =
+      created
+        ? new Intl.DateTimeFormat(
+            "en-CA",
+            {
+              timeZone:
+                "Asia/Kolkata",
+              year:
+                "numeric",
+              month:
+                "2-digit",
+              day:
+                "2-digit",
+            }
+          ).format(
+            new Date(
+              created
+            )
+          )
+        : "";
+
     if (
-      created.startsWith(
+      createdKey ===
         todayKey
-      ) &&
-      Number.isFinite(amount)
     ) {
-      todayEarnings += amount;
+      todayEarnings +=
+        safeAmount;
+    }
+
+    if (
+      safeAmount > 0 &&
+      recentEarningOrders.length <
+        5
+    ) {
+      recentEarningOrders.push({
+        id:
+          order.id,
+
+        store:
+          order.store_name ||
+          "Store",
+
+        items:
+          order.items ||
+          "Items",
+
+        amount:
+          safeAmount,
+
+        paid:
+          paid,
+
+        created_at:
+          order.created_at,
+      });
     }
   }
 
   return {
     todayEarnings,
     totalEarnings,
+    availableEarnings,
+    paidOut,
     completedOrders,
+    recentEarningOrders,
   };
+}
+
+function shortOrderId(id) {
+  return String(id || "")
+    .replace(/-/g, "")
+    .slice(0, 8)
+    .toUpperCase();
 }
 
 function buildShopperEarningsMessage(
   summary
 ) {
+  const recent =
+    Array.isArray(
+      summary.recentEarningOrders
+    ) &&
+    summary.recentEarningOrders.length
+      ? `\n\nRecent earnings:\n` +
+        summary.recentEarningOrders
+          .map(
+            (order) =>
+              `• #${shortOrderId(
+                order.id
+              )} — ₹${formatRupees(
+                order.amount
+              )} — ${order.store}`
+          )
+          .join("\n")
+      : "\n\nNo earning orders yet.";
+
   return (
     `💰 Your Fetch earnings\n\n` +
     `Today: ₹${formatRupees(
@@ -5311,9 +5412,32 @@ function buildShopperEarningsMessage(
     `Completed orders: ${summary.completedOrders}\n` +
     `Total earnings: ₹${formatRupees(
       summary.totalEarnings
-    )}`
+    )}\n` +
+    `Available: ₹${formatRupees(
+      summary.availableEarnings
+    )}\n` +
+    `Paid out: ₹${formatRupees(
+      summary.paidOut
+    )}` +
+    recent
   );
 }
+
+function buildShopperPayoutMessage(
+  summary
+) {
+  return (
+    `💰 Fetch payout status\n\n` +
+    `Available: ₹${formatRupees(
+      summary.availableEarnings
+    )}\n` +
+    `Paid out: ₹${formatRupees(
+      summary.paidOut
+    )}\n\n` +
+    `Payouts are handled manually during the Fetch MVP.`
+  );
+}
+
 
 /* =========================================================
    SHOPPER ENGINE
@@ -5622,6 +5746,40 @@ async function handleShopperMessage({
 
     return;
   }
+
+  /* PAYOUT */
+
+  if (
+    command === "PAYOUT" ||
+    command === "PAYOUTS"
+  ) {
+    try {
+      const summary =
+        await getShopperEarningsSummary(
+          shopper.id
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildShopperPayoutMessage(
+          summary
+        )
+      );
+    } catch (error) {
+      console.error(
+        "FETCH SHOPPER PAYOUT STATUS ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t load your payout status right now. Please try again."
+      );
+    }
+
+    return;
+  }
+
 
   /* STATUS */
 
