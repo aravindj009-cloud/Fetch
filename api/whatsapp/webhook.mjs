@@ -1807,6 +1807,7 @@ Rules:
 19. "my orders", "order history", and "show my orders" mean show the customer’s recent Fetch orders; they are not new shopping requests.
 20. If the customer mentions an order reference such as #ABC123 or identifies an order by item/store, use that order for status or cancellation; never guess when more than one order matches.
 21. "cancel order #ABC123" must cancel only that exact customer order if it is still active.
+22. When Fetch asks which order the customer means, a reply containing only that order number inherits the action from Fetch’s immediately preceding question. Never treat a bare order number as a new shopping request.
 `;
 
   const context = {
@@ -3291,6 +3292,123 @@ async function cancelOrderAndReleaseShopper(order) {
 }
 
 
+
+function isCancelDisambiguationMessage(message) {
+  return /which one would you like to cancel|which order would you like to cancel/i.test(
+    String(message?.message || "")
+  );
+}
+
+function isStatusDisambiguationMessage(message) {
+  return /which one would you like to check|which order would you like to check/i.test(
+    String(message?.message || "")
+  );
+}
+
+async function getPendingOrderActionFromConversation(
+  customerId,
+  currentMessage
+) {
+  const history =
+    await getRecentMessages(
+      customerId
+    );
+
+  const current =
+    cleanConversationText(
+      currentMessage
+    );
+
+  const currentReference =
+    extractOrderReference(
+      currentMessage
+    );
+
+  if (
+    currentReference &&
+    /^#?[A-F0-9]{6,32}$/i.test(
+      current
+    )
+  ) {
+    for (
+      let index = history.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      const message =
+        history[index];
+
+      if (
+        message?.role !==
+        "assistant"
+      ) {
+        continue;
+      }
+
+      if (
+        isCancelDisambiguationMessage(
+          message
+        )
+      ) {
+        return {
+          action: "cancel",
+          reference: currentReference,
+        };
+      }
+
+      if (
+        isStatusDisambiguationMessage(
+          message
+        )
+      ) {
+        return {
+          action: "status",
+          reference: currentReference,
+        };
+      }
+    }
+  }
+
+  if (
+    isCancellationRequest(
+      currentMessage
+    ) &&
+    !currentReference
+  ) {
+    for (
+      let index = history.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      const message =
+        history[index];
+
+      if (
+        message?.role !==
+        "user"
+      ) {
+        continue;
+      }
+
+      const reference =
+        extractOrderReference(
+          message.message
+        );
+
+      if (
+        reference
+      ) {
+        return {
+          action: "cancel",
+          reference,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 /* =========================================================
    ORDER-SPECIFIC CUSTOMER ACTIONS
 ========================================================= */
@@ -3333,6 +3451,14 @@ function extractOrderAction(text) {
 
   if (hasStatus) {
     return "status";
+  }
+
+  if (
+    /^#?[a-f0-9]{6,32}$/i.test(
+      value
+    )
+  ) {
+    return "reference";
   }
 
   return null;
@@ -4190,7 +4316,7 @@ async function handleCustomerMessage({
      ORDER-SPECIFIC STATUS / CANCEL
   ----------------------------------------- */
 
-  const explicitOrderAction =
+  let explicitOrderAction =
     extractOrderAction(
       userMessage
     );
@@ -4202,20 +4328,50 @@ async function handleCustomerMessage({
       )
     );
 
+  const pendingOrderAction =
+    await getPendingOrderActionFromConversation(
+      customer.id,
+      userMessage
+    );
+
+  let orderActionForResolution =
+    explicitOrderAction;
+
+  if (
+    orderActionForResolution ===
+      "reference" &&
+    pendingOrderAction
+  ) {
+    orderActionForResolution =
+      pendingOrderAction.action;
+  }
+
   const looksLikeOrderAction =
-    explicitOrderAction &&
+    Boolean(
+      orderActionForResolution
+    ) &&
     (
       hasExplicitOrderReference ||
       /\b(?:my|the|this|that)\s+order\b/i.test(
         userMessage
       ) ||
-      /\b(?:status|where(?:'s| is)?|track|tracking|cancel)\b[\s\S]*\b(?:my|the|this|that)\b[\s\S]*\border\b/i.test(
-        userMessage
-      ) ||
       /\b(?:status|where(?:'s| is)?|track|tracking|cancel)\b[\s\S]*\b(?:order|delivery)\b/i.test(
         userMessage
+      ) ||
+      Boolean(
+        pendingOrderAction
       )
     );
+
+  let orderResolutionMessage =
+    userMessage;
+
+  if (
+    pendingOrderAction?.reference
+  ) {
+    orderResolutionMessage =
+      pendingOrderAction.reference;
+  }
 
   if (
     looksLikeOrderAction
@@ -4223,14 +4379,14 @@ async function handleCustomerMessage({
     const resolved =
       await resolveCustomerOrder(
         customer.id,
-        userMessage
+        orderResolutionMessage
       );
 
     if (
       resolved.order
     ) {
       if (
-        explicitOrderAction ===
+        orderActionForResolution ===
         "status"
       ) {
         const reply =
@@ -4264,7 +4420,7 @@ async function handleCustomerMessage({
       }
 
       if (
-        explicitOrderAction ===
+        orderActionForResolution ===
         "cancel"
       ) {
         if (
