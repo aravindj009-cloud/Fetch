@@ -1598,6 +1598,7 @@ Rules:
 15. If payment_pending, never tell the shopper to purchase before payment is confirmed.
 16. After an order is delivered, a message containing a rating from 1 to 5 is customer feedback, not a new product order.
 17. "thank you", "thanks", ETA/status questions, and rating messages are conversational and must not be added to items.
+18. A WhatsApp location pin is delivery-location information, not a product request and must never be turned into items.
 `;
 
   const context = {
@@ -3871,6 +3872,50 @@ async function handleCustomerMessage({
   }
 
 
+  function buildCustomerMapsLink(latitude, longitude) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+      `${latitude},${longitude}`
+    )}`;
+  }
+
+  async function notifyAssignedShopperOfCustomerLocation(
+    order,
+    latitude,
+    longitude
+  ) {
+    if (!order?.shopper_id) {
+      return;
+    }
+
+    const shoppers =
+      await supabaseRequest(
+        `shoppers?id=eq.${encodeURIComponent(
+          order.shopper_id
+        )}&select=*&limit=1`
+      );
+
+    const shopper =
+      Array.isArray(shoppers) &&
+      shoppers.length
+        ? shoppers[0]
+        : null;
+
+    if (!shopper?.phone) {
+      return;
+    }
+
+    const mapsLink =
+      buildCustomerMapsLink(
+        latitude,
+        longitude
+      );
+
+    await sendWhatsAppMessage(
+      shopper.phone,
+      `📍 The customer has shared their delivery location.\n\n${mapsLink}\n\nUse this location for the delivery.`
+    );
+  }
+
   /* -----------------------------------------
      WHATSAPP LOCATION
   ----------------------------------------- */
@@ -3880,125 +3925,169 @@ async function handleCustomerMessage({
     Number.isFinite(Number(location.latitude)) &&
     Number.isFinite(Number(location.longitude))
   ) {
+    const latitude =
+      Number(location.latitude);
+
+    const longitude =
+      Number(location.longitude);
+
     const locationLabel =
       [
         location.name,
         location.address,
       ]
-        .map((value) => String(value || "").trim())
+        .map(
+          (value) =>
+            String(value || "").trim()
+        )
         .filter(Boolean)
         .join(", ");
 
-    if (
-      !activeOrder ||
-      ![
-        "collecting_details",
-        "awaiting_confirmation",
-        "awaiting_customer_price_confirmation",
-      ].includes(activeOrder.status)
-    ) {
-      await saveMessage({
-        customerId: customer.id,
-        orderId: latestOrder?.id || null,
-        phone: normalizedPhone,
-        role: "user",
-        message: "WhatsApp location pin shared",
-      });
+    await saveMessage({
+      customerId:
+        customer.id,
 
+      orderId:
+        activeOrder?.id ||
+        latestOrder?.id ||
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        "WhatsApp location pin shared",
+    });
+
+    if (!activeOrder) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I received your location 📍. Tell me what you’d like to fetch and which store."
+        "I received your location 📍. Tell me what you’d like me to fetch and which store."
       );
 
       return;
     }
 
-    const deliveryAddress =
+    const address =
       locationLabel ||
       activeOrder.delivery_address ||
       "WhatsApp location";
 
-    await saveMessage({
-      customerId: customer.id,
-      orderId: activeOrder.id,
-      phone: normalizedPhone,
-      role: "user",
-      message: "WhatsApp location pin shared",
-    });
+    const updates = {
+      delivery_address:
+        address,
+
+      customer_latitude:
+        latitude,
+
+      customer_longitude:
+        longitude,
+
+      customer_location_shared_at:
+        new Date().toISOString(),
+    };
+
+    /*
+      Location is for delivery coordination.
+      The shopper still decides the delivery fee in the MVP.
+      Do NOT reset the shopper's product price or delivery fee.
+    */
 
     const updatedOrder =
       await updateOrder(
         activeOrder.id,
-        {
-          delivery_address: deliveryAddress,
-          distance_km: null,
-          delivery_fee: 0,
-          total_amount: 0,
-          delivery_pricing_status: "pending",
-          delivery_pricing_source: null,
-          priced_at: null,
-          status: "collecting_details",
-        }
+        updates
       );
 
     if (!updatedOrder) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I received your location, but I couldn’t update the order. Please send the location again."
+        "I received your location, but I couldn’t save it. Please send the location again."
       );
+
       return;
     }
 
+    /*
+      If the order was still collecting details, the customer's
+      location completes the order details and we can dispatch it.
+    */
     if (
-      isPendingStoreName(
-        updatedOrder.store_name
-      )
+      updatedOrder.status ===
+        "collecting_details"
     ) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-
-        "Location received 📍. Your new order is saved separately. Please tell me the specific store to use so I can calculate the exact road distance and delivery charge."
-      );
-
-      return;
-    }
-
-    try {
-      const pricedOrder =
-        await applyDeliveryPricingFromCoordinates(
-          updatedOrder,
-          Number(location.latitude),
-          Number(location.longitude)
+      const hasItems =
+        Boolean(
+          String(
+            updatedOrder.items || ""
+          ).trim()
         );
 
-      const reply =
-        buildPricingConfirmationMessage(
-          pricedOrder
+      const hasStore =
+        Boolean(
+          String(
+            updatedOrder.store_name || ""
+          ).trim()
         );
 
-      await saveMessage({
-        customerId: customer.id,
-        orderId: pricedOrder.id,
-        phone: normalizedPhone,
-        role: "assistant",
-        message: reply,
-      });
+      if (
+        hasItems &&
+        hasStore
+      ) {
+        const findingShopper =
+          await updateOrder(
+            updatedOrder.id,
+            {
+              status:
+                "finding_shopper",
+            }
+          );
 
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        reply
-      );
-    } catch (error) {
-      console.error(
-        "FETCH WHATSAPP LOCATION PRICING ERROR:",
-        error
-      );
+        const dispatch =
+          await offerOrderToShopper(
+            findingShopper ||
+              updatedOrder
+          );
 
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "I received your exact location 📍, but I couldn’t calculate the road distance right now. Please send the location pin once more in a moment."
+        if (
+          dispatch.success
+        ) {
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            `Location saved 📍\n\nI’ve sent your order to an available shopper. They’ll check the product price and delivery fee and send the details to you for approval.`
+          );
+        } else {
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            "Location saved 📍. Your order is ready, but there isn’t an available shopper right now."
+          );
+        }
+
+        return;
+      }
+    }
+
+    /*
+      If a shopper has already accepted the order, immediately pass
+      the new location to them.
+    */
+    if (
+      updatedOrder.shopper_id
+    ) {
+      await notifyAssignedShopperOfCustomerLocation(
+        updatedOrder,
+        latitude,
+        longitude
       );
     }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Location saved 📍. I’ve shared it with your shopper."
+    );
 
     return;
   }
