@@ -24,6 +24,7 @@ const ACTIVE_ORDER_STATUSES = [
   "collecting_details",
   "awaiting_confirmation",
   "awaiting_customer_price_confirmation",
+  "payment_pending",
   "finding_shopper",
   "shopper_assigned",
   "shopping",
@@ -1594,6 +1595,7 @@ Rules:
 12. When an active order exists, treat active_order.items as the source of truth. Only change the item list when the CURRENT customer message clearly adds, removes, or replaces products.
 13. Do not use old conversation history to invent or append products. The current customer message is the authority for the requested change.
 14. If the current message is a confirmation such as YES, keep the items field exactly equal to the active order items.
+15. If payment_pending, never tell the shopper to purchase before payment is confirmed.
 `;
 
   const context = {
@@ -1835,6 +1837,34 @@ function fallbackDecision(
 
   const lower =
     text.toLowerCase();
+
+  if (
+    isPaymentCommand(
+      text
+    ) &&
+    activeOrder?.status ===
+      "payment_pending"
+  ) {
+    return {
+      intent:
+        "general_question",
+
+      store_name:
+        "",
+
+      items:
+        "",
+
+      delivery_address:
+        "",
+
+      budget:
+        null,
+
+      reply:
+        "Payment received ✅ I’ve told the shopper to continue shopping.",
+    };
+  }
 
   if (
     isNewOrderPrompt(
@@ -2281,6 +2311,16 @@ function cleanConversationText(text) {
     .trim();
 }
 
+
+function isPaymentCommand(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(pay|payment done|paid|i've paid|i have paid|payment completed|complete payment|make payment)$/.test(
+    value
+  );
+}
+
 function isNewOrderPrompt(text) {
   const value =
     cleanConversationText(text).toLowerCase();
@@ -2339,6 +2379,9 @@ function buildHumanEtaReply(order) {
 
     case "awaiting_customer_price_confirmation":
       return "The shopper has sent the product and delivery price. I’m waiting for your approval.";
+
+    case "payment_pending":
+      return "Your order is waiting for payment. Once payment is received, I’ll tell the shopper to continue.";
 
     case "awaiting_confirmation":
       return "Your order is waiting for confirmation from you.";
@@ -3199,6 +3242,90 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
+     SIMPLE MVP: PAYMENT CONFIRMATION (TEST MODE)
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "payment_pending"
+  ) {
+    if (
+      isPaymentCommand(
+        userMessage
+      )
+    ) {
+      const paidOrder =
+        await updateOrder(
+          activeOrder.id,
+          {
+            payment_status:
+              "paid",
+
+            payment_method:
+              "mvp_test",
+
+            status:
+              "shopping",
+          }
+        );
+
+      if (!paidOrder) {
+        throw new Error(
+          "Could not mark payment as paid"
+        );
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Payment received ✅ I’ve told the shopper to continue shopping."
+      );
+
+      if (
+        paidOrder.shopper_id
+      ) {
+        const shoppers =
+          await supabaseRequest(
+            `shoppers?id=eq.${encodeURIComponent(
+              paidOrder.shopper_id
+            )}&select=*&limit=1`
+          );
+
+        const shopper =
+          Array.isArray(
+            shoppers
+          ) &&
+          shoppers.length
+            ? shoppers[0]
+            : null;
+
+        if (
+          shopper?.phone
+        ) {
+          await sendWhatsAppMessage(
+            shopper.phone,
+            "💳 Payment received ✅ You can purchase the items and continue.\n\nReply SHOPPING when you start shopping."
+          );
+        }
+      }
+
+      return;
+    }
+
+    if (
+      isThankYouMessage(
+        userMessage
+      )
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You’re welcome 😊"
+      );
+      return;
+    }
+  }
+
+  /* -----------------------------------------
      SIMPLE MVP: CUSTOMER PRICE APPROVAL
   ----------------------------------------- */
 
@@ -3228,13 +3355,24 @@ async function handleCustomerMessage({
           activeOrder.id,
           {
             status:
-              "shopper_assigned",
+              "payment_pending",
+
+            payment_status:
+              "pending",
           }
         );
 
+      if (!approvedOrder) {
+        throw new Error(
+          "Could not move order to payment_pending"
+        );
+      }
+
       await sendWhatsAppMessage(
         normalizedPhone,
-        "Approved 👍 I’ve told the shopper to continue shopping."
+        `Approved 👍\n\n💰 Total: ₹${formatRupees(
+          approvedOrder.total_amount
+        )}\n\nPlease complete the payment to continue.`
       );
 
       if (
@@ -3260,7 +3398,7 @@ async function handleCustomerMessage({
         ) {
           await sendWhatsAppMessage(
             shopper.phone,
-            "✅ Customer approved the price. Continue shopping.\n\nReply SHOPPING when you start shopping."
+            "✅ Customer approved the price.\n\nPayment is pending. Wait for Fetch to confirm payment before purchasing."
           );
         }
       }
