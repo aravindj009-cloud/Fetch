@@ -2314,19 +2314,97 @@ function cleanConversationText(text) {
 
 
 function parseShopperUpiId(text) {
-  const value =
+  const raw =
     String(text || "")
       .trim()
       .replace(/\s+/g, " ");
 
-  const match =
-    value.match(
-      /^(?:upi(?:\s+id)?|upi\s+address)\s*:?\s*([A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9._-]+)$/i
+  if (!raw) {
+    return null;
+  }
+
+  /*
+    Fetch accepts several natural formats from shoppers:
+
+    UPI ID: name@bank
+    UPI: name@bank
+    my UPI is name@bank
+    upi is name@bank
+    Phone: 9876543210
+    Mobile: 9876543210
+    9876543210
+
+    We store the value in the existing upi_id field.
+    For a mobile number, the customer can use that number
+    in their UPI app.
+  */
+
+  const labeled =
+    raw.match(
+      /^(?:upi(?:\s+id)?|upi\s+address|payment\s+upi|phone|mobile|mobile\s+number|phone\s+number)\s*(?:is|=|:|-)?\s*(.+)$/i
     );
 
-  return match
-    ? match[1].trim()
-    : null;
+  let destination =
+    labeled
+      ? labeled[1].trim()
+      : raw;
+
+  destination =
+    destination
+      .replace(
+        /^(?:my\s+upi(?:\s+id)?|my\s+upi|upi\s+id\s+is|upi\s+is|my\s+phone\s+number|my\s+mobile\s+number|my\s+phone|my\s+mobile)\s*(?:is|=|:|-)?\s*/i,
+        ""
+      )
+      .trim();
+
+  // Remove a trailing sentence/punctuation commonly added by the shopper.
+  destination =
+    destination
+      .replace(
+        /[.!?]+$/g,
+        ""
+      )
+      .trim();
+
+  if (!destination) {
+    return null;
+  }
+
+  // Standard UPI handle.
+  if (
+    /^[A-Za-z0-9][A-Za-z0-9._-]{1,120}@[A-Za-z0-9._-]{2,80}$/.test(
+      destination
+    )
+  ) {
+    return destination;
+  }
+
+  // Indian UPI-enabled mobile number:
+  // 10 digits beginning 6-9, or 91 + 10 digits.
+  if (
+    /^(?:[6-9]\d{9}|91[6-9]\d{9})$/.test(
+      destination
+    )
+  ) {
+    return destination;
+  }
+
+  // Also allow a phone number with spaces, +91 or separators.
+  const digits =
+    destination.replace(
+      /[^\d]/g,
+      ""
+    );
+
+  if (
+    /^(?:[6-9]\d{9}|91[6-9]\d{9})$/.test(
+      digits
+    )
+  ) {
+    return digits;
+  }
+
+  return null;
 }
 
 function isShopperNotReceivedMessage(text) {
@@ -2360,9 +2438,19 @@ function buildShopperPaymentMessage(order, upiId) {
   const total =
     Number(order?.total_amount || 0);
 
+  const isPhone =
+    /^(?:[6-9]\d{9}|91[6-9]\d{9})$/.test(
+      String(upiId || "")
+    );
+
+  const label =
+    isPhone
+      ? "UPI mobile number"
+      : "UPI ID";
+
   return (
     `💳 Please pay ₹${formatRupees(total)} directly to the shopper.\\n\\n` +
-    `UPI ID: ${upiId}\\n\\n` +
+    `${label}: ${upiId}\\n\\n` +
     `After payment, reply PAID here.`
   );
 }
@@ -3469,7 +3557,7 @@ async function handleCustomerMessage({
         ) {
           await sendWhatsAppMessage(
             shopper.phone,
-            "Please add your UPI ID by replying like this:\nUPI ID: yourname@bank\n\nThe customer will use this UPI ID to pay you directly."
+            "Send your UPI ID or your UPI-linked mobile number in any simple format.\n\nExamples:\nUPI ID: yourname@bank\nUPI: yourname@bank\n9876543210\nPhone: 9876543210\n\nThe customer will use it to pay you directly."
           );
         }
 
@@ -4994,14 +5082,14 @@ async function handleShopperMessage({
     if (!savedShopper) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I couldn’t save your UPI ID. Please use: UPI ID: yourname@bank"
+        "I couldn’t recognise those payment details. Send your UPI ID or UPI-linked mobile number, for example: 9876543210 or name@bank."
       );
       return;
     }
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      `UPI ID saved ✅\n\n${shopperUpiId}\n\nYou can now receive Fetch customer payments through this UPI ID.`
+      `Payment details saved ✅\n\n${shopperUpiId}\n\nThe customer can now pay you directly using these details.`
     );
 
     return;
@@ -5690,7 +5778,7 @@ async function handleShopperMessage({
   await sendWhatsAppMessage(
     normalizedPhone,
 
-    "I didn’t recognise that command. Use ACCEPT, UPI ID: yourname@bank, PRICE: product price DELIVERY FEE: delivery fee, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE: old item -> new item, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
+    "I didn’t recognise that command. You can send your UPI ID or UPI-linked mobile number, plus ACCEPT, PRICE, DELIVERY FEE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
   );
 }
 
