@@ -1989,7 +1989,42 @@ function fallbackDecision(
     }
   }
 
-    // Common natural shopping-request shapes. This is only a
+    // Deterministic item-only new orders are handled before the
+  // short-message "add to active order" fallback.
+  if (
+    isExplicitNewOrderRequest(text)
+  ) {
+    const deterministicParts =
+      extractDeterministicShoppingRequest(
+        text
+      );
+
+    if (
+      deterministicParts
+    ) {
+      return {
+        intent:
+          "shopping_request",
+
+        store_name:
+          deterministicParts.store,
+
+        items:
+          deterministicParts.items,
+
+        delivery_address:
+          deterministicParts.address,
+
+        budget:
+          null,
+
+        reply:
+          `Got it — ${deterministicParts.items}.`,
+      };
+    }
+  }
+
+  // Common natural shopping-request shapes. This is only a
   // temporary fallback for OpenAI rate-limit periods.
   const shoppingPatterns = [
     /^(?:i\s+want|i\s+need|fetch|get|buy|please\s+get|can\s+you\s+get)\s+(.+?)\s+(?:from|at)\s+(.+?)\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+)$/i,
@@ -2094,17 +2129,56 @@ function extractDeterministicShoppingRequest(text) {
   const value = normalizeCustomerText(text);
   if (!value) return null;
 
+  // Full request with store and optional delivery location.
   const explicitPattern =
     /^(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order)\s+(.+?)\s+(?:from|at)\s+(.+?)(?:\s*,?\s*(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+))?$/i;
 
-  const match = value.match(explicitPattern);
-  if (!match) return null;
+  const match =
+    value.match(explicitPattern);
 
-  return {
-    items: cleanNewOrderItems(match[1]),
-    store: match[2].trim(),
-    address: match[3]?.trim() || "",
-  };
+  if (match) {
+    return {
+      items:
+        cleanNewOrderItems(
+          match[1]
+        ),
+      store:
+        match[2].trim(),
+      address:
+        match[3]?.trim() || "",
+    };
+  }
+
+  // Item-only request. This MUST still count as a fresh order.
+  // The store and location will be collected next without
+  // borrowing them from the previous order.
+  const itemOnlyPattern =
+    /^(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|get\s+me|fetch\s+me|buy\s+me|order)\s+(.+)$/i;
+
+  const itemOnlyMatch =
+    value.match(
+      itemOnlyPattern
+    );
+
+  if (
+    itemOnlyMatch &&
+    itemOnlyMatch[1]?.trim()
+  ) {
+    const items =
+      cleanNewOrderItems(
+        itemOnlyMatch[1]
+      );
+
+    if (items) {
+      return {
+        items,
+        store: "",
+        address: "",
+      };
+    }
+  }
+
+  return null;
 }
 
 function cleanNewOrderItems(items) {
@@ -2123,6 +2197,12 @@ function looksLikeNearbyStoreRequest(text) {
   return (
     /\b(?:any|some|any\s+local|local|nearby|nearest|closest)\b/.test(value) &&
     /\b(?:shop|shops|store|stores)\b/.test(value)
+  );
+}
+
+function isPendingStoreName(storeName) {
+  return /^pending\s+(?:store|nearby\s+store)$/i.test(
+    String(storeName || "").trim()
   );
 }
 
@@ -2429,7 +2509,9 @@ async function handleCustomerMessage({
 
   if (
     deterministicRequest &&
-    isExplicitNewOrderRequest(userMessage)
+    isExplicitNewOrderRequest(
+      userMessage
+    )
   ) {
     const cleanItems =
       cleanNewOrderItems(
@@ -2444,12 +2526,23 @@ async function handleCustomerMessage({
       return;
     }
 
-    // A clearly new request MUST NOT reuse the previous
-    // active order. This is the core protection against
-    // old items and old conversation text leaking into a
-    // new order.
+    /*
+      CRITICAL:
+      Every explicit "I want / I need / get me / order"
+      request starts a NEW order.
+
+      We NEVER merge it into activeOrder and we NEVER
+      inherit activeOrder.items.
+
+      This is the primary protection against the
+      repeated-order contamination bug.
+    */
+
     const requestedStore =
-      deterministicRequest.store;
+      String(
+        deterministicRequest.store ||
+        ""
+      ).trim();
 
     const nearbyRequest =
       looksLikeNearbyStoreRequest(
@@ -2459,105 +2552,222 @@ async function handleCustomerMessage({
         userMessage
       );
 
-    if (nearbyRequest) {
+    /*
+      -------------------------------------------------------
+      NEW ORDER WITHOUT A SPECIFIC STORE
+      -------------------------------------------------------
+    */
+
+    if (
+      !requestedStore ||
+      nearbyRequest
+    ) {
+      /*
+        We still create the new order immediately so the
+        exact requested items have their own order_id.
+
+        A temporary store label is used only while details
+        are being collected. It can NEVER be priced or
+        dispatched to a shopper.
+      */
+
+      const pendingStore =
+        nearbyRequest
+          ? "Pending nearby store"
+          : "Pending store";
+
+      const newOrder =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName:
+            pendingStore,
+
+          items:
+            cleanItems,
+
+          budget:
+            null,
+
+          // Do NOT inherit the old saved address on a
+          // brand-new order. Ask for a fresh address/pin.
+          deliveryAddress:
+            "",
+
+          status:
+            "collecting_details",
+        });
+
+      if (!newOrder) {
+        throw new Error(
+          "Could not create new Fetch order"
+        );
+      }
+
       await saveMessage({
         customerId:
           customer.id,
+
         orderId:
-          null,
+          newOrder.id,
+
         phone:
           normalizedPhone,
+
         role:
-          "user",
+          "assistant",
+
         message:
-          userMessage,
+          `New order created: ${cleanItems}`,
       });
 
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Got it 👍 I’ll treat this as a new order for: ${cleanItems}. I just need the specific store for the current MVP, or I can add nearby-store discovery next.`
-      );
+      if (nearbyRequest) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+
+          `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: nearest available local shop\n\nThis new order is separate from your previous order. Please send your WhatsApp location pin 📍. I’ll need to select an available nearby store before I can calculate the delivery distance and charge.`
+        );
+      } else {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+
+          `Got it 👍\n\n🛒 Items: ${cleanItems}\n\nThis is a new order. Which store should I use?\n\nYou can also send the delivery location pin 📍.`
+        );
+      }
 
       return;
     }
+
+    /*
+      -------------------------------------------------------
+      NEW ORDER WITH A SPECIFIC STORE
+      -------------------------------------------------------
+    */
 
     const storeRecord =
       await getStoreByName(
         requestedStore
       );
 
-    if (storeRecord) {
-      const deliveryAddress =
-        deterministicRequest.address ||
-        customer.address ||
-        "";
+    if (!storeRecord) {
+      /*
+        Keep the new order isolated even when the store is
+        not yet registered. Do not touch or reuse the old
+        order.
+      */
 
       const newOrder =
         await createOrder({
           customerId:
             customer.id,
+
           storeName:
-            storeRecord.name,
+            requestedStore,
+
           items:
             cleanItems,
+
           budget:
             null,
+
           deliveryAddress:
-            deliveryAddress,
+            "",
+
           status:
             "collecting_details",
         });
 
-      if (!deliveryAddress) {
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n\nPlease share the delivery address or WhatsApp location pin 📍.`
-        );
-        return;
-      }
+      await sendWhatsAppMessage(
+        normalizedPhone,
 
-      try {
-        const pricedOrder =
-          await applyDeliveryPricing(
-            newOrder
-          );
-
-        const reply =
-          buildPricingConfirmationMessage(
-            pricedOrder
-          );
-
-        await saveMessage({
-          customerId:
-            customer.id,
-          orderId:
-            pricedOrder.id,
-          phone:
-            normalizedPhone,
-          role:
-            "assistant",
-          message:
-            reply,
-        });
-
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          reply
-        );
-      } catch (pricingError) {
-        console.error(
-          "FETCH DETERMINISTIC NEW ORDER PRICING ERROR:",
-          pricingError
-        );
-
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n📍 Deliver to: ${deliveryAddress}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nPlease share your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
-        );
-      }
+        `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: ${requestedStore}\n\nI don’t have this store in the Fetch store list yet. Please send the store address, or choose one of the Fetch stores already available.`
+      );
 
       return;
     }
+
+    const deliveryAddress =
+      deterministicRequest.address ||
+      "";
+
+    const newOrder =
+      await createOrder({
+        customerId:
+          customer.id,
+
+        storeName:
+          storeRecord.name,
+
+        items:
+          cleanItems,
+
+        budget:
+          null,
+
+        deliveryAddress:
+          deliveryAddress,
+
+        status:
+          "collecting_details",
+      });
+
+    if (!deliveryAddress) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n\nPlease send the delivery address or WhatsApp location pin 📍.`
+      );
+
+      return;
+    }
+
+    try {
+      const pricedOrder =
+        await applyDeliveryPricing(
+          newOrder
+        );
+
+      const reply =
+        buildPricingConfirmationMessage(
+          pricedOrder
+        );
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          pricedOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "assistant",
+
+        message:
+          reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+    } catch (pricingError) {
+      console.error(
+        "FETCH DETERMINISTIC NEW ORDER PRICING ERROR:",
+        pricingError
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n📍 Deliver to: ${deliveryAddress}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nPlease share your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
+      );
+    }
+
+    return;
   }
 
   /* -----------------------------------------
@@ -2720,6 +2930,20 @@ async function handleCustomerMessage({
         normalizedPhone,
         "I received your location, but I couldn’t update the order. Please send the location again."
       );
+      return;
+    }
+
+    if (
+      isPendingStoreName(
+        updatedOrder.store_name
+      )
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "Location received 📍. Your new order is saved separately. Please tell me the specific store to use so I can calculate the exact road distance and delivery charge."
+      );
+
       return;
     }
 
@@ -3179,6 +3403,41 @@ async function handleCustomerMessage({
       )
     ) {
       decision.items = "";
+    }
+  }
+
+  /*
+    If a clear new-order message somehow reaches OpenAI
+    and gets classified as update_order, force it back
+    to shopping_request. The latest customer message is
+    the source of truth for a new order.
+  */
+  if (
+    isExplicitNewOrderRequest(
+      userMessage
+    ) &&
+    decision.intent ===
+      "update_order"
+  ) {
+    decision.intent =
+      "shopping_request";
+
+    const deterministicParts =
+      extractDeterministicShoppingRequest(
+        userMessage
+      );
+
+    if (
+      deterministicParts
+    ) {
+      decision.items =
+        deterministicParts.items;
+
+      decision.store_name =
+        deterministicParts.store;
+
+      decision.delivery_address =
+        deterministicParts.address;
     }
   }
 
