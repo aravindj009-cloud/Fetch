@@ -1223,29 +1223,6 @@ async function offerOrderToShopper(
    STATUS
 ========================================================= */
 
-
-function shopperStateMessage(status) {
-  switch (status) {
-    case "shopper_assigned":
-      return "The customer has approved the price and payment is verified. Reply SHOPPING when you start shopping.";
-
-    case "shopping":
-      return "You’re already shopping for this order.";
-
-    case "picked_up":
-      return "You’ve already picked up this order. Reply OUT FOR DELIVERY when you’re on the way.";
-
-    case "out_for_delivery":
-      return "You’re already out for delivery. Reply DELIVERED when the order reaches the customer.";
-
-    case "delivered":
-      return "This order has already been delivered.";
-
-    default:
-      return "Please follow the Fetch order steps in order.";
-  }
-}
-
 function getOrderStatusText(
   status
 ) {
@@ -1613,6 +1590,9 @@ Rules:
 11. Never copy old customer messages, assistant replies, confirmations, cancellations, store names, pricing text, or conversation history into "items".
 12. For a clearly new shopping request, treat the latest message as a new order rather than modifying an older order.
 13. For an item addition, add only the item explicitly mentioned in the latest message.
+14. A customer may specify ANY store, even if it is not in Fetch's store database. Never reject a request because the store is not registered.
+15. Store is optional. If no store is specified, use "Any available local store" and let the shopper find the item.
+16. If the customer provides an address or says "my address", use the saved customer address when available.
 14. Return only the JSON requested.
 11. The items field must contain ONLY actual products the customer wants Fetch to buy. NEVER copy greetings, confirmations, cancellations, questions, store names, addresses, or previous conversation messages into the items field.
 12. When an active order exists, treat active_order.items as the source of truth. Only change the item list when the CURRENT customer message clearly adds, removes, or replaces products.
@@ -2230,6 +2210,59 @@ function normalizeCustomerText(text) {
     .replace(/\s+/g, ' ');
 }
 
+
+function extractFlexibleShoppingRequest(text) {
+  const value = normalizeCustomerText(text);
+  if (!value) return null;
+
+  const prefix =
+    "(?:i\\s+want|i\\s+need|i'd\\s+like|i\\s+would\\s+like|please\\s+get|please\\s+fetch|can\\s+you\\s+get|can\\s+you\\s+fetch|get\\s+me|fetch\\s+me|buy\\s+me|order)";
+
+  const withStore = new RegExp(
+    `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+?)(?:\\s*,?\\s*(?:deliver(?:\\s+it)?\\s+to|delivery\\s+to|to)\\s+(.+))?$`,
+    "i"
+  );
+
+  const deliveryOnly = new RegExp(
+    `^${prefix}\\s+(.+?)\\s+(?:deliver(?:\\s+it)?\\s+to|delivery\\s+to|to)\\s+(.+)$`,
+    "i"
+  );
+
+  const itemOnly = new RegExp(
+    `^${prefix}\\s+(.+)$`,
+    "i"
+  );
+
+  let match = value.match(withStore);
+  if (match) {
+    return {
+      items: cleanNewOrderItems(match[1]),
+      store: match[2].trim(),
+      address: match[3]?.trim() || "",
+    };
+  }
+
+  match = value.match(deliveryOnly);
+  if (match) {
+    return {
+      items: cleanNewOrderItems(match[1]),
+      store: "",
+      address: match[2].trim(),
+    };
+  }
+
+  match = value.match(itemOnly);
+  if (match) {
+    return {
+      items: cleanNewOrderItems(match[1]),
+      store: "",
+      address: "",
+    };
+  }
+
+  return null;
+}
+
 function extractDeterministicShoppingRequest(text) {
   const value = normalizeCustomerText(text);
   if (!value) return null;
@@ -2335,6 +2368,149 @@ function cleanConversationText(text) {
 }
 
 
+
+function parseShopperUpiId(text) {
+  const raw =
+    String(text || "")
+      .trim()
+      .replace(/\s+/g, " ");
+
+  if (!raw) {
+    return null;
+  }
+
+  /*
+    Fetch accepts several natural formats from shoppers:
+
+    UPI ID: name@bank
+    UPI: name@bank
+    my UPI is name@bank
+    upi is name@bank
+    Phone: 9876543210
+    Mobile: 9876543210
+    9876543210
+
+    We store the value in the existing upi_id field.
+    For a mobile number, the customer can use that number
+    in their UPI app.
+  */
+
+  const labeled =
+    raw.match(
+      /^(?:upi(?:\s+id)?|upi\s+address|payment\s+upi|phone|mobile|mobile\s+number|phone\s+number)\s*(?:is|=|:|-)?\s*(.+)$/i
+    );
+
+  let destination =
+    labeled
+      ? labeled[1].trim()
+      : raw;
+
+  destination =
+    destination
+      .replace(
+        /^(?:my\s+upi(?:\s+id)?|my\s+upi|upi\s+id\s+is|upi\s+is|my\s+phone\s+number|my\s+mobile\s+number|my\s+phone|my\s+mobile)\s*(?:is|=|:|-)?\s*/i,
+        ""
+      )
+      .trim();
+
+  // Remove a trailing sentence/punctuation commonly added by the shopper.
+  destination =
+    destination
+      .replace(
+        /[.!?]+$/g,
+        ""
+      )
+      .trim();
+
+  if (!destination) {
+    return null;
+  }
+
+  // Standard UPI handle.
+  if (
+    /^[A-Za-z0-9][A-Za-z0-9._-]{1,120}@[A-Za-z0-9._-]{2,80}$/.test(
+      destination
+    )
+  ) {
+    return destination;
+  }
+
+  // Indian UPI-enabled mobile number:
+  // 10 digits beginning 6-9, or 91 + 10 digits.
+  if (
+    /^(?:[6-9]\d{9}|91[6-9]\d{9})$/.test(
+      destination
+    )
+  ) {
+    return destination;
+  }
+
+  // Also allow a phone number with spaces, +91 or separators.
+  const digits =
+    destination.replace(
+      /[^\d]/g,
+      ""
+    );
+
+  if (
+    /^(?:[6-9]\d{9}|91[6-9]\d{9})$/.test(
+      digits
+    )
+  ) {
+    return digits;
+  }
+
+  return null;
+}
+
+function isShopperNotReceivedMessage(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(not received|not received it|didn't receive|did not receive|payment not received|money not received|haven't received|have not received|not got|didn't get the payment|did not get the payment)$/.test(
+    value
+  );
+}
+
+function isCustomerPaidMessage(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(paid|payment done|i'?ve paid|i have paid|payment completed|payment sent|sent the payment|done with payment)$/.test(
+    value
+  );
+}
+
+function isShopperPaymentReceivedMessage(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(received|payment received|got it|got the payment|yes received|yes i received|yes received it|money received|received the payment)$/.test(
+    value
+  );
+}
+
+function buildShopperPaymentMessage(order, upiId) {
+  const total =
+    Number(order?.total_amount || 0);
+
+  const isPhone =
+    /^(?:[6-9]\d{9}|91[6-9]\d{9})$/.test(
+      String(upiId || "")
+    );
+
+  const label =
+    isPhone
+      ? "UPI mobile number"
+      : "UPI ID";
+
+  return (
+    `💳 Please pay ₹${formatRupees(total)} directly to the shopper.\\n\\n` +
+    `${label}: ${upiId}\\n\\n` +
+    `After payment, reply PAID here.`
+  );
+}
+
 function isPaymentCommand(text) {
   const value =
     cleanConversationText(text).toLowerCase();
@@ -2389,7 +2565,7 @@ function buildHumanEtaReply(order) {
       return "I’m still finding a shopper for your order. I’ll update you as soon as someone accepts it.";
 
     case "shopper_assigned":
-      return "Your shopper has accepted the order. Payment is being completed before they purchase the items.";
+      return "Your shopper has accepted the order and will start shopping soon.";
 
     case "shopping":
       return "Your shopper is shopping for your order now. I’ll update you once the items are picked up.";
@@ -2993,26 +3169,24 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
-     DETERMINISTIC NEW ORDER ISOLATION
+     FLEXIBLE NEW ORDER INTAKE
   ----------------------------------------- */
 
-  const deterministicRequest =
-    extractDeterministicShoppingRequest(
+  const flexibleRequest =
+    extractFlexibleShoppingRequest(
       userMessage
     );
 
   if (
-    deterministicRequest &&
-    isExplicitNewOrderRequest(
-      userMessage
-    )
+    flexibleRequest &&
+    flexibleRequest.items
   ) {
-    const cleanItems =
+    const items =
       cleanNewOrderItems(
-        deterministicRequest.items
+        flexibleRequest.items
       );
 
-    if (!cleanItems) {
+    if (!items) {
       await sendWhatsAppMessage(
         normalizedPhone,
         "Tell me what you’d like me to fetch."
@@ -3020,244 +3194,106 @@ async function handleCustomerMessage({
       return;
     }
 
-    /*
-      CRITICAL:
-      Every explicit "I want / I need / get me / order"
-      request starts a NEW order.
-
-      We NEVER merge it into activeOrder and we NEVER
-      inherit activeOrder.items.
-
-      This is the primary protection against the
-      repeated-order contamination bug.
-    */
-
     const requestedStore =
       String(
-        deterministicRequest.store ||
+        flexibleRequest.store ||
         ""
       ).trim();
 
-    const nearbyRequest =
-      looksLikeNearbyStoreRequest(
+    const storeName =
+      requestedStore &&
+      !looksLikeNearbyStoreRequest(
         requestedStore
-      ) ||
-      /\b(?:any|local|nearby|nearest|closest)\b[\s\S]*\b(?:shop|store)s?\b/i.test(
-        userMessage
-      );
+      )
+        ? requestedStore
+        : "Any available local store";
 
-    /*
-      -------------------------------------------------------
-      NEW ORDER WITHOUT A SPECIFIC STORE
-      -------------------------------------------------------
-    */
+    const address =
+      String(
+        flexibleRequest.address ||
+        customer.address ||
+        ""
+      ).trim();
 
-    if (
-      !requestedStore ||
-      nearbyRequest
-    ) {
-      /*
-        We still create the new order immediately so the
-        exact requested items have their own order_id.
-
-        A temporary store label is used only while details
-        are being collected. It can NEVER be priced or
-        dispatched to a shopper.
-      */
-
-      const pendingStore =
-        nearbyRequest
-          ? "Pending nearby store"
-          : "Pending store";
-
-      const newOrder =
-        await createOrder({
-          customerId:
-            customer.id,
-
-          storeName:
-            pendingStore,
-
-          items:
-            cleanItems,
-
-          budget:
-            null,
-
-          // Do NOT inherit the old saved address on a
-          // brand-new order. Ask for a fresh address/pin.
-          deliveryAddress:
-            "",
-
-          status:
-            "collecting_details",
-        });
-
-      if (!newOrder) {
-        throw new Error(
-          "Could not create new Fetch order"
-        );
-      }
-
-      await saveMessage({
-        customerId:
-          customer.id,
-
-        orderId:
-          newOrder.id,
-
-        phone:
-          normalizedPhone,
-
-        role:
-          "assistant",
-
-        message:
-          `New order created: ${cleanItems}`,
-      });
-
-      if (nearbyRequest) {
-        await sendWhatsAppMessage(
-          normalizedPhone,
-
-          `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: nearest available local shop\n\nThis new order is separate from your previous order. Please send your WhatsApp location pin 📍. I’ll need to select an available nearby store before I can calculate the delivery distance and charge.`
-        );
-      } else {
-        await sendWhatsAppMessage(
-          normalizedPhone,
-
-          `Got it 👍\n\n🛒 Items: ${cleanItems}\n\nThis is a new order. Which store should I use?\n\nYou can also send the delivery location pin 📍.`
-        );
-      }
-
-      return;
-    }
-
-    /*
-      -------------------------------------------------------
-      NEW ORDER WITH A SPECIFIC STORE
-      -------------------------------------------------------
-    */
-
-    const storeRecord =
-      await getStoreByName(
-        requestedStore
-      );
-
-    if (!storeRecord) {
-      /*
-        Keep the new order isolated even when the store is
-        not yet registered. Do not touch or reuse the old
-        order.
-      */
-
-      const newOrder =
-        await createOrder({
-          customerId:
-            customer.id,
-
-          storeName:
-            requestedStore,
-
-          items:
-            cleanItems,
-
-          budget:
-            null,
-
-          deliveryAddress:
-            "",
-
-          status:
-            "collecting_details",
-        });
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-
-        `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: ${requestedStore}\n\nI don’t have this store in the Fetch store list yet. Please send the store address, or choose one of the Fetch stores already available.`
-      );
-
-      return;
-    }
-
-    const deliveryAddress =
-      deterministicRequest.address ||
-      "";
-
-    const newOrder =
+    const order =
       await createOrder({
         customerId:
           customer.id,
 
-        storeName:
-          storeRecord.name,
+        storeName,
 
-        items:
-          cleanItems,
+        items,
 
         budget:
           null,
 
         deliveryAddress:
-          deliveryAddress,
+          address,
 
         status:
-          "collecting_details",
+          address
+            ? "finding_shopper"
+            : "collecting_details",
       });
 
-    if (!deliveryAddress) {
-      await sendWhatsAppMessage(
+    if (!order) {
+      throw new Error(
+        "Could not create new Fetch order"
+      );
+    }
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order.id,
+
+      phone:
         normalizedPhone,
 
-        `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n\nPlease send the delivery address or WhatsApp location pin 📍.`
-      );
+      role:
+        "user",
 
+      message:
+        userMessage,
+    });
+
+    if (!address) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+      );
       return;
     }
 
-    try {
-      const pricedOrder =
-        await applyDeliveryPricing(
-          newOrder
-        );
-
-      const reply =
-        buildPricingConfirmationMessage(
-          pricedOrder
-        );
-
-      await saveMessage({
-        customerId:
-          customer.id,
-
-        orderId:
-          pricedOrder.id,
-
-        phone:
-          normalizedPhone,
-
-        role:
-          "assistant",
-
-        message:
-          reply,
-      });
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        reply
+    if (customer.address !== address) {
+      await updateCustomerAddress(
+        customer.id,
+        address
       );
-    } catch (pricingError) {
-      console.error(
-        "FETCH DETERMINISTIC NEW ORDER PRICING ERROR:",
-        pricingError
+    }
+
+    const dispatch =
+      await offerOrderToShopper(
+        order
       );
 
+    if (dispatch.success) {
       await sendWhatsAppMessage(
         normalizedPhone,
-
-        `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n📍 Deliver to: ${deliveryAddress}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nPlease share your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
+        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to an available shopper. They’ll check the product price and delivery fee and send the details to you for approval.`
+      );
+    } else {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍 I have your order for ${items}` +
+        (
+          requestedStore
+            ? ` from ${requestedStore}`
+            : ""
+        ) +
+        `. There isn’t an available shopper right now, but your order is saved.`
       );
     }
 
@@ -3265,7 +3301,7 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
-     SIMPLE MVP: PAYMENT CONFIRMATION (TEST MODE)
+     SIMPLE MVP: CUSTOMER PAYMENT TO SHOPPER
   ----------------------------------------- */
 
   if (
@@ -3274,43 +3310,45 @@ async function handleCustomerMessage({
       "payment_pending"
   ) {
     if (
+      isCustomerPaidMessage(
+        userMessage
+      ) ||
       isPaymentCommand(
         userMessage
       )
     ) {
-      const paidOrder =
-        await updateOrder(
-          activeOrder.id,
-          {
-            payment_status:
-              "paid",
-
-            payment_method:
-              "mvp_test",
-
-            status:
-              "shopping",
-          }
-        );
-
-      if (!paidOrder) {
-        throw new Error(
-          "Could not mark payment as paid"
-        );
-      }
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "Payment received ✅ I’ve told the shopper to continue shopping."
+      await updateOrder(
+        activeOrder.id,
+        {
+          payment_status:
+            "customer_reported_paid",
+        }
       );
 
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          activeOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "user",
+
+        message:
+          userMessage,
+      });
+
       if (
-        paidOrder.shopper_id
+        activeOrder.shopper_id
       ) {
         const shoppers =
           await supabaseRequest(
             `shoppers?id=eq.${encodeURIComponent(
-              paidOrder.shopper_id
+              activeOrder.shopper_id
             )}&select=*&limit=1`
           );
 
@@ -3327,10 +3365,18 @@ async function handleCustomerMessage({
         ) {
           await sendWhatsAppMessage(
             shopper.phone,
-            "💳 Payment received ✅ You can purchase the items and continue.\n\nReply SHOPPING when you start shopping."
+
+            `💳 The customer says they have paid ₹${formatRupees(
+              activeOrder.total_amount
+            )} to your UPI.\\n\\nPlease check your payment and reply RECEIVED once you see it.`
           );
         }
       }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Thanks 👍 I’ve asked the shopper to verify the payment. Once they confirm it, I’ll tell them to purchase your items."
+      );
 
       return;
     }
@@ -3391,12 +3437,7 @@ async function handleCustomerMessage({
         );
       }
 
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Approved 👍\n\n💰 Total: ₹${formatRupees(
-          approvedOrder.total_amount
-        )}\n\nPlease complete the payment to continue.`
-      );
+      let shopper = null;
 
       if (
         approvedOrder?.shopper_id
@@ -3408,22 +3449,52 @@ async function handleCustomerMessage({
             )}&select=*&limit=1`
           );
 
-        const shopper =
+        shopper =
           Array.isArray(
             shoppers
           ) &&
           shoppers.length
             ? shoppers[0]
             : null;
+      }
+
+      if (
+        !shopper?.upi_id
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Approved 👍\n\n💰 Total: ₹${formatRupees(
+            approvedOrder.total_amount
+          )}\n\nThe shopper hasn’t added a UPI ID yet. I’ve asked them to add it so you can pay directly.`
+        );
 
         if (
           shopper?.phone
         ) {
           await sendWhatsAppMessage(
             shopper.phone,
-            "✅ Customer approved the price.\n\nPayment is pending. Wait for Fetch to confirm payment before purchasing."
+            "Send your UPI ID or your UPI-linked mobile number in any simple format.\n\nExamples:\nUPI ID: yourname@bank\nUPI: yourname@bank\n9876543210\nPhone: 9876543210\n\nThe customer will use it to pay you directly."
           );
         }
+
+        return;
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Approved 👍\n\n${buildShopperPaymentMessage(
+          approvedOrder,
+          shopper.upi_id
+        )}\n\nDelivery price is decided by the shopper; prices may vary.`
+      );
+
+      if (
+        shopper?.phone
+      ) {
+        await sendWhatsAppMessage(
+          shopper.phone,
+          "✅ Customer approved the price.\n\nWait for the customer’s payment. I’ll tell you when the payment is verified."
+        );
       }
 
       return;
@@ -4360,11 +4431,24 @@ async function handleCustomerMessage({
     decision.intent ===
     "shopping_request"
   ) {
-    const store =
-      decision.store_name?.trim();
-
     const items =
-      decision.items?.trim();
+      cleanNewOrderItems(
+        decision.items?.trim() || ""
+      );
+
+    const requestedStore =
+      String(
+        decision.store_name ||
+        ""
+      ).trim();
+
+    const storeName =
+      requestedStore &&
+      !looksLikeNearbyStoreRequest(
+        requestedStore
+      )
+        ? requestedStore
+        : "Any available local store";
 
     const address =
       (
@@ -4373,18 +4457,65 @@ async function handleCustomerMessage({
         ""
       ).trim();
 
-    if (
-      !store ||
-      !items ||
-      !address
-    ) {
+    if (!items) {
       await sendWhatsAppMessage(
         normalizedPhone,
-
         decision.reply ||
-          "Sure. Tell me the items, the store, and the delivery location."
+          "Sure. What would you like me to fetch?"
       );
+      return;
+    }
 
+    const order =
+      await createOrder({
+        customerId:
+          customer.id,
+
+        storeName,
+
+        items,
+
+        budget:
+          decision.budget ??
+          null,
+
+        deliveryAddress:
+          address,
+
+        status:
+          address
+            ? "finding_shopper"
+            : "collecting_details",
+      });
+
+    if (!order) {
+      throw new Error(
+        "Could not create Fetch order"
+      );
+    }
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    if (!address) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+      );
       return;
     }
 
@@ -4393,149 +4524,22 @@ async function handleCustomerMessage({
       address
     );
 
-    // A known store is required for the MVP distance calculation.
-    const storeRecord =
-      await getStoreByName(store);
-
-    if (!storeRecord) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-
-        `I can take this order, but I don’t yet have ${store} in my Fetch store list. Please send the store address so I can calculate the delivery distance and charge.`
+    const dispatch =
+      await offerOrderToShopper(
+        order
       );
 
-      return;
-    }
-
-    let order;
-
-    if (
-      false &&
-      activeOrder &&
-      [
-        "collecting_details",
-        "awaiting_confirmation",
-      ].includes(
-        activeOrder.status
-      )
-    ) {
-      order =
-        await updateOrder(
-          activeOrder.id,
-          {
-            store_name:
-              store,
-
-            store_id:
-              storeRecord.id,
-
-            items,
-
-            budget:
-              decision.budget ??
-              activeOrder.budget ??
-              null,
-
-            delivery_address:
-              address,
-
-            item_total: 0,
-
-            fetch_fee: FETCH_FEE,
-
-            delivery_fee: 0,
-
-            total_amount: 0,
-
-            delivery_pricing_status:
-              "pending",
-
-            delivery_pricing_source:
-              null,
-
-            priced_at: null,
-
-            status:
-              "collecting_details",
-          }
-        );
+    if (dispatch.success) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to an available shopper. They’ll check the product price and delivery fee and send the details to you for approval.`
+      );
     } else {
-      order =
-        await createOrder({
-          customerId:
-            customer.id,
-
-          storeName:
-            store,
-
-          items,
-
-          budget:
-            decision.budget ??
-            null,
-
-          deliveryAddress:
-            address,
-
-          status:
-            "collecting_details",
-        });
-    }
-
-    if (!order) {
-      throw new Error(
-        "Could not create or update Fetch order"
-      );
-    }
-
-    let pricedOrder;
-
-    try {
-      pricedOrder =
-        await applyDeliveryPricing(
-          order
-        );
-    } catch (pricingError) {
-      console.error(
-        "FETCH DELIVERY PRICING ERROR:",
-        pricingError
-      );
-
       await sendWhatsAppMessage(
         normalizedPhone,
-
-        `I have your order details 👍\n\n🏪 Store: ${store}\n🛒 Items: ${items}\n📍 Deliver to: ${address}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t calculate the exact road distance right now, so I’m not asking you to confirm yet.`
+        `Got it 👍 I have your order for ${items}. There isn’t an available shopper right now, but your order is saved.`
       );
-
-      return;
     }
-
-    const reply =
-      buildPricingConfirmationMessage(
-        pricedOrder
-      );
-
-    await saveMessage({
-      customerId:
-        customer.id,
-
-      orderId:
-        pricedOrder.id,
-
-      phone:
-        normalizedPhone,
-
-      role:
-        "assistant",
-
-      message:
-        reply,
-    });
-
-    await sendWhatsAppMessage(
-      normalizedPhone,
-      reply
-    );
 
     return;
   }
@@ -4902,6 +4906,44 @@ async function handleShopperMessage({
     }
   );
 
+  /* UPI ID */
+
+  const shopperUpiId =
+    parseShopperUpiId(
+      rawText
+    );
+
+  if (
+    shopperUpiId
+  ) {
+    const savedShopper =
+      await updateShopper(
+        shopper.id,
+        {
+          upi_id:
+            shopperUpiId,
+
+          last_seen_at:
+            new Date().toISOString(),
+        }
+      );
+
+    if (!savedShopper) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t recognise those payment details. Send your UPI ID or UPI-linked mobile number, for example: 9876543210 or name@bank."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `Payment details saved ✅\n\n${shopperUpiId}\n\nThe customer can now pay you directly using these details.`
+    );
+
+    return;
+  }
+
   /* START */
 
   if (
@@ -5204,6 +5246,153 @@ async function handleShopperMessage({
     return;
   }
 
+  /* CUSTOMER PAYMENT NOT RECEIVED */
+
+  if (
+    isShopperNotReceivedMessage(
+      rawText
+    )
+  ) {
+    const openAcceptedJob =
+      await getAcceptedShopperJob(
+        shopper.id
+      );
+
+    if (!openAcceptedJob) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I don’t have an active Fetch payment waiting for confirmation."
+      );
+      return;
+    }
+
+    const paymentOrder =
+      await getOrderById(
+        openAcceptedJob.order_id
+      );
+
+    if (!paymentOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find the order linked to this payment."
+      );
+      return;
+    }
+
+    if (
+      paymentOrder.status !==
+        "payment_pending" ||
+      paymentOrder.payment_status !==
+        "customer_reported_paid"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "There isn’t a customer payment waiting for your confirmation right now."
+      );
+      return;
+    }
+
+    await updateOrder(
+      paymentOrder.id,
+      {
+        payment_status:
+          "pending",
+      }
+    );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Okay. I haven’t verified the payment. Please wait for the customer to pay and check your UPI again."
+    );
+
+    await notifyCustomerForOrder(
+      paymentOrder.id,
+      "The shopper hasn’t received the payment yet. Please check your payment and send it again if needed."
+    );
+
+    return;
+  }
+
+  /* CUSTOMER PAYMENT RECEIVED BY SHOPPER */
+
+  if (
+    isShopperPaymentReceivedMessage(
+      rawText
+    )
+  ) {
+    const openAcceptedJob =
+      await getAcceptedShopperJob(
+        shopper.id
+      );
+
+    if (!openAcceptedJob) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I don’t have an active Fetch payment waiting for confirmation."
+      );
+      return;
+    }
+
+    const paymentOrder =
+      await getOrderById(
+        openAcceptedJob.order_id
+      );
+
+    if (!paymentOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find the order linked to this payment."
+      );
+      return;
+    }
+
+    if (
+      paymentOrder.status !==
+        "payment_pending" ||
+      paymentOrder.payment_status !==
+        "customer_reported_paid"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "There isn’t a customer payment waiting for your confirmation right now."
+      );
+      return;
+    }
+
+    const paidOrder =
+      await updateOrder(
+        paymentOrder.id,
+        {
+          payment_status:
+            "paid",
+
+          payment_method:
+            "shopper_upi",
+
+          status:
+            "shopping",
+        }
+      );
+
+    if (!paidOrder) {
+      throw new Error(
+        "Could not confirm shopper payment"
+      );
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Payment verified ✅ You can purchase the items and continue shopping.\n\nReply SHOPPING when you start shopping."
+    );
+
+    await notifyCustomerForOrder(
+      paidOrder.id,
+      "💳 Payment confirmed by your shopper ✅ They can now purchase your items and continue shopping."
+    );
+
+    return;
+  }
+
   /* PRODUCT PRICE + DELIVERY FEE */
 
   const shopperPrice =
@@ -5298,34 +5487,6 @@ async function handleShopperMessage({
     command ===
       "START SHOPPING"
   ) {
-    if (
-      order.payment_status !==
-        "paid"
-    ) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "Payment has not been verified yet. Please wait until Fetch confirms the customer’s payment."
-      );
-      return;
-    }
-
-    if (
-      ![
-        "shopper_assigned",
-        "shopping",
-      ].includes(
-        order.status
-      )
-    ) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        shopperStateMessage(
-          order.status
-        )
-      );
-      return;
-    }
-
     await updateOrder(
       order.id,
       {
@@ -5336,17 +5497,18 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Shopping started 🛒"
     );
 
     await notifyCustomerForOrder(
       order.id,
+
       "🛒 Your Fetch shopper has started shopping for your order."
     );
 
     return;
   }
-
 
   /* PICKED UP */
 
@@ -5355,19 +5517,6 @@ async function handleShopperMessage({
     command === "PICKEDUP" ||
     command === "PICKED"
   ) {
-    if (
-      order.status !==
-        "shopping"
-    ) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        shopperStateMessage(
-          order.status
-        )
-      );
-      return;
-    }
-
     await updateOrder(
       order.id,
       {
@@ -5378,17 +5527,18 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Items picked up ✅\n\nReply OUT FOR DELIVERY when you’re on the way."
     );
 
     await notifyCustomerForOrder(
       order.id,
+
       "📦 Your Fetch shopper has picked up your items."
     );
 
     return;
   }
-
 
   /* OUT FOR DELIVERY */
 
@@ -5396,19 +5546,6 @@ async function handleShopperMessage({
     command ===
     "OUT FOR DELIVERY"
   ) {
-    if (
-      order.status !==
-        "picked_up"
-    ) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        shopperStateMessage(
-          order.status
-        )
-      );
-      return;
-    }
-
     await updateOrder(
       order.id,
       {
@@ -5419,17 +5556,18 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
+
       "Out for delivery 🚴"
     );
 
     await notifyCustomerForOrder(
       order.id,
+
       "🚴 Your Fetch order is on the way."
     );
 
     return;
   }
-
 
   /* DELIVERED */
 
@@ -5438,19 +5576,6 @@ async function handleShopperMessage({
     command ===
       "DELIVERED DONE"
   ) {
-    if (
-      order.status !==
-        "out_for_delivery"
-    ) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        shopperStateMessage(
-          order.status
-        )
-      );
-      return;
-    }
-
     await updateOrder(
       order.id,
       {
@@ -5486,12 +5611,14 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Delivered 🎉 Thanks for completing the Fetch order. You’re available for the next job."
+
+      "Delivered 🎉\n\nYou’re available for the next Fetch job."
     );
 
     await notifyCustomerForOrder(
       order.id,
-      "🎉 Your Fetch order has been delivered. Thanks for using Fetch!"
+
+      "🎉 Your Fetch order has been delivered. Enjoy!"
     );
 
     return;
@@ -5500,7 +5627,7 @@ async function handleShopperMessage({
   await sendWhatsAppMessage(
     normalizedPhone,
 
-    "I didn’t recognise that command. Use ACCEPT, DECLINE, SHOPPING, SUBSTITUTE: old item -> new item, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
+    "I didn’t recognise that command. You can send your UPI ID or UPI-linked mobile number, plus ACCEPT, PRICE, DELIVERY FEE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
   );
 }
 
