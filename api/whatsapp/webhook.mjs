@@ -3353,38 +3353,160 @@ function isShopperAvailabilityMessage(text) {
 
 function isShopperNotReceivedMessage(text) {
   const value =
-    cleanConversationText(text).toLowerCase();
+    cleanConversationText(text)
+      .toLowerCase();
 
-  return /^(not received|not received it|didn't receive|did not receive|payment not received|money not received|haven't received|have not received|not got|didn't get the payment|did not get the payment)$/.test(
+  return /^(?:not received|not received it|didn't receive|did not receive|payment not received|money not received|haven't received|have not received|not got|didn't get the payment|did not get the payment)(?:\s+(?:₹?\s*)?\d+(?:\.\d{1,2})?)?$/.test(
     value
   );
 }
 
 function isCustomerPaidMessage(text) {
   const value =
-    cleanConversationText(text).toLowerCase();
+    cleanConversationText(text)
+      .toLowerCase();
 
-  return /^(paid|payment done|i'?ve paid|i have paid|payment completed|payment sent|sent the payment|done with payment)$/.test(
+  return /^(?:paid|paid\s*(?:it|now)|i paid|i'?ve paid|i have paid|payment done|payment completed|payment sent|sent the payment|done with payment|paid the shopper|i paid the shopper|payment successful|payment success|paid successfully)(?:\s+(?:₹?\s*)?\d+(?:\.\d{1,2})?)?$/.test(
+    value
+  );
+}
+
+function isCustomerPaymentHelpRequest(text) {
+  const value =
+    cleanConversationText(text)
+      .toLowerCase();
+
+  return /^(?:pay|payment|pay now|make payment|how do i pay|how can i pay|payment details|upi|show payment|show me payment|send payment details|pay the shopper)$/.test(
     value
   );
 }
 
 function isShopperPaymentReceivedMessage(text) {
   const value =
-    cleanConversationText(text).toLowerCase();
+    cleanConversationText(text)
+      .toLowerCase();
 
-  return /^(received|payment received|got it|got the payment|yes received|yes i received|yes received it|money received|received the payment)$/.test(
+  return /^(?:received|payment received|got it|got the payment|yes received|yes i received|yes received it|money received|received the payment|received from customer|customer paid)(?:\s+(?:₹?\s*)?\d+(?:\.\d{1,2})?)?$/.test(
     value
   );
 }
 
-function buildShopperPaymentMessage(order, upiId) {
+function normalizePaymentDestination(
+  value
+) {
+  const raw =
+    String(value || "")
+      .trim();
+
+  if (!raw) {
+    return null;
+  }
+
+  if (
+    /^[A-Za-z0-9][A-Za-z0-9._-]{1,120}@[A-Za-z0-9._-]{2,80}$/.test(
+      raw
+    )
+  ) {
+    return raw;
+  }
+
+  const digits =
+    raw.replace(
+      /\D/g,
+      ""
+    );
+
+  if (
+    /^91[6-9]\d{9}$/.test(
+      digits
+    )
+  ) {
+    return digits.slice(2);
+  }
+
+  if (
+    /^[6-9]\d{9}$/.test(
+      digits
+    )
+  ) {
+    return digits;
+  }
+
+  return raw;
+}
+
+function buildUpiIntentLink(
+  order,
+  paymentDestination,
+  shopperName
+) {
+  const destination =
+    normalizePaymentDestination(
+      paymentDestination
+    );
+
+  if (
+    !destination ||
+    !destination.includes("@")
+  ) {
+    return null;
+  }
+
   const total =
-    Number(order?.total_amount || 0);
+    Number(
+      order?.total_amount || 0
+    );
+
+  if (
+    !Number.isFinite(total) ||
+    total <= 0
+  ) {
+    return null;
+  }
+
+  const params =
+    new URLSearchParams({
+      pa:
+        destination,
+      pn:
+        shopperName ||
+        "Fetch Shopper",
+      am:
+        total.toFixed(2),
+      cu:
+        "INR",
+      tn:
+        `Fetch Order #${shortOrderReference(
+          order?.id
+        )}`,
+    });
+
+  return (
+    `upi://pay?${params.toString()}`
+  );
+}
+
+function buildShopperPaymentMessage(
+  order,
+  paymentDestination,
+  shopperName
+) {
+  const total =
+    Number(
+      order?.total_amount || 0
+    );
+
+  const destination =
+    normalizePaymentDestination(
+      paymentDestination
+    );
 
   const isPhone =
-    /^(?:[6-9]\d{9}|91[6-9]\d{9})$/.test(
-      String(upiId || "")
+    Boolean(
+      destination &&
+      /^\d{10}$/.test(
+        destination
+      )
     );
 
   const label =
@@ -3392,19 +3514,40 @@ function buildShopperPaymentMessage(order, upiId) {
       ? "UPI mobile number"
       : "UPI ID";
 
+  const upiIntent =
+    buildUpiIntentLink(
+      order,
+      destination,
+      shopperName
+    );
+
   return (
-    `💳 Please pay ₹${formatRupees(total)} directly to the shopper.\\n\\n` +
-    `${label}: ${upiId}\\n\\n` +
-    `After payment, reply PAID here.`
+    `💳 *Payment required*\n\n` +
+    `Please pay *₹${formatRupees(
+      total
+    )}* directly to your Fetch shopper.\n\n` +
+    `👤 Shopper: ${
+      shopperName ||
+      "Fetch Shopper"
+    }\n` +
+    `📱 ${label}: ${destination}\n\n` +
+    (
+      isPhone
+        ? `Open your UPI app and pay using the shopper’s mobile number.\n\n`
+        : `Pay using the UPI ID above.\n\n`
+    ) +
+    (
+      upiIntent
+        ? `🔗 UPI payment link:\n${upiIntent}\n\n`
+        : ""
+    ) +
+    `After you complete the payment, reply *PAID* here.`
   );
 }
 
 function isPaymentCommand(text) {
-  const value =
-    cleanConversationText(text).toLowerCase();
-
-  return /^(pay|payment done|paid|i've paid|i have paid|payment completed|complete payment|make payment)$/.test(
-    value
+  return isCustomerPaymentHelpRequest(
+    text
   );
 }
 
@@ -5255,7 +5398,7 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
-     SIMPLE MVP: CUSTOMER PAYMENT TO SHOPPER
+     CUSTOMER PAYMENT TO SHOPPER
   ----------------------------------------- */
 
   if (
@@ -5264,34 +5407,127 @@ async function handleCustomerMessage({
       "payment_pending"
   ) {
     if (
-      isCustomerPaidMessage(
-        userMessage
-      ) ||
-      isPaymentCommand(
+      isCustomerPaymentHelpRequest(
         userMessage
       )
     ) {
-      await updateOrder(
-        activeOrder.id,
-        {
-          payment_status:
-            "customer_reported_paid",
+      let paymentShopper =
+        null;
+
+      if (
+        activeOrder.shopper_id
+      ) {
+        const shopperRows =
+          await supabaseRequest(
+            `shoppers?id=eq.${encodeURIComponent(
+              activeOrder.shopper_id
+            )}&select=*&limit=1`
+          );
+
+        paymentShopper =
+          Array.isArray(
+            shopperRows
+          ) &&
+          shopperRows.length
+            ? shopperRows[0]
+            : null;
+      }
+
+      if (
+        !paymentShopper
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I couldn’t load your shopper’s payment details right now. Please try again in a moment."
+        );
+
+        return;
+      }
+
+      /*
+        Use the shopper's saved UPI ID when available.
+        Otherwise use the shopper's registered mobile number
+        as the default UPI payment destination for the MVP.
+      */
+      const paymentDestination =
+        normalizePaymentDestination(
+          paymentShopper.upi_id ||
+          paymentShopper.phone
+        );
+
+      if (
+        !paymentDestination
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I’m waiting for the shopper’s payment details. They need to provide a UPI ID or UPI-linked mobile number."
+        );
+
+        if (
+          paymentShopper.phone
+        ) {
+          await sendWhatsAppMessage(
+            paymentShopper.phone,
+            "Please send your UPI ID or UPI-linked mobile number. Your Fetch mobile number can be used as the default payment mobile number."
+          );
         }
+
+        return;
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildShopperPaymentMessage(
+          activeOrder,
+          paymentDestination,
+          paymentShopper.name
+        )
       );
+
+      return;
+    }
+
+    if (
+      isCustomerPaidMessage(
+        userMessage
+      )
+    ) {
+      if (
+        activeOrder.payment_status ===
+        "paid"
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "Payment is already verified ✅ Your shopper can continue with the order."
+        );
+
+        return;
+      }
+
+      const reported =
+        await updateOrder(
+          activeOrder.id,
+          {
+            payment_status:
+              "customer_reported_paid",
+          }
+        );
+
+      if (!reported) {
+        throw new Error(
+          "Could not record customer payment report"
+        );
+      }
 
       await saveMessage({
         customerId:
           customer.id,
-
         orderId:
           activeOrder.id,
-
         phone:
           normalizedPhone,
-
         role:
           "user",
-
         message:
           userMessage,
       });
@@ -5299,7 +5535,7 @@ async function handleCustomerMessage({
       if (
         activeOrder.shopper_id
       ) {
-        const shoppers =
+        const shopperRows =
           await supabaseRequest(
             `shoppers?id=eq.${encodeURIComponent(
               activeOrder.shopper_id
@@ -5308,10 +5544,10 @@ async function handleCustomerMessage({
 
         const shopper =
           Array.isArray(
-            shoppers
+            shopperRows
           ) &&
-          shoppers.length
-            ? shoppers[0]
+          shopperRows.length
+            ? shopperRows[0]
             : null;
 
         if (
@@ -5319,17 +5555,16 @@ async function handleCustomerMessage({
         ) {
           await sendWhatsAppMessage(
             shopper.phone,
-
             `💳 The customer says they have paid ₹${formatRupees(
               activeOrder.total_amount
-            )} to your UPI.\\n\\nPlease check your payment and reply RECEIVED once you see it.`
+            )} directly to you.\n\nPlease check your UPI account.\n\nReply *RECEIVED* only after the money is actually visible in your account.`
           );
         }
       }
 
       await sendWhatsAppMessage(
         normalizedPhone,
-        "Thanks 👍 I’ve asked the shopper to verify the payment. Once they confirm it, I’ll tell them to purchase your items."
+        "Thanks 👍 I’ve told the shopper to verify the payment. The order will continue only after the shopper confirms RECEIVED."
       );
 
       return;
@@ -5344,6 +5579,7 @@ async function handleCustomerMessage({
         normalizedPhone,
         "You’re welcome 😊"
       );
+
       return;
     }
   }
@@ -5412,24 +5648,21 @@ async function handleCustomerMessage({
             : null;
       }
 
+      const paymentDestination =
+        normalizePaymentDestination(
+          shopper?.upi_id ||
+          shopper?.phone
+        );
+
       if (
-        !shopper?.upi_id
+        !paymentDestination
       ) {
         await sendWhatsAppMessage(
           normalizedPhone,
           `Approved 👍\n\n💰 Total: ₹${formatRupees(
             approvedOrder.total_amount
-          )}\n\nThe shopper hasn’t added a UPI ID yet. I’ve asked them to add it so you can pay directly.`
+          )}\n\nI’m waiting for the shopper’s payment details before you pay.`
         );
-
-        if (
-          shopper?.phone
-        ) {
-          await sendWhatsAppMessage(
-            shopper.phone,
-            "Send your UPI ID or your UPI-linked mobile number in any simple format.\n\nExamples:\nUPI ID: yourname@bank\nUPI: yourname@bank\n9876543210\nPhone: 9876543210\n\nThe customer will use it to pay you directly."
-          );
-        }
 
         return;
       }
@@ -5438,8 +5671,9 @@ async function handleCustomerMessage({
         normalizedPhone,
         `Approved 👍\n\n${buildShopperPaymentMessage(
           approvedOrder,
-          shopper.upi_id
-        )}\n\nDelivery price is decided by the shopper; prices may vary.`
+          paymentDestination,
+          shopper?.name
+        )}`
       );
 
       if (
@@ -8656,7 +8890,7 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Payment verified ✅ You can purchase the items and continue shopping.\n\nReply SHOPPING when you start shopping."
+      "Payment verified ✅ The customer’s payment is confirmed. You can now purchase the items and continue shopping.\n\nReply SHOPPING when you start shopping."
     );
 
     await notifyCustomerForOrder(
@@ -8761,6 +8995,18 @@ async function handleShopperMessage({
     command ===
       "START SHOPPING"
   ) {
+    if (
+      order.payment_status !==
+      "paid"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Payment has not been verified yet. Please wait for the customer to pay and reply RECEIVED only after you see the money in your UPI account."
+      );
+
+      return;
+    }
+
     await updateOrder(
       order.id,
       {
