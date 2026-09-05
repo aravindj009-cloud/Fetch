@@ -1293,12 +1293,24 @@ async function getAvailableShoppers(
 
 async function offerOrderToShopper(
   order,
-  excludedIds = []
+  excludedIds = [],
+  preferredShopperId = null
 ) {
-  const shoppers =
+  let shoppers =
     await getAvailableShoppers(
       excludedIds
     );
+
+  if (
+    preferredShopperId
+  ) {
+    shoppers =
+      shoppers.filter(
+        (shopper) =>
+          shopper.id ===
+          preferredShopperId
+      );
+  }
 
   if (!shoppers.length) {
     return {
@@ -1805,6 +1817,7 @@ Rules:
 17. "thank you", "thanks", ETA/status questions, and rating messages are conversational and must not be added to items.
 18. A WhatsApp location pin is delivery-location information, not a product request and must never be turned into items.
 19. "my orders", "order history", and "show my orders" mean show the customer’s recent Fetch orders; they are not new shopping requests.
+20. When a shopper becomes available, Fetch should automatically offer the oldest waiting order first. The customer should not have to resubmit the order.
 20. If the customer mentions an order reference such as #ABC123 or identifies an order by item/store, use that order for status or cancellation; never guess when more than one order matches.
 21. "cancel order #ABC123" must cancel only that exact customer order if it is still active.
 22. When Fetch asks which order the customer means, a reply containing only that order number inherits the action from Fetch’s immediately preceding question. Never treat a bare order number as a new shopping request.
@@ -7190,6 +7203,112 @@ function isShopperCurrentDetailsQuestion(text) {
   );
 }
 
+
+/* =========================================================
+   QUEUED ORDER DISPATCH
+========================================================= */
+
+async function getQueuedOrders(
+  limit = 20
+) {
+  const safeLimit =
+    Math.max(
+      1,
+      Math.min(
+        Number(limit) || 20,
+        50
+      )
+    );
+
+  const data =
+    await supabaseRequest(
+      `orders?status=eq.finding_shopper&shopper_id=is.null&select=*&order=created_at.asc&limit=${safeLimit}`
+    );
+
+  return Array.isArray(data)
+    ? data
+    : [];
+}
+
+async function dispatchNextQueuedOrder(
+  shopperId
+) {
+  if (!shopperId) {
+    return {
+      success: false,
+      reason: "missing_shopper",
+      order: null,
+      shopper: null,
+      job: null,
+    };
+  }
+
+  const shoppers =
+    await supabaseRequest(
+      `shoppers?id=eq.${encodeURIComponent(
+        shopperId
+      )}&available=eq.true&whatsapp_opted_in=eq.true&select=*&limit=1`
+    );
+
+  const shopper =
+    Array.isArray(shoppers) &&
+    shoppers.length
+      ? shoppers[0]
+      : null;
+
+  if (!shopper) {
+    return {
+      success: false,
+      reason: "shopper_not_available",
+      order: null,
+      shopper: null,
+      job: null,
+    };
+  }
+
+  const queuedOrders =
+    await getQueuedOrders(
+      20
+    );
+
+  for (
+    const queuedOrder of
+      queuedOrders
+  ) {
+    try {
+      const dispatch =
+        await offerOrderToShopper(
+          queuedOrder,
+          [],
+          shopper.id
+        );
+
+      if (
+        dispatch?.success
+      ) {
+        return {
+          ...dispatch,
+          order:
+            queuedOrder,
+        };
+      }
+    } catch (error) {
+      console.error(
+        "FETCH QUEUED ORDER DISPATCH ERROR:",
+        error
+      );
+    }
+  }
+
+  return {
+    success: false,
+    reason: "no_queued_order",
+    order: null,
+    shopper: null,
+    job: null,
+  };
+}
+
 /* =========================================================
    SHOPPER ENGINE
 ========================================================= */
@@ -7280,9 +7399,25 @@ async function handleShopperMessage({
       return;
     }
 
+    const queuedDispatch =
+      await dispatchNextQueuedOrder(
+        shopper.id
+      );
+
+    if (
+      queuedDispatch.success
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `You’re available ✅ I found a waiting Fetch order for you.`
+      );
+
+      return;
+    }
+
     await sendWhatsAppMessage(
       normalizedPhone,
-      "You’re available ✅ I’ll send you the next Fetch job."
+      "You’re available ✅ I’ll send you the next Fetch job when one is available."
     );
 
     return;
@@ -7503,6 +7638,20 @@ async function handleShopperMessage({
       await offerOrderToShopper(
         order,
         [shopper.id]
+      );
+    }
+
+    const nextDispatch =
+      await dispatchNextQueuedOrder(
+        shopper.id
+      );
+
+    if (
+      nextDispatch.success
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I’ve sent you the next waiting Fetch job."
       );
     }
 
@@ -8180,12 +8329,26 @@ async function handleShopperMessage({
       }
     );
 
+    const nextDispatch =
+      await dispatchNextQueuedOrder(
+        shopper.id
+      );
+
     await sendWhatsAppMessage(
       normalizedPhone,
       buildShopperCompletionMessage(
         receiptOrder
       )
     );
+
+    if (
+      nextDispatch.success
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I’ve also sent you the next waiting Fetch job."
+      );
+    }
 
     await notifyCustomerForOrder(
       order.id,
