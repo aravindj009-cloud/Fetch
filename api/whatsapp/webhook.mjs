@@ -2991,7 +2991,7 @@ function isNewOrderPrompt(text) {
   const value =
     cleanConversationText(text).toLowerCase();
 
-  return /^(new order|new fetch order|start new order|start a new order|place a new order|another order|i want a new order|i need a new order)$/.test(
+  return /^(new order|new fetch order|start new order|start a new order|place a new order|another order|i want another order|i need another order|i want a new order|i need a new order|new fetch|start another order)$/.test(
     value
   );
 }
@@ -3064,6 +3064,38 @@ function buildHumanEtaReply(order) {
     default:
       return "I’m checking the latest status of your order.";
   }
+}
+
+
+function isNewOrderAwaitingItemReply(
+  history
+) {
+  if (
+    !Array.isArray(history) ||
+    !history.length
+  ) {
+    return false;
+  }
+
+  const lastAssistant =
+    [...history]
+      .reverse()
+      .find(
+        (message) =>
+          message?.role ===
+          "assistant"
+      );
+
+  if (!lastAssistant) {
+    return false;
+  }
+
+  return /let'?s start a new order|what would you like me to fetch/i.test(
+    String(
+      lastAssistant.message ||
+      ""
+    )
+  );
 }
 
 function buildHumanNewOrderReply() {
@@ -4030,6 +4062,68 @@ async function handleCustomerMessage({
     await getRecentMessages(
       customer.id
     );
+
+  /*
+    -------------------------------------------------------
+    NEW ORDER CONVERSATION GUARD
+
+    After Fetch says "Let’s start a new order", a reply such as
+    YES / OK / SURE must NOT confirm an older active order.
+    The customer still needs to tell Fetch what the new order is.
+  */
+
+  if (
+    isNewOrderAwaitingItemReply(
+      history
+    ) &&
+    isSimpleConfirmation(
+      userMessage
+    )
+  ) {
+    const reply =
+      "Sure 👍 What would you like me to fetch for the new order?";
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
 
   /*
     -------------------------------------------------------
