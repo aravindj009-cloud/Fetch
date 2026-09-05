@@ -1358,13 +1358,42 @@ async function offerOrderToShopper(
     ) &&
     existingOffers.length
   ) {
+    const existingJob =
+      existingOffers[0];
+
+    const existingShopperRows =
+      existingJob?.shopper_id
+        ? await supabaseRequest(
+            `shoppers?id=eq.${encodeURIComponent(
+              existingJob.shopper_id
+            )}&select=*&limit=1`
+          )
+        : [];
+
+    const existingShopper =
+      Array.isArray(
+        existingShopperRows
+      ) &&
+      existingShopperRows.length
+        ? existingShopperRows[0]
+        : null;
+
+    /*
+      Idempotent dispatch:
+      if the order is already offered, the caller should treat
+      it as successfully dispatched rather than telling the
+      customer that no shopper is available.
+    */
     return {
-      success: false,
-      shopper: null,
+      success: true,
+      shopper:
+        existingShopper,
       job:
-        existingOffers[0],
+        existingJob,
       reason:
         "already_offered",
+      reused:
+        true,
     };
   }
 
@@ -1470,8 +1499,10 @@ async function offerOrderToShopper(
   const shopper =
     shoppers[0];
 
+  let createdJob = null;
+
   try {
-    const createdJob =
+    createdJob =
       await createShopperJob(
         order.id,
         shopper.id
@@ -1561,6 +1592,25 @@ async function offerOrderToShopper(
       "FETCH DISPATCH SHOPPER ERROR:",
       error
     );
+
+    if (
+      createdJob?.id
+    ) {
+      try {
+        await updateShopperJob(
+          createdJob.id,
+          {
+            status:
+              "cancelled",
+          }
+        );
+      } catch (cleanupError) {
+        console.error(
+          "FETCH DISPATCH CLEANUP ERROR:",
+          cleanupError
+        );
+      }
+    }
 
     return {
       success: false,
@@ -6815,6 +6865,18 @@ function parseShopperPriceAndDelivery(text) {
     itemTotal,
     deliveryFee,
   };
+}
+
+
+function isSuccessfulExistingDispatch(
+  dispatch
+) {
+  return Boolean(
+    dispatch?.success &&
+    dispatch?.reused &&
+    dispatch?.reason ===
+      "already_offered"
+  );
 }
 
 function buildCustomerPriceApprovalMessage(order) {
