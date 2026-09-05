@@ -260,6 +260,103 @@ async function getOrCreateCustomer(
   }
 }
 
+
+async function getCustomerCurrentOrderId(
+  customerId
+) {
+  if (!customerId) {
+    return null;
+  }
+
+  const data =
+    await supabaseRequest(
+      `customers?id=eq.${encodeURIComponent(
+        customerId
+      )}&select=current_order_id&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]?.current_order_id ||
+      null
+    : null;
+}
+
+async function setCustomerCurrentOrder(
+  customerId,
+  orderId
+) {
+  if (!customerId) {
+    return;
+  }
+
+  await supabaseRequest(
+    `customers?id=eq.${encodeURIComponent(
+      customerId
+    )}`,
+    {
+      method:
+        "PATCH",
+
+      headers: {
+        Prefer:
+          "return=minimal",
+      },
+
+      body:
+        JSON.stringify({
+          current_order_id:
+            orderId ||
+            null,
+        }),
+    }
+  );
+}
+
+async function moveCustomerToNextActiveOrder(
+  customerId,
+  excludedOrderId = null
+) {
+  if (!customerId) {
+    return null;
+  }
+
+  const statuses =
+    ACTIVE_ORDER_STATUSES.join(
+      ","
+    );
+
+  const data =
+    await supabaseRequest(
+      `orders?customer_id=eq.${encodeURIComponent(
+        customerId
+      )}&status=in.(${encodeURIComponent(
+        statuses
+      )})&select=id,created_at&order=created_at.desc&limit=20`
+    );
+
+  const candidates =
+    Array.isArray(data)
+      ? data.filter(
+          (order) =>
+            !excludedOrderId ||
+            order.id !==
+              excludedOrderId
+        )
+      : [];
+
+  const nextOrderId =
+    candidates[0]?.id ||
+    null;
+
+  await setCustomerCurrentOrder(
+    customerId,
+    nextOrderId
+  );
+
+  return nextOrderId;
+}
+
 async function updateCustomerAddress(
   customerId,
   address
@@ -959,8 +1056,51 @@ function buildSingleOrderSummary(
 async function getActiveOrder(
   customerId
 ) {
+  if (!customerId) {
+    return null;
+  }
+
+  /*
+    The customer's current_order_id is the authoritative
+    conversational order. This prevents YES / PAID / ADD /
+    CANCEL from jumping to another active order.
+  */
+  const currentOrderId =
+    await getCustomerCurrentOrderId(
+      customerId
+    );
+
+  if (
+    currentOrderId
+  ) {
+    const currentOrder =
+      await getOrderById(
+        currentOrderId
+      );
+
+    if (
+      currentOrder &&
+      ACTIVE_ORDER_STATUSES.includes(
+        currentOrder.status
+      )
+    ) {
+      return currentOrder;
+    }
+
+    await setCustomerCurrentOrder(
+      customerId,
+      null
+    );
+  }
+
+  /*
+    Migration fallback for older customer rows that existed
+    before current_order_id was added.
+  */
   const statuses =
-    ACTIVE_ORDER_STATUSES.join(",");
+    ACTIVE_ORDER_STATUSES.join(
+      ","
+    );
 
   const data =
     await supabaseRequest(
@@ -968,13 +1108,22 @@ async function getActiveOrder(
         customerId
       )}&status=in.(${encodeURIComponent(
         statuses
-      )})&select=*&order=created_at.desc&limit=1`
+      )})&select=*&order=created_at.desc&limit=20`
     );
 
-  return Array.isArray(data) &&
+  const fallback =
+    Array.isArray(data) &&
     data.length
-    ? data[0]
-    : null;
+      ? data[0]
+      : null;
+
+  await setCustomerCurrentOrder(
+    customerId,
+    fallback?.id ||
+      null
+  );
+
+  return fallback;
 }
 
 async function getLatestOrder(
@@ -1065,9 +1214,22 @@ async function createOrder({
       }
     );
 
-  return Array.isArray(data)
-    ? data[0]
-    : data;
+  const createdOrder =
+    Array.isArray(data)
+      ? data[0]
+      : data;
+
+  if (
+    createdOrder?.id &&
+    customerId
+  ) {
+    await setCustomerCurrentOrder(
+      customerId,
+      createdOrder.id
+    );
+  }
+
+  return createdOrder;
 }
 
 async function updateOrder(
@@ -1588,6 +1750,71 @@ async function offerOrderToShopper(
         createdJob,
     };
   } catch (error) {
+    /*
+      Two webhook executions can reach the same order at nearly
+      the same time. The database unique index protects the order.
+      When the insert loses that race, reuse the existing offer.
+    */
+    if (
+      String(
+        error?.message ||
+          ""
+      ).includes(
+        "Supabase 409"
+      )
+    ) {
+      const racedOffers =
+        await supabaseRequest(
+          `shopper_jobs?order_id=eq.${encodeURIComponent(
+            order.id
+          )}&status=eq.offered&select=*&order=offered_at.asc&limit=1`
+        );
+
+      if (
+        Array.isArray(
+          racedOffers
+        ) &&
+        racedOffers.length
+      ) {
+        const racedJob =
+          racedOffers[0];
+
+        const racedShopperRows =
+          racedJob?.shopper_id
+            ? await supabaseRequest(
+                `shoppers?id=eq.${encodeURIComponent(
+                  racedJob.shopper_id
+                )}&select=*&limit=1`
+              )
+            : [];
+
+        const racedShopper =
+          Array.isArray(
+            racedShopperRows
+          ) &&
+          racedShopperRows.length
+            ? racedShopperRows[0]
+            : null;
+
+        return {
+          success:
+            true,
+
+          shopper:
+            racedShopper,
+
+          job:
+            racedJob,
+
+          reason:
+            "already_offered_race_recovered",
+
+          reused:
+            true,
+        };
+      }
+    }
+
     console.error(
       "FETCH DISPATCH SHOPPER ERROR:",
       error
@@ -2013,6 +2240,8 @@ Rules:
 20. If the customer mentions an order reference such as #ABC123 or identifies an order by item/store, use that order for status or cancellation; never guess when more than one order matches.
 21. "cancel order #ABC123" must cancel only that exact customer order if it is still active.
 22. When Fetch asks which order the customer means, a reply containing only that order number inherits the action from Fetch’s immediately preceding question. Never treat a bare order number as a new shopping request.
+23. The customer current_order_id is the authoritative order for simple conversational actions. Never borrow items, prices, payment state, store, shopper, or delivery state from another order.
+24. A shopper offer is single-occupancy: only one active offered job may exist for an order at a time. Use the database constraint as the final authority.
 `;
 
   const context = {
@@ -8666,6 +8895,11 @@ async function handleShopperMessage({
       );
     }
 
+    await moveCustomerToNextActiveOrder(
+      order.customer_id,
+      order.id
+    );
+
     await updateShopperJob(
       job.id,
       {
@@ -8745,6 +8979,65 @@ async function handleShopperMessage({
 
     "I didn’t recognise that command. You can send UPI/payment details, ACCEPT, DECLINE, PRICE + DELIVERY FEE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED, AVAILABLE, EARNINGS, PAYOUT, LAST ORDER or STATUS."
   );
+}
+
+
+/* =========================================================
+   WEBHOOK IDEMPOTENCY
+========================================================= */
+
+async function recordWebhookEvent(
+  messageId,
+  phone
+) {
+  if (!messageId) {
+    return true;
+  }
+
+  try {
+    await supabaseRequest(
+      "webhook_events",
+      {
+        method:
+          "POST",
+
+        headers: {
+          Prefer:
+            "return=minimal",
+        },
+
+        body:
+          JSON.stringify({
+            message_id:
+              messageId,
+
+            phone:
+              normalizePhone(
+                phone
+              ),
+          }),
+      }
+    );
+
+    return true;
+  } catch (error) {
+    /*
+      Unique constraint violation means Meta delivered the same
+      WhatsApp message again. Treat the event as already processed.
+    */
+    if (
+      String(
+        error?.message ||
+          ""
+      ).includes(
+        "Supabase 409"
+      )
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 /* =========================================================
@@ -8949,6 +9242,33 @@ export default async function handler(
       text,
       location,
     } = incoming;
+
+    /*
+      Meta can retry webhook delivery. Only process the same
+      WhatsApp message ID once.
+    */
+    const shouldProcess =
+      await recordWebhookEvent(
+        incoming.messageId,
+        from
+      );
+
+    if (!shouldProcess) {
+      console.log(
+        "FETCH DUPLICATE WEBHOOK IGNORED:",
+        incoming.messageId
+      );
+
+      return res
+        .status(200)
+        .json({
+          success:
+            true,
+
+          duplicate:
+            true,
+        });
+    }
 
     console.log(
       "FETCH INCOMING:",
