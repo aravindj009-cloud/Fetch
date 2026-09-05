@@ -2208,13 +2208,36 @@ function fallbackDecision(
 ========================================================= */
 
 function cleanRequestedStoreName(storeName) {
-  return String(storeName || "")
-    .replace(
-      /\s*,?\s*(?:and\s+)?(?:delivered|deliver|delivery)\s+(?:it\s+)?to\s+.*$/i,
+  let value =
+    String(storeName || "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  if (!value) {
+    return "";
+  }
+
+  /*
+    Remove only clear delivery clauses accidentally captured
+    as part of the store name.
+  */
+  value =
+    value.replace(
+      /\s*,?\s*(?:and\s+)?(?:deliver(?:ed)?|delivery)\s+(?:it\s+)?(?:to|at)\s+.*$/i,
       ""
-    )
+    );
+
+  value =
+    value.replace(
+      /\s*,?\s*(?:and\s+)?to\s+my\s+address.*$/i,
+      ""
+    );
+
+  return value
+    .replace(/^[,;.\s]+|[,;.\s]+$/g, "")
     .trim();
 }
+
 
 function normalizeCustomerText(text) {
   return String(text || '')
@@ -2230,29 +2253,211 @@ function extractFlexibleShoppingRequest(text) {
     return null;
   }
 
-  const prefix =
-    "(?:i\\s+want|i\\s+need|i'd\\s+like|i\\s+would\\s+like|please\\s+get|please\\s+fetch|can\\s+you\\s+get|can\\s+you\\s+fetch|get\\s+me|fetch\\s+me|buy\\s+me|order)";
+  /*
+    Fetch should understand natural customer language.
 
+    Examples:
+      I need 3 kitkat from xyz store
+      I need 3 kitkat from xyz store, delivered to ABRA 200
+      I need 10 super glue
+      I need 1 lays to my address
+      enik 5 munch venam from Ganapathy bakery, delivery location Annoor
+  */
+
+  const prefix =
+    "(?:i\\s+want|i\\s+need|i'd\\s+like|i\\s+would\\s+like|please\\s+get|please\\s+fetch|can\\s+you\\s+get|can\\s+you\\s+fetch|get\\s+me|fetch\\s+me|buy\\s+me|order|enikku|enik|enikk|mujhe|mere\\s+liye|enakku|naaku|nanage)";
+
+  const deliveryMarker =
+    "(?:deliver(?:ed|\\s+it)?\\s+to|delivery\\s+(?:location|to)?|delivery\\s+address|deliver\\s+at|delivered\\s+at|to\\s+my\\s+address|to\\s+me|at\\s+my\\s+address|delivery)";
+
+  /*
+    FIRST: request with an explicit store and a delivery marker.
+    This captures the store only until the delivery marker.
+  */
+  const withStoreAndDelivery =
+    new RegExp(
+      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+?)\\s*,?\\s*${deliveryMarker}\\s+(.+)$`,
+      "i"
+    );
+
+  let match =
+    value.match(
+      withStoreAndDelivery
+    );
+
+  if (match) {
+    return {
+      items:
+        cleanNewOrderItems(
+          match[1]
+        ),
+
+      store:
+        cleanRequestedStoreName(
+          match[2]
+        ),
+
+      address:
+        match[3].trim(),
+    };
+  }
+
+  /*
+    SECOND: request with explicit store but no delivery marker.
+  */
   const withStore =
     new RegExp(
-      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+?)(?:\\s*,?\\s*(?:and\\s+)?(?:delivered|deliver|delivery)\\s+(?:it\\s+)?to\\s+(.+))?$`,
+      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+)$`,
       "i"
     );
 
+  match =
+    value.match(
+      withStore
+    );
+
+  if (match) {
+    const rawStoreAndMaybeAddress =
+      match[2].trim();
+
+    /*
+      If a delivery phrase is buried in the tail, split it out here.
+      This is deliberately done after the first regex so store names
+      containing ordinary words such as "delivery" are not touched
+      unless a real delivery marker is present.
+    */
+    const tail =
+      rawStoreAndMaybeAddress.match(
+        new RegExp(
+          `^(.+?)\\s*,?\\s*${deliveryMarker}\\s+(.+)$`,
+          "i"
+        )
+      );
+
+    if (tail) {
+      return {
+        items:
+          cleanNewOrderItems(
+            match[1]
+          ),
+
+        store:
+          cleanRequestedStoreName(
+            tail[1]
+          ),
+
+        address:
+          tail[2].trim(),
+      };
+    }
+
+    return {
+      items:
+        cleanNewOrderItems(
+          match[1]
+        ),
+
+      store:
+        cleanRequestedStoreName(
+          rawStoreAndMaybeAddress
+        ),
+
+      address:
+        "",
+    };
+  }
+
+  /*
+    THIRD: item + delivery address, with no store specified.
+  */
   const deliveryOnly =
     new RegExp(
-      `^${prefix}\\s+(.+?)\\s+(?:delivered|deliver|delivery)\\s+(?:it\\s+)?to\\s+(.+)$`,
+      `^${prefix}\\s+(.+?)\\s+${deliveryMarker}\\s+(.+)$`,
       "i"
     );
 
+  match =
+    value.match(
+      deliveryOnly
+    );
+
+  if (match) {
+    return {
+      items:
+        cleanNewOrderItems(
+          match[1]
+        ),
+
+      store:
+        "",
+
+      address:
+        match[2].trim(),
+    };
+  }
+
+  /*
+    FOURTH: a plain item-only request.
+  */
   const itemOnly =
     new RegExp(
       `^${prefix}\\s+(.+)$`,
       "i"
     );
 
+  match =
+    value.match(
+      itemOnly
+    );
+
+  if (
+    match &&
+    match[1]?.trim()
+  ) {
+    return {
+      items:
+        cleanNewOrderItems(
+          match[1]
+        ),
+
+      store:
+        "",
+
+      address:
+        "",
+    };
+  }
+
+  return null;
+}
+
+
+function extractDeterministicShoppingRequest(text) {
+  const value =
+    normalizeCustomerText(
+      text
+    );
+
+  if (!value) {
+    return null;
+  }
+
+  const prefix =
+    "(?:i\\s+want|i\\s+need|i'd\\s+like|i\\s+would\\s+like|please\\s+get|please\\s+fetch|can\\s+you\\s+get|can\\s+you\\s+fetch|get\\s+me|fetch\\s+me|buy\\s+me|order|enikku|enik|enikk|mujhe|mere\\s+liye|enakku|naaku|nanage)";
+
+  const deliveryMarker =
+    "(?:deliver(?:ed|\\s+it)?\\s+to|delivery\\s+(?:location|to)?|delivery\\s+address|deliver\\s+at|delivered\\s+at|to\\s+my\\s+address|to\\s+me|at\\s+my\\s+address|delivery)";
+
+  const explicitPattern =
+    new RegExp(
+      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+?)\\s*,?\\s*${deliveryMarker}\\s+(.+)$`,
+      "i"
+    );
+
   let match =
-    value.match(withStore);
+    value.match(
+      explicitPattern
+    );
 
   if (match) {
     return {
@@ -2261,14 +2466,50 @@ function extractFlexibleShoppingRequest(text) {
           match[1]
         ),
       store:
-        match[2].trim(),
+        cleanRequestedStoreName(
+          match[2]
+        ),
       address:
-        match[3]?.trim() || "",
+        match[3].trim(),
     };
   }
 
+  const simpleStorePattern =
+    new RegExp(
+      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+)$`,
+      "i"
+    );
+
   match =
-    value.match(deliveryOnly);
+    value.match(
+      simpleStorePattern
+    );
+
+  if (match) {
+    return {
+      items:
+        cleanNewOrderItems(
+          match[1]
+        ),
+      store:
+        cleanRequestedStoreName(
+          match[2]
+        ),
+      address:
+        "",
+    };
+  }
+
+  const deliveryOnlyPattern =
+    new RegExp(
+      `^${prefix}\\s+(.+?)\\s+${deliveryMarker}\\s+(.+)$`,
+      "i"
+    );
+
+  match =
+    value.match(
+      deliveryOnlyPattern
+    );
 
   if (match) {
     return {
@@ -2283,8 +2524,16 @@ function extractFlexibleShoppingRequest(text) {
     };
   }
 
+  const itemOnlyPattern =
+    new RegExp(
+      `^${prefix}\\s+(.+)$`,
+      "i"
+    );
+
   match =
-    value.match(itemOnly);
+    value.match(
+      itemOnlyPattern
+    );
 
   if (
     match &&
@@ -2305,62 +2554,6 @@ function extractFlexibleShoppingRequest(text) {
   return null;
 }
 
-
-function extractDeterministicShoppingRequest(text) {
-  const value = normalizeCustomerText(text);
-  if (!value) return null;
-
-  // Full request with store and optional delivery location.
-  const explicitPattern =
-    /^(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order)\s+(.+?)\s+(?:from|at)\s+(.+?)(?:\s*,?\s*(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+))?$/i;
-
-  const match =
-    value.match(explicitPattern);
-
-  if (match) {
-    return {
-      items:
-        cleanNewOrderItems(
-          match[1]
-        ),
-      store:
-        match[2].trim(),
-      address:
-        match[3]?.trim() || "",
-    };
-  }
-
-  // Item-only request. This MUST still count as a fresh order.
-  // The store and location will be collected next without
-  // borrowing them from the previous order.
-  const itemOnlyPattern =
-    /^(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|get\s+me|fetch\s+me|buy\s+me|order)\s+(.+)$/i;
-
-  const itemOnlyMatch =
-    value.match(
-      itemOnlyPattern
-    );
-
-  if (
-    itemOnlyMatch &&
-    itemOnlyMatch[1]?.trim()
-  ) {
-    const items =
-      cleanNewOrderItems(
-        itemOnlyMatch[1]
-      );
-
-    if (items) {
-      return {
-        items,
-        store: "",
-        address: "",
-      };
-    }
-  }
-
-  return null;
-}
 
 function cleanNewOrderItems(items) {
   return String(items || "")
