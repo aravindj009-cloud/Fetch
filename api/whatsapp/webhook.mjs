@@ -260,6 +260,87 @@ async function getOrCreateCustomer(
   }
 }
 
+
+async function getCustomerCurrentOrderId(
+  customerId
+) {
+  const data =
+    await supabaseRequest(
+      `customers?id=eq.${encodeURIComponent(
+        customerId
+      )}&select=current_order_id&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]?.current_order_id ||
+      null
+    : null;
+}
+
+async function setCustomerCurrentOrder(
+  customerId,
+  orderId
+) {
+  await supabaseRequest(
+    `customers?id=eq.${encodeURIComponent(
+      customerId
+    )}`,
+    {
+      method:
+        "PATCH",
+
+      headers: {
+        Prefer:
+          "return=minimal",
+      },
+
+      body:
+        JSON.stringify({
+          current_order_id:
+            orderId ||
+            null,
+        }),
+    }
+  );
+}
+
+async function setCustomerCurrentOrderToNextActive(
+  customerId,
+  excludeOrderId = null
+) {
+  const data =
+    await supabaseRequest(
+      `orders?customer_id=eq.${encodeURIComponent(
+        customerId
+      )}&status=in.(${encodeURIComponent(
+        ACTIVE_ORDER_STATUSES.join(",")
+      )})&select=id,created_at&order=created_at.desc&limit=20`
+    );
+
+  const candidates =
+    Array.isArray(data)
+      ? data
+      : [];
+
+  const next =
+    candidates.find(
+      (order) =>
+        !excludeOrderId ||
+        order.id !==
+          excludeOrderId
+    );
+
+  await setCustomerCurrentOrder(
+    customerId,
+    next?.id ||
+      null
+  );
+
+  return next?.id ||
+    null;
+}
+
 async function updateCustomerAddress(
   customerId,
   address
@@ -959,8 +1040,33 @@ function buildSingleOrderSummary(
 async function getActiveOrder(
   customerId
 ) {
+  const currentOrderId =
+    await getCustomerCurrentOrderId(
+      customerId
+    );
+
+  if (
+    currentOrderId
+  ) {
+    const current =
+      await getOrderById(
+        currentOrderId
+      );
+
+    if (
+      current &&
+      ACTIVE_ORDER_STATUSES.includes(
+        current.status
+      )
+    ) {
+      return current;
+    }
+  }
+
   const statuses =
-    ACTIVE_ORDER_STATUSES.join(",");
+    ACTIVE_ORDER_STATUSES.join(
+      ","
+    );
 
   const data =
     await supabaseRequest(
@@ -968,13 +1074,30 @@ async function getActiveOrder(
         customerId
       )}&status=in.(${encodeURIComponent(
         statuses
-      )})&select=*&order=created_at.desc&limit=1`
+      )})&select=*&order=created_at.desc&limit=20`
     );
 
-  return Array.isArray(data) &&
-    data.length
-    ? data[0]
-    : null;
+  const activeOrders =
+    Array.isArray(data)
+      ? data
+      : [];
+
+  /*
+    Migration safety:
+    if an older customer has active orders but no pointer,
+    select the newest one once and persist it.
+  */
+  const fallback =
+    activeOrders[0] ||
+    null;
+
+  await setCustomerCurrentOrder(
+    customerId,
+    fallback?.id ||
+      null
+  );
+
+  return fallback;
 }
 
 async function getLatestOrder(
@@ -1065,9 +1188,22 @@ async function createOrder({
       }
     );
 
-  return Array.isArray(data)
-    ? data[0]
-    : data;
+  const createdOrder =
+    Array.isArray(data)
+      ? data[0]
+      : data;
+
+  if (
+    createdOrder?.id &&
+    customerId
+  ) {
+    await setCustomerCurrentOrder(
+      customerId,
+      createdOrder.id
+    );
+  }
+
+  return createdOrder;
 }
 
 async function updateOrder(
@@ -1328,10 +1464,69 @@ async function offerOrderToShopper(
   excludedIds = [],
   preferredShopperId = null
 ) {
+  const attempted =
+    await supabaseRequest(
+      `shopper_jobs?order_id=eq.${encodeURIComponent(
+        order.id
+      )}&select=shopper_id,status&limit=100`
+    );
+
+  const attemptedShopperIds =
+    Array.isArray(attempted)
+      ? attempted
+          .filter(
+            (job) =>
+              job?.shopper_id
+          )
+          .map(
+            (job) =>
+              job.shopper_id
+          )
+      : [];
+
+  const combinedExcluded =
+    [
+      ...new Set(
+        [
+          ...excludedIds,
+          ...attemptedShopperIds,
+        ].filter(Boolean)
+      ),
+    ];
+
   let shoppers =
     await getAvailableShoppers(
-      excludedIds
+      combinedExcluded
     );
+
+  /*
+    Give the least-recently-seen available shopper first so
+    multiple shoppers are treated fairly instead of repeatedly
+    selecting the same person.
+  */
+  shoppers.sort(
+    (
+      a,
+      b
+    ) => {
+      const aTime =
+        new Date(
+          a?.last_seen_at ||
+          0
+        ).getTime();
+
+      const bTime =
+        new Date(
+          b?.last_seen_at ||
+          0
+        ).getTime();
+
+      return (
+        aTime -
+        bTime
+      );
+    }
+  );
 
   if (
     preferredShopperId
@@ -1352,6 +1547,7 @@ async function offerOrderToShopper(
     };
   }
 
+  /* Do not assign the shopper until ACCEPT. */
   for (const shopper of shoppers) {
     try {
       const existing =
@@ -3346,6 +3542,15 @@ async function cancelOrderAndReleaseShopper(order) {
       shopper_id: null,
     }
   );
+
+  if (
+    order.customer_id
+  ) {
+    await setCustomerCurrentOrderToNextActive(
+      order.customer_id,
+      order.id
+    );
+  }
 }
 
 
@@ -5740,6 +5945,11 @@ async function handleCustomerMessage({
         userMessage,
     });
 
+    await setCustomerCurrentOrderToNextActive(
+      customer.id,
+      activeOrder.id
+    );
+
     await sendWhatsAppMessage(
       normalizedPhone,
       "Okay 👍 I won’t place that order."
@@ -6284,6 +6494,11 @@ async function handleCustomerMessage({
         status:
           "cancelled",
       }
+    );
+
+    await setCustomerCurrentOrderToNextActive(
+      customer.id,
+      activeOrder.id
     );
 
     await sendWhatsAppMessage(
@@ -8451,6 +8666,15 @@ async function handleShopperMessage({
     if (!receiptOrder) {
       throw new Error(
         "Could not complete Fetch order"
+      );
+    }
+
+    if (
+      order.customer_id
+    ) {
+      await setCustomerCurrentOrderToNextActive(
+        order.customer_id,
+        order.id
       );
     }
 
