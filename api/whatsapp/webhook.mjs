@@ -2312,6 +2312,35 @@ function cleanConversationText(text) {
 }
 
 
+function isCustomerPaidMessage(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(paid|payment done|i'?ve paid|i have paid|payment completed|payment sent|sent the payment|done with payment)$/.test(
+    value
+  );
+}
+
+function isShopperPaymentReceivedMessage(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(received|payment received|got it|got the payment|yes received|yes i received|yes received it|money received)$/.test(
+    value
+  );
+}
+
+function buildShopperPaymentMessage(order, upiId) {
+  const total =
+    Number(order?.total_amount || 0);
+
+  return (
+    `💳 Please pay ₹${formatRupees(total)} to the shopper.\\n\\n` +
+    `UPI ID: ${upiId}\\n\\n` +
+    `After payment, reply PAID here.`
+  );
+}
+
 function isPaymentCommand(text) {
   const value =
     cleanConversationText(text).toLowerCase();
@@ -3242,7 +3271,7 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
-     SIMPLE MVP: PAYMENT CONFIRMATION (TEST MODE)
+     SIMPLE MVP: CUSTOMER PAYMENT TO SHOPPER
   ----------------------------------------- */
 
   if (
@@ -3251,43 +3280,45 @@ async function handleCustomerMessage({
       "payment_pending"
   ) {
     if (
+      isCustomerPaidMessage(
+        userMessage
+      ) ||
       isPaymentCommand(
         userMessage
       )
     ) {
-      const paidOrder =
-        await updateOrder(
-          activeOrder.id,
-          {
-            payment_status:
-              "paid",
-
-            payment_method:
-              "mvp_test",
-
-            status:
-              "shopping",
-          }
-        );
-
-      if (!paidOrder) {
-        throw new Error(
-          "Could not mark payment as paid"
-        );
-      }
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "Payment received ✅ I’ve told the shopper to continue shopping."
+      await updateOrder(
+        activeOrder.id,
+        {
+          payment_status:
+            "customer_reported_paid",
+        }
       );
 
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          activeOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "user",
+
+        message:
+          userMessage,
+      });
+
       if (
-        paidOrder.shopper_id
+        activeOrder.shopper_id
       ) {
         const shoppers =
           await supabaseRequest(
             `shoppers?id=eq.${encodeURIComponent(
-              paidOrder.shopper_id
+              activeOrder.shopper_id
             )}&select=*&limit=1`
           );
 
@@ -3304,10 +3335,18 @@ async function handleCustomerMessage({
         ) {
           await sendWhatsAppMessage(
             shopper.phone,
-            "💳 Payment received ✅ You can purchase the items and continue.\n\nReply SHOPPING when you start shopping."
+
+            `💳 The customer says they have paid ₹${formatRupees(
+              activeOrder.total_amount
+            )} to your UPI.\\n\\nPlease check your payment and reply RECEIVED once you see it.`
           );
         }
       }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Thanks 👍 I’ve asked the shopper to verify the payment. Once they confirm it, I’ll tell them to purchase your items."
+      );
 
       return;
     }
@@ -3368,12 +3407,7 @@ async function handleCustomerMessage({
         );
       }
 
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Approved 👍\n\n💰 Total: ₹${formatRupees(
-          approvedOrder.total_amount
-        )}\n\nPlease complete the payment to continue.`
-      );
+      let shopper = null;
 
       if (
         approvedOrder?.shopper_id
@@ -3385,22 +3419,52 @@ async function handleCustomerMessage({
             )}&select=*&limit=1`
           );
 
-        const shopper =
+        shopper =
           Array.isArray(
             shoppers
           ) &&
           shoppers.length
             ? shoppers[0]
             : null;
+      }
+
+      if (
+        !shopper?.upi_id
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Approved 👍\n\n💰 Total: ₹${formatRupees(
+            approvedOrder.total_amount
+          )}\n\nThe shopper hasn’t added a UPI ID yet. I’ve asked them to add it so you can pay directly.`
+        );
 
         if (
           shopper?.phone
         ) {
           await sendWhatsAppMessage(
             shopper.phone,
-            "✅ Customer approved the price.\n\nPayment is pending. Wait for Fetch to confirm payment before purchasing."
+            "Please add your UPI ID to your Fetch shopper profile so the customer can pay you directly."
           );
         }
+
+        return;
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Approved 👍\n\n${buildShopperPaymentMessage(
+          approvedOrder,
+          shopper.upi_id
+        )}\n\nDelivery price is decided by the shopper; prices may vary.`
+      );
+
+      if (
+        shopper?.phone
+      ) {
+        await sendWhatsAppMessage(
+          shopper.phone,
+          "✅ Customer approved the price.\n\nWait for the customer’s payment. I’ll tell you when the payment is verified."
+        );
       }
 
       return;
@@ -5181,6 +5245,86 @@ async function handleShopperMessage({
     return;
   }
 
+  /* CUSTOMER PAYMENT RECEIVED BY SHOPPER */
+
+  if (
+    isShopperPaymentReceivedMessage(
+      rawText
+    )
+  ) {
+    const openAcceptedJob =
+      await getAcceptedShopperJob(
+        shopper.id
+      );
+
+    if (!openAcceptedJob) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I don’t have an active Fetch payment waiting for confirmation."
+      );
+      return;
+    }
+
+    const paymentOrder =
+      await getOrderById(
+        openAcceptedJob.order_id
+      );
+
+    if (!paymentOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find the order linked to this payment."
+      );
+      return;
+    }
+
+    if (
+      paymentOrder.status !==
+        "payment_pending" ||
+      paymentOrder.payment_status !==
+        "customer_reported_paid"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "There isn’t a customer payment waiting for your confirmation right now."
+      );
+      return;
+    }
+
+    const paidOrder =
+      await updateOrder(
+        paymentOrder.id,
+        {
+          payment_status:
+            "paid",
+
+          payment_method:
+            "shopper_upi",
+
+          status:
+            "shopping",
+        }
+      );
+
+    if (!paidOrder) {
+      throw new Error(
+        "Could not confirm shopper payment"
+      );
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Payment verified ✅ You can purchase the items and continue shopping.\n\nReply SHOPPING when you start shopping."
+    );
+
+    await notifyCustomerForOrder(
+      paidOrder.id,
+      "💳 Payment confirmed by your shopper ✅ They can now purchase your items and continue shopping."
+    );
+
+    return;
+  }
+
   /* PRODUCT PRICE + DELIVERY FEE */
 
   const shopperPrice =
@@ -5415,7 +5559,7 @@ async function handleShopperMessage({
   await sendWhatsAppMessage(
     normalizedPhone,
 
-    "I didn’t recognise that command. Use ACCEPT, DECLINE, SHOPPING, SUBSTITUTE: old item -> new item, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
+    "I didn’t recognise that command. Use ACCEPT, PRICE: product price DELIVERY FEE: delivery fee, RECEIVED, SHOPPING, SUBSTITUTE: old item -> new item, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
   );
 }
 
