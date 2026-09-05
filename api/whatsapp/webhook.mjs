@@ -260,87 +260,6 @@ async function getOrCreateCustomer(
   }
 }
 
-
-async function getCustomerCurrentOrderId(
-  customerId
-) {
-  const data =
-    await supabaseRequest(
-      `customers?id=eq.${encodeURIComponent(
-        customerId
-      )}&select=current_order_id&limit=1`
-    );
-
-  return Array.isArray(data) &&
-    data.length
-    ? data[0]?.current_order_id ||
-      null
-    : null;
-}
-
-async function setCustomerCurrentOrder(
-  customerId,
-  orderId
-) {
-  await supabaseRequest(
-    `customers?id=eq.${encodeURIComponent(
-      customerId
-    )}`,
-    {
-      method:
-        "PATCH",
-
-      headers: {
-        Prefer:
-          "return=minimal",
-      },
-
-      body:
-        JSON.stringify({
-          current_order_id:
-            orderId ||
-            null,
-        }),
-    }
-  );
-}
-
-async function setCustomerCurrentOrderToNextActive(
-  customerId,
-  excludeOrderId = null
-) {
-  const data =
-    await supabaseRequest(
-      `orders?customer_id=eq.${encodeURIComponent(
-        customerId
-      )}&status=in.(${encodeURIComponent(
-        ACTIVE_ORDER_STATUSES.join(",")
-      )})&select=id,created_at&order=created_at.desc&limit=20`
-    );
-
-  const candidates =
-    Array.isArray(data)
-      ? data
-      : [];
-
-  const next =
-    candidates.find(
-      (order) =>
-        !excludeOrderId ||
-        order.id !==
-          excludeOrderId
-    );
-
-  await setCustomerCurrentOrder(
-    customerId,
-    next?.id ||
-      null
-  );
-
-  return next?.id ||
-    null;
-}
-
 async function updateCustomerAddress(
   customerId,
   address
@@ -1040,33 +959,8 @@ function buildSingleOrderSummary(
 async function getActiveOrder(
   customerId
 ) {
-  const currentOrderId =
-    await getCustomerCurrentOrderId(
-      customerId
-    );
-
-  if (
-    currentOrderId
-  ) {
-    const current =
-      await getOrderById(
-        currentOrderId
-      );
-
-    if (
-      current &&
-      ACTIVE_ORDER_STATUSES.includes(
-        current.status
-      )
-    ) {
-      return current;
-    }
-  }
-
   const statuses =
-    ACTIVE_ORDER_STATUSES.join(
-      ","
-    );
+    ACTIVE_ORDER_STATUSES.join(",");
 
   const data =
     await supabaseRequest(
@@ -1074,30 +968,13 @@ async function getActiveOrder(
         customerId
       )}&status=in.(${encodeURIComponent(
         statuses
-      )})&select=*&order=created_at.desc&limit=20`
+      )})&select=*&order=created_at.desc&limit=1`
     );
 
-  const activeOrders =
-    Array.isArray(data)
-      ? data
-      : [];
-
-  /*
-    Migration safety:
-    if an older customer has active orders but no pointer,
-    select the newest one once and persist it.
-  */
-  const fallback =
-    activeOrders[0] ||
-    null;
-
-  await setCustomerCurrentOrder(
-    customerId,
-    fallback?.id ||
-      null
-  );
-
-  return fallback;
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
 }
 
 async function getLatestOrder(
@@ -1188,22 +1065,9 @@ async function createOrder({
       }
     );
 
-  const createdOrder =
-    Array.isArray(data)
-      ? data[0]
-      : data;
-
-  if (
-    createdOrder?.id &&
-    customerId
-  ) {
-    await setCustomerCurrentOrder(
-      customerId,
-      createdOrder.id
-    );
-  }
-
-  return createdOrder;
+  return Array.isArray(data)
+    ? data[0]
+    : data;
 }
 
 async function updateOrder(
@@ -1464,19 +1328,67 @@ async function offerOrderToShopper(
   excludedIds = [],
   preferredShopperId = null
 ) {
-  const attempted =
+  if (
+    !order?.id
+  ) {
+    return {
+      success: false,
+      shopper: null,
+      job: null,
+      reason:
+        "missing_order",
+    };
+  }
+
+  /*
+    HARD RULE:
+    An order can have only ONE currently offered job.
+    Never broadcast the same order to multiple shoppers.
+  */
+  const existingOffers =
+    await supabaseRequest(
+      `shopper_jobs?order_id=eq.${encodeURIComponent(
+        order.id
+      )}&status=eq.offered&select=*&order=offered_at.asc&limit=10`
+    );
+
+  if (
+    Array.isArray(
+      existingOffers
+    ) &&
+    existingOffers.length
+  ) {
+    return {
+      success: false,
+      shopper: null,
+      job:
+        existingOffers[0],
+      reason:
+        "already_offered",
+    };
+  }
+
+  const existingJobs =
     await supabaseRequest(
       `shopper_jobs?order_id=eq.${encodeURIComponent(
         order.id
       )}&select=shopper_id,status&limit=100`
     );
 
-  const attemptedShopperIds =
-    Array.isArray(attempted)
-      ? attempted
+  const previouslyTriedShopperIds =
+    Array.isArray(
+      existingJobs
+    )
+      ? existingJobs
           .filter(
             (job) =>
-              job?.shopper_id
+              job?.shopper_id &&
+              [
+                "declined",
+                "cancelled",
+              ].includes(
+                job.status
+              )
           )
           .map(
             (job) =>
@@ -1489,7 +1401,7 @@ async function offerOrderToShopper(
       ...new Set(
         [
           ...excludedIds,
-          ...attemptedShopperIds,
+          ...previouslyTriedShopperIds,
         ].filter(Boolean)
       ),
     ];
@@ -1500,34 +1412,11 @@ async function offerOrderToShopper(
     );
 
   /*
-    Give the least-recently-seen available shopper first so
-    multiple shoppers are treated fairly instead of repeatedly
-    selecting the same person.
+    Keep selection deterministic:
+    if a queue retry explicitly specifies a shopper, use them.
+    Otherwise rotate through currently available shoppers by
+    least-recently-seen.
   */
-  shoppers.sort(
-    (
-      a,
-      b
-    ) => {
-      const aTime =
-        new Date(
-          a?.last_seen_at ||
-          0
-        ).getTime();
-
-      const bTime =
-        new Date(
-          b?.last_seen_at ||
-          0
-        ).getTime();
-
-      return (
-        aTime -
-        bTime
-      );
-    }
-  );
-
   if (
     preferredShopperId
   ) {
@@ -1537,129 +1426,152 @@ async function offerOrderToShopper(
           shopper.id ===
           preferredShopperId
       );
+  } else {
+    shoppers.sort(
+      (
+        a,
+        b
+      ) => {
+        const aTime =
+          new Date(
+            a?.last_seen_at ||
+            0
+          ).getTime();
+
+        const bTime =
+          new Date(
+            b?.last_seen_at ||
+            0
+          ).getTime();
+
+        return (
+          aTime -
+          bTime
+        );
+      }
+    );
   }
 
-  if (!shoppers.length) {
+  if (
+    !shoppers.length
+  ) {
     return {
       success: false,
       shopper: null,
       job: null,
+      reason:
+        "no_available_shopper",
     };
   }
 
-  /* Do not assign the shopper until ACCEPT. */
-  for (const shopper of shoppers) {
-    try {
-      const existing =
-        await supabaseRequest(
-          `shopper_jobs?order_id=eq.${encodeURIComponent(
-            order.id
-          )}&shopper_id=eq.${encodeURIComponent(
-            shopper.id
-          )}&status=eq.offered&select=*&limit=1`
-        );
+  /*
+    Send to exactly ONE shopper and return immediately.
+  */
+  const shopper =
+    shoppers[0];
 
-      const job =
-        Array.isArray(existing) &&
-        existing.length
-          ? existing[0]
-          : await createShopperJob(
-              order.id,
-              shopper.id
-            );
-
-      const hasCustomerCoordinates =
-        Number.isFinite(
-          Number(order.customer_latitude)
-        ) &&
-        Number.isFinite(
-          Number(order.customer_longitude)
-        );
-
-      const storeName =
-        String(
-          order.store_name || ""
-        ).trim();
-
-      const isFlexibleStore =
-        !storeName ||
-        /^any available local store$/i.test(
-          storeName
-        ) ||
-        /^pending(?: nearby)? store$/i.test(
-          storeName
-        );
-
-      const destinationLine =
-        order.delivery_address
-          ? `📍 Deliver to: ${order.delivery_address}\n`
-          : "📍 Delivery location: customer will share location\n";
-
-      const locationPinLine =
-        hasCustomerCoordinates
-          ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-              `${Number(order.customer_latitude)},${Number(
-                order.customer_longitude
-              )}`
-            )}\n`
-          : "";
-
-      const storeInstruction =
-        isFlexibleStore
-          ? "🏪 Store: Any suitable nearby/local shop\n"
-          : `🏪 Store: ${storeName}\n`;
-
-      const shopperInstruction =
-        isFlexibleStore
-          ? "Please find the requested item at a suitable nearby shop, check the product price, and decide the delivery fee."
-          : "Please check the product price at the requested store and decide the delivery fee.";
-
-      const message =
-        `🛍️ *New Fetch Job*\n\n` +
-        storeInstruction +
-        `🛒 Items: ${order.items}\n` +
-        destinationLine +
-        locationPinLine +
-        `\n${shopperInstruction}\n` +
-        `Delivery fee: minimum ₹20 per order and may increase based on the KM.\n\n` +
-        `Reply *ACCEPT* to take this job.\n` +
-        `Reply *DECLINE* to skip it.`;
-
-      await sendWhatsAppMessage(
-        shopper.phone,
-        message
-      );
-
-      await updateOrder(
+  try {
+    const createdJob =
+      await createShopperJob(
         order.id,
-        {
-          status:
-            "finding_shopper",
-
-          shopper_id:
-            null,
-        }
+        shopper.id
       );
 
-      return {
-        success: true,
-        shopper,
-        job,
-      };
-    } catch (error) {
-      console.error(
-        "FETCH DISPATCH SHOPPER ERROR:",
-        error
+    const hasCustomerCoordinates =
+      Number.isFinite(
+        Number(
+          order.customer_latitude
+        )
+      ) &&
+      Number.isFinite(
+        Number(
+          order.customer_longitude
+        )
       );
-    }
+
+    const storeName =
+      String(
+        order.store_name ||
+        ""
+      ).trim();
+
+    const isFlexibleStore =
+      !storeName ||
+      /^any available local store$/i.test(
+        storeName
+      ) ||
+      /^pending(?: nearby)? store$/i.test(
+        storeName
+      );
+
+    const destinationLine =
+      order.delivery_address
+        ? `📍 Deliver to: ${order.delivery_address}\n`
+        : "📍 Delivery location: customer will share location\n";
+
+    const locationPinLine =
+      hasCustomerCoordinates
+        ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+            `${Number(
+              order.customer_latitude
+            )},${Number(
+              order.customer_longitude
+            )}`
+          )}\n`
+        : "";
+
+    const storeInstruction =
+      isFlexibleStore
+        ? "🏪 Store: Any suitable nearby/local shop\n"
+        : `🏪 Store: ${storeName}\n`;
+
+    const shopperInstruction =
+      isFlexibleStore
+        ? "Please find the requested item at a suitable nearby shop, check the product price, and decide the delivery fee."
+        : "Please check the product price at the requested store and decide the delivery fee.";
+
+    const message =
+      `🛍️ *New Fetch Job*\n\n` +
+      storeInstruction +
+      `🛒 Items: ${order.items}\n` +
+      destinationLine +
+      locationPinLine +
+      `\n${shopperInstruction}\n` +
+      `Delivery fee: minimum ₹20 per order and may increase based on the KM.\n\n` +
+      `Reply *ACCEPT* to take this job.\n` +
+      `Reply *DECLINE* to skip it.`;
+
+    await sendWhatsAppMessage(
+      shopper.phone,
+      message
+    );
+
+    /*
+      The order remains unassigned until ACCEPT.
+      The offered job is the current dispatch lock.
+    */
+    return {
+      success: true,
+      shopper,
+      job:
+        createdJob,
+    };
+  } catch (error) {
+    console.error(
+      "FETCH DISPATCH SHOPPER ERROR:",
+      error
+    );
+
+    return {
+      success: false,
+      shopper: null,
+      job: null,
+      reason:
+        "dispatch_error",
+    };
   }
-
-  return {
-    success: false,
-    shopper: null,
-    job: null,
-  };
 }
+
 
 /* =========================================================
    STATUS
@@ -2046,6 +1958,8 @@ Rules:
 18. A WhatsApp location pin is delivery-location information, not a product request and must never be turned into items.
 19. "my orders", "order history", and "show my orders" mean show the customer’s recent Fetch orders; they are not new shopping requests.
 20. When a shopper becomes available, Fetch should automatically offer the oldest waiting order first. The customer should not have to resubmit the order.
+21. Only one shopper may receive an active offer for an order at a time. A second shopper must never receive the same active job unless the first shopper has declined or the offer has been cancelled/expired.
+22. When a shopper declines, the order remains queued and the next eligible shopper may be offered that same order.
 20. If the customer mentions an order reference such as #ABC123 or identifies an order by item/store, use that order for status or cancellation; never guess when more than one order matches.
 21. "cancel order #ABC123" must cancel only that exact customer order if it is still active.
 22. When Fetch asks which order the customer means, a reply containing only that order number inherits the action from Fetch’s immediately preceding question. Never treat a bare order number as a new shopping request.
@@ -3542,15 +3456,6 @@ async function cancelOrderAndReleaseShopper(order) {
       shopper_id: null,
     }
   );
-
-  if (
-    order.customer_id
-  ) {
-    await setCustomerCurrentOrderToNextActive(
-      order.customer_id,
-      order.id
-    );
-  }
 }
 
 
@@ -5945,11 +5850,6 @@ async function handleCustomerMessage({
         userMessage,
     });
 
-    await setCustomerCurrentOrderToNextActive(
-      customer.id,
-      activeOrder.id
-    );
-
     await sendWhatsAppMessage(
       normalizedPhone,
       "Okay 👍 I won’t place that order."
@@ -6494,11 +6394,6 @@ async function handleCustomerMessage({
         status:
           "cancelled",
       }
-    );
-
-    await setCustomerCurrentOrderToNextActive(
-      customer.id,
-      activeOrder.id
     );
 
     await sendWhatsAppMessage(
@@ -7480,13 +7375,20 @@ async function getQueuedOrders(
 async function dispatchNextQueuedOrder(
   shopperId
 ) {
-  if (!shopperId) {
+  if (
+    !shopperId
+  ) {
     return {
-      success: false,
-      reason: "missing_shopper",
-      order: null,
-      shopper: null,
-      job: null,
+      success:
+        false,
+      reason:
+        "missing_shopper",
+      order:
+        null,
+      shopper:
+        null,
+      job:
+        null,
     };
   }
 
@@ -7498,7 +7400,9 @@ async function dispatchNextQueuedOrder(
     );
 
   const shopper =
-    Array.isArray(shoppers) &&
+    Array.isArray(
+      shoppers
+    ) &&
     shoppers.length
       ? shoppers[0]
       : null;
@@ -7508,11 +7412,16 @@ async function dispatchNextQueuedOrder(
     shopper.current_order_id
   ) {
     return {
-      success: false,
-      reason: "shopper_not_available",
-      order: null,
-      shopper: null,
-      job: null,
+      success:
+        false,
+      reason:
+        "shopper_not_available",
+      order:
+        null,
+      shopper:
+        null,
+      job:
+        null,
     };
   }
 
@@ -7526,6 +7435,26 @@ async function dispatchNextQueuedOrder(
       queuedOrders
   ) {
     try {
+      const existingOffers =
+        await supabaseRequest(
+          `shopper_jobs?order_id=eq.${encodeURIComponent(
+            queuedOrder.id
+          )}&status=eq.offered&select=*&limit=1`
+        );
+
+      if (
+        Array.isArray(
+          existingOffers
+        ) &&
+        existingOffers.length
+      ) {
+        /*
+          Someone is already considering this order.
+          Do not send the same order to another shopper.
+        */
+        continue;
+      }
+
       const dispatch =
         await offerOrderToShopper(
           queuedOrder,
@@ -7551,13 +7480,19 @@ async function dispatchNextQueuedOrder(
   }
 
   return {
-    success: false,
-    reason: "no_queued_order",
-    order: null,
-    shopper: null,
-    job: null,
+    success:
+      false,
+    reason:
+      "no_queued_order",
+    order:
+      null,
+    shopper:
+      null,
+    job:
+      null,
   };
 }
+
 
 /* =========================================================
    SHOPPER ENGINE
@@ -8669,15 +8604,6 @@ async function handleShopperMessage({
       );
     }
 
-    if (
-      order.customer_id
-    ) {
-      await setCustomerCurrentOrderToNextActive(
-        order.customer_id,
-        order.id
-      );
-    }
-
     await updateShopperJob(
       job.id,
       {
@@ -8755,7 +8681,7 @@ async function handleShopperMessage({
   await sendWhatsAppMessage(
     normalizedPhone,
 
-    "I didn’t recognise that command. You can send UPI/payment details, ACCEPT, PRICE + DELIVERY FEE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED, AVAILABLE, EARNINGS, PAYOUT, LAST ORDER or STATUS."
+    "I didn’t recognise that command. You can send UPI/payment details, ACCEPT, DECLINE, PRICE + DELIVERY FEE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED, AVAILABLE, EARNINGS, PAYOUT, LAST ORDER or STATUS."
   );
 }
 
