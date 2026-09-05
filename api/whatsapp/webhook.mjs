@@ -1252,7 +1252,7 @@ function getOrderStatusText(
       return "Your order is on the way to you.";
 
     case "delivered":
-      return "Your order has been delivered. 🎉 I’ve also sent you the receipt.";
+      return "Your order has been delivered. 🎉 I’ve also sent you the receipt. You can rate the experience from 1 to 5.";
 
     case "cancelled":
       return "Your order has been cancelled.";
@@ -1596,6 +1596,8 @@ Rules:
 13. Do not use old conversation history to invent or append products. The current customer message is the authority for the requested change.
 14. If the current message is a confirmation such as YES, keep the items field exactly equal to the active order items.
 15. If payment_pending, never tell the shopper to purchase before payment is confirmed.
+16. After an order is delivered, a message containing a rating from 1 to 5 is customer feedback, not a new product order.
+17. "thank you", "thanks", ETA/status questions, and rating messages are conversational and must not be added to items.
 `;
 
   const context = {
@@ -2824,6 +2826,131 @@ async function handleCustomerMessage({
     await getRecentMessages(
       customer.id
     );
+
+  /*
+    -------------------------------------------------------
+    CUSTOMER RATING
+    -------------------------------------------------------
+    Ratings are accepted only for the latest delivered order
+    that has not already been rated.
+  */
+
+  const latestDeliveredOrder =
+    latestOrder &&
+    latestOrder.status ===
+      "delivered" &&
+    latestOrder.customer_rating == null
+      ? latestOrder
+      : null;
+
+  const customerRating =
+    parseCustomerRating(
+      userMessage
+    );
+
+  if (
+    latestDeliveredOrder &&
+    customerRating !== null
+  ) {
+    const ratedAt =
+      new Date().toISOString();
+
+    const ratedOrder =
+      await updateOrder(
+        latestDeliveredOrder.id,
+        {
+          customer_rating:
+            customerRating,
+
+          rated_at:
+            ratedAt,
+        }
+      );
+
+    if (!ratedOrder) {
+      throw new Error(
+        "Could not save customer rating"
+      );
+    }
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        latestDeliveredOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    const thanks =
+      buildCustomerRatingThanks(
+        customerRating
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        latestDeliveredOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        thanks,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      thanks
+    );
+
+    return;
+  }
+
+  if (
+    latestDeliveredOrder &&
+    /^[0-9]+(?:\s*(?:stars?|\/\s*5))?$/i.test(
+      cleanConversationText(
+        userMessage
+      )
+    ) &&
+    customerRating === null
+  ) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Please send a rating from 1 to 5 ⭐"
+    );
+    return;
+  }
+
+  if (
+    latestDeliveredOrder &&
+    /^(?:rate|rating|review|feedback)$/i.test(
+      cleanConversationText(
+        userMessage
+      )
+    )
+  ) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      buildCustomerRatingRequest()
+    );
+
+    return;
+  }
 
 
   /*
@@ -5058,6 +5185,55 @@ function buildShopperCompletionMessage(order) {
   );
 }
 
+
+/* =========================================================
+   CUSTOMER RATINGS
+========================================================= */
+
+function parseCustomerRating(text) {
+  const raw =
+    String(text || "")
+      .trim()
+      .toLowerCase();
+
+  const match =
+    raw.match(
+      /(?:^|\b)([1-5])(?:\s*(?:stars?|\/\s*5))?(?:\b|$)/
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const rating =
+    Number(match[1]);
+
+  return Number.isInteger(rating) &&
+    rating >= 1 &&
+    rating <= 5
+    ? rating
+    : null;
+}
+
+function buildCustomerRatingRequest() {
+  return (
+    `⭐ How was your Fetch experience?\n\n` +
+    `Reply with a rating from 1 to 5.`
+  );
+}
+
+function buildCustomerRatingThanks(rating) {
+  const stars =
+    "⭐".repeat(
+      Math.max(
+        1,
+        Math.min(5, Number(rating))
+      )
+    );
+
+  return `Thanks! ${stars}\nYour feedback helps Fetch improve.`;
+}
+
 /* =========================================================
    SHOPPER ENGINE
 ========================================================= */
@@ -5811,6 +5987,12 @@ async function handleShopperMessage({
             Number(
               order.delivery_fee || 0
             ),
+
+          customer_rating:
+            null,
+
+          rated_at:
+            null,
         }
       );
 
@@ -5857,6 +6039,11 @@ async function handleShopperMessage({
       buildCustomerReceiptMessage(
         receiptOrder
       )
+    );
+
+    await notifyCustomerForOrder(
+      order.id,
+      buildCustomerRatingRequest()
     );
 
     return;
