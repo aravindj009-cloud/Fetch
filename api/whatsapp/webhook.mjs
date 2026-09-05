@@ -2076,6 +2076,50 @@ function fallbackDecision(
    CUSTOMER COMMAND / ITEM SAFETY
 ========================================================= */
 
+function isSimpleConfirmation(text) {
+  const value = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .replace(/\s+/g, " ");
+
+  return /^(yes|y|yeah|yep|ya|ok|okay|sure|go ahead|confirm|confirmed|please confirm|please confirm my order)$/.test(
+    value
+  );
+}
+
+function isSimpleRejection(text) {
+  const value = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .replace(/\s+/g, " ");
+
+  return /^(no|n|nope|reject|rejected|no thanks|not now)$/.test(
+    value
+  );
+}
+
+function isPureConversationControl(text) {
+  const value = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .replace(/\s+/g, " ");
+
+  return (
+    isSimpleConfirmation(value) ||
+    isSimpleRejection(value) ||
+    isCancellationRequest(value) ||
+    /^(hi|hello|hey|helo|hii|hiii|thanks|thank you|shukriya)$/.test(
+      value
+    ) ||
+    /^(where is my order|order status|track my order|track order)$/.test(
+      value
+    )
+  );
+}
+
 function isCancellationRequest(text) {
   const value = String(text || "")
     .trim()
@@ -2722,6 +2766,110 @@ async function handleCustomerMessage({
     }
   }
 
+  /* -----------------------------------------
+     DETERMINISTIC CONFIRM / REJECT
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_confirmation" &&
+    isSimpleConfirmation(userMessage)
+  ) {
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    const order =
+      await updateOrder(
+        activeOrder.id,
+        {
+          status:
+            "finding_shopper",
+        }
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Confirmed 👍 I’m finding a shopper for your order now."
+    );
+
+    const dispatch =
+      await offerOrderToShopper(
+        order
+      );
+
+    if (
+      dispatch.success
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "🛍️ I’ve sent your order to an available shopper.\n\nI’ll let you know as soon as someone accepts it."
+      );
+    } else {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Your order is confirmed, but I couldn’t find an available shopper right now. I’ll keep it in the queue."
+      );
+    }
+
+    return;
+  }
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_confirmation" &&
+    isSimpleRejection(userMessage)
+  ) {
+    await updateOrder(
+      activeOrder.id,
+      {
+        status:
+          "cancelled",
+        shopper_id:
+          null,
+      }
+    );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Okay 👍 I won’t place that order."
+    );
+
+    return;
+  }
+
   await saveMessage({
     customerId:
       customer.id,
@@ -2781,6 +2929,13 @@ async function handleCustomerMessage({
       ).trim();
 
     if (
+      isPureConversationControl(
+        userMessage
+      )
+    ) {
+      decision.items =
+        currentItems;
+    } else if (
       looksLikeContaminatedItems(
         decision.items
       )
@@ -2790,7 +2945,12 @@ async function handleCustomerMessage({
           userMessage
         );
 
-      if (additionalItems) {
+      if (
+        additionalItems &&
+        !looksLikeContaminatedItems(
+          additionalItems
+        )
+      ) {
         decision.items =
           currentItems
             ? `${currentItems}; ${additionalItems}`
@@ -3200,10 +3360,23 @@ async function handleCustomerMessage({
     }
 
     if (
-      decision.items?.trim()
+      decision.items?.trim() &&
+      !isPureConversationControl(
+        userMessage
+      ) &&
+      !looksLikeContaminatedItems(
+        decision.items
+      )
     ) {
       updates.items =
         decision.items.trim();
+    } else if (
+      isPureConversationControl(
+        userMessage
+      )
+    ) {
+      updates.items =
+        activeOrder.items;
     }
 
     if (
