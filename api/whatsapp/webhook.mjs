@@ -2913,7 +2913,7 @@ async function handleCustomerMessage({
       ) {
         await sendWhatsAppMessage(
           normalizedPhone,
-          "I still need the delivery charge. Please send your WhatsApp location pin 📍 first."
+          "The shopper will provide the delivery fee. Minimum is ₹20 per order and it may increase based on the KM."
         );
         return;
       }
@@ -3114,83 +3114,14 @@ async function handleCustomerMessage({
       return;
     }
 
-    try {
-      const store =
-        await ensureStoreForOrder(
-          updatedOrder
-        );
-
-      if (!store) {
-        throw new Error(
-          "Store unavailable for price calculation"
-        );
-      }
-
-      const distanceKm =
-        await calculateRoadDistanceKmFromCoordinates(
-          store,
-          Number(location.latitude),
-          Number(location.longitude)
-        );
-
-      const deliveryFee =
-        calculateDeliveryFee(
-          distanceKm
-        );
-
-      const pricedOrder =
-        await updateOrder(
-          updatedOrder.id,
-          {
-            distance_km:
-              distanceKm,
-
-            delivery_fee:
-              deliveryFee,
-
-            total_amount:
-              Number(
-                updatedOrder.item_total || 0
-              ) +
-              Number(
-                updatedOrder.fetch_fee || 0
-              ) +
-              deliveryFee,
-
-            delivery_pricing_status:
-              "calculated",
-
-            delivery_pricing_source:
-              "whatsapp_location_osrm_mvp",
-
-            priced_at:
-              new Date().toISOString(),
-
-            status:
-              "awaiting_customer_price_confirmation",
-          }
-        );
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        buildCustomerPriceApprovalMessage(
-          pricedOrder || updatedOrder
-        )
-      );
-    } catch (error) {
-      console.error(
-        "FETCH PRICE FLOW LOCATION ERROR:",
-        error
-      );
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "I received your location 📍, but I couldn’t calculate the delivery charge right now. Please try sending the location once more."
-      );
-    }
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Location saved 📍. The shopper decides the delivery fee, and I’ll use the fee they provided."
+    );
 
     return;
   }
+
 
   /* -----------------------------------------
      WHATSAPP LOCATION
@@ -4284,63 +4215,69 @@ async function handleCustomerMessage({
    SIMPLE MVP PRICE FLOW
 ========================================================= */
 
-function parseShopperPrice(text) {
+function parseShopperPriceAndDelivery(text) {
   const value =
     String(text || "")
       .trim()
-      .replace(/,/g, "");
+      .replace(/,/g, "")
+      .replace(/\s+/g, " ");
 
   const match =
     value.match(
-      /^PRICE\s*:?\s*₹?\s*(\d+(?:\.\d{1,2})?)$/i
+      /^price\s*:?\s*₹?\s*(\d+(?:\.\d{1,2})?)\s+delivery(?:\s+fee)?\s*:?\s*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
     );
 
   if (!match) {
     return null;
   }
 
-  const amount =
+  const itemTotal =
     Number(match[1]);
 
-  return Number.isFinite(amount) &&
-    amount >= 0
-    ? amount
-    : null;
+  const deliveryFee =
+    Number(match[2]);
+
+  if (
+    !Number.isFinite(itemTotal) ||
+    itemTotal < 0 ||
+    !Number.isFinite(deliveryFee) ||
+    deliveryFee < 20
+  ) {
+    return null;
+  }
+
+  return {
+    itemTotal,
+    deliveryFee,
+  };
 }
 
 function buildCustomerPriceApprovalMessage(order) {
   const itemTotal =
     Number(order.item_total || 0);
 
-  const fetchFee =
-    Number(order.fetch_fee || 0);
-
-  if (
-    order.delivery_pricing_status !==
-    "calculated"
-  ) {
-    return (
-      `🧾 Product price: ₹${formatRupees(itemTotal)}\n` +
-      `🚚 Delivery charge: pending\n` +
-      `💼 Fetch fee: ₹${formatRupees(fetchFee)}\n\n` +
-      `Please send your WhatsApp location pin 📍 so I can calculate the delivery charge before you approve.`
-    );
-  }
-
   const deliveryFee =
     Number(order.delivery_fee || 0);
 
   const total =
     itemTotal +
-    fetchFee +
-    deliveryFee;
+    deliveryFee +
+    Number(order.fetch_fee || 0);
 
   return (
-    `🧾 Product price: ₹${formatRupees(itemTotal)}\n` +
-    `🚚 Delivery charge: ₹${formatRupees(deliveryFee)}\n` +
+    `🧾 Product price: ₹${formatRupees(
+      itemTotal
+    )}\n` +
+    `🚚 Delivery fee: ₹${formatRupees(
+      deliveryFee
+    )}\n` +
     `💼 Fetch fee: ₹0\n` +
-    `💰 Total: ₹${formatRupees(total)}\n\n` +
-    `Shall I continue? Reply YES or NO.`
+    `💰 Total: ₹${formatRupees(
+      total
+    )}\n\n` +
+    `Delivery price is decided by the shopper; prices may vary.\n` +
+    `Minimum is ₹20 per order and may increase based on the KM.\n\n` +
+    `Is that okay? Reply YES or NO.`
   );
 }
 
@@ -4600,7 +4537,7 @@ async function handleShopperMessage({
     await sendWhatsAppMessage(
       normalizedPhone,
 
-      "Accepted ✅\n\nPlease check the product price at the store and reply PRICE: amount\nExample: PRICE: 180"
+      "Accepted ✅\n\nPlease check the product price and decide the delivery fee. Reply like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery price is decided by the shopper; prices may vary. Minimum is ₹20 per order and may increase based on the KM."
     );
 
     await notifyCustomerForOrder(
@@ -4791,130 +4728,92 @@ async function handleShopperMessage({
     return;
   }
 
-  /* PRODUCT PRICE */
+  /* PRODUCT PRICE + DELIVERY FEE */
 
-  const shopperProductPrice =
-    parseShopperPrice(
+  const shopperPrice =
+    parseShopperPriceAndDelivery(
       rawText
     );
 
   if (
-    shopperProductPrice != null
+    shopperPrice
   ) {
-    const updated =
+    const total =
+      shopperPrice.itemTotal +
+      shopperPrice.deliveryFee +
+      FETCH_FEE;
+
+    const updatedOrder =
       await updateOrder(
         order.id,
         {
           item_total:
-            shopperProductPrice,
+            shopperPrice.itemTotal,
 
           fetch_fee:
             FETCH_FEE,
+
+          delivery_fee:
+            shopperPrice.deliveryFee,
+
+          total_amount:
+            total,
+
+          delivery_pricing_status:
+            "calculated",
+
+          delivery_pricing_source:
+            "shopper_entered",
+
+          priced_at:
+            new Date().toISOString(),
 
           status:
             "awaiting_customer_price_confirmation",
         }
       );
 
-    if (!updated) {
+    if (!updatedOrder) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I couldn’t save the product price. Please use PRICE: amount"
+        "I couldn’t save the price. Please use: PRICE: 35 DELIVERY FEE: 20"
       );
       return;
     }
 
-    let pricedOrder =
-      updated;
-
-    /*
-      If the customer already supplied a delivery address
-      that can be routed, calculate the delivery fee now.
-      Otherwise, the customer will be asked for a location pin.
-    */
-    try {
-      const store =
-        await ensureStoreForOrder(
-          updated
-        );
-
-      if (
-        store &&
-        updated.delivery_address
-      ) {
-        const distanceKm =
-          await calculateRoadDistanceKm(
-            store,
-            updated.delivery_address
-          );
-
-        const deliveryFee =
-          calculateDeliveryFee(
-            distanceKm
-          );
-
-        pricedOrder =
-          await updateOrder(
-            updated.id,
-            {
-              item_total:
-                shopperProductPrice,
-
-              fetch_fee:
-                FETCH_FEE,
-
-              delivery_rate_per_km:
-                DELIVERY_RATE_PER_KM,
-
-              distance_km:
-                distanceKm,
-
-              delivery_fee:
-                deliveryFee,
-
-              total_amount:
-                shopperProductPrice +
-                FETCH_FEE +
-                deliveryFee,
-
-              delivery_pricing_status:
-                "calculated",
-
-              delivery_pricing_source:
-                "osm_osrm_mvp",
-
-              priced_at:
-                new Date().toISOString(),
-
-              status:
-                "awaiting_customer_price_confirmation",
-            }
-          ) || updated;
-      }
-    } catch (error) {
-      console.error(
-        "FETCH SHOPPER PRICE DELIVERY ERROR:",
-        error
-      );
-    }
-
     await sendWhatsAppMessage(
       normalizedPhone,
-
-      `Price saved ✅\n\n🧾 Product price: ₹${formatRupees(
-        shopperProductPrice
-      )}\n\nI’ve sent the price to the customer for approval.`
+      `Price saved ✅\n\nProduct price: ₹${formatRupees(
+        shopperPrice.itemTotal
+      )}\nDelivery fee: ₹${formatRupees(
+        shopperPrice.deliveryFee
+      )}\nTotal: ₹${formatRupees(
+        total
+      )}\n\nI’ve sent it to the customer for approval.`
     );
 
     await notifyCustomerForOrder(
       order.id,
       buildCustomerPriceApprovalMessage(
-        pricedOrder
+        updatedOrder
       )
     );
 
     return;
   }
+
+  if (
+    /^price\b/i.test(
+      rawText
+    )
+  ) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Please include both values like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery price is decided by the shopper; prices may vary. Minimum is ₹20 per order and may increase based on the KM."
+    );
+    return;
+  }
+
 
   /* SHOPPING */
 
