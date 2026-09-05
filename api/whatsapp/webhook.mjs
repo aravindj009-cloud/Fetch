@@ -1836,6 +1836,87 @@ function fallbackDecision(
   const lower =
     text.toLowerCase();
 
+  if (
+    isNewOrderPrompt(
+      text
+    )
+  ) {
+    return {
+      intent:
+        "general_question",
+
+      store_name:
+        "",
+
+      items:
+        "",
+
+      delivery_address:
+        "",
+
+      budget:
+        null,
+
+      reply:
+        buildHumanNewOrderReply(),
+    };
+  }
+
+  if (
+    isThankYouMessage(
+      text
+    )
+  ) {
+    return {
+      intent:
+        "general_question",
+
+      store_name:
+        "",
+
+      items:
+        "",
+
+      delivery_address:
+        "",
+
+      budget:
+        null,
+
+      reply:
+        "You’re welcome 😊",
+    };
+  }
+
+  if (
+    isEtaQuestion(
+      text
+    )
+  ) {
+    return {
+      intent:
+        "status",
+
+      store_name:
+        "",
+
+      items:
+        "",
+
+      delivery_address:
+        "",
+
+      budget:
+        null,
+
+      reply:
+        buildHumanEtaReply(
+          activeOrder ||
+          null
+        ),
+    };
+  }
+
   const yes =
     /^(yes|y|yeah|yep|ya|ok|okay|sure|go ahead|confirm|confirmed)$/i.test(
       text
@@ -2064,39 +2145,6 @@ function fallbackDecision(
     }
   }
 
-  // Only treat a short message as an addition when it is not an explicit new-order request.
-  if (
-    activeOrder &&
-    !isExplicitNewOrderRequest(text) &&
-    text.length >= 2 &&
-    text.length <= 80 &&
-    !/[?]$/.test(text) &&
-    !/^(new order|cancel|status|track|help)$/i.test(text)
-  ) {
-    return {
-      intent:
-        "update_order",
-
-      store_name:
-        activeOrder.store_name,
-
-      items:
-        `${activeOrder.items}; ${text}`,
-
-      delivery_address:
-        activeOrder.delivery_address ||
-        customer?.address ||
-        "",
-
-      budget:
-        activeOrder.budget ??
-        null,
-
-      reply:
-        `Added ${text}. I’ll recalculate the delivery charge before confirmation.`,
-    };
-  }
-
   return {
     intent:
       "general_question",
@@ -2222,6 +2270,95 @@ function isExplicitNewOrderRequest(text) {
     /^(?:naaku)\b.*\b(?:kavali|kaavali)\b/i.test(value) ||
     /^(?:nanage)\b.*\b(?:beku)\b/i.test(value)
   );
+}
+
+
+function cleanConversationText(text) {
+  return String(text || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "")
+    .trim();
+}
+
+function isNewOrderPrompt(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(new order|new fetch order|start new order|start a new order|place a new order|another order|i want a new order|i need a new order)$/.test(
+    value
+  );
+}
+
+function isThankYouMessage(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(thanks|thank you|thankyou|thanks a lot|thank you so much|thx|ty|great thanks|ok thanks|okay thanks|many thanks|shukriya|nanni)$/.test(
+    value
+  );
+}
+
+function isEtaQuestion(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return (
+    /^(eta|what is the eta|whats the eta|what's the eta|when will it arrive|when will my order arrive|how long will it take|how much longer|where is my order|what is my order status|what's my order status|any update|any updates|update me|order update)$/.test(
+      value
+    ) ||
+    /\b(?:eta|arrival|arrive|how long|when will.*arrive)\b/.test(
+      value
+    ) &&
+    /\b(?:order|delivery|deliver|arrive)\b/.test(
+      value
+    )
+  );
+}
+
+function buildHumanEtaReply(order) {
+  if (!order) {
+    return "I don’t have an active order right now.";
+  }
+
+  switch (order.status) {
+    case "finding_shopper":
+      return "I’m still finding a shopper for your order. I’ll update you as soon as someone accepts it.";
+
+    case "shopper_assigned":
+      return "Your shopper has accepted the order and will start shopping soon.";
+
+    case "shopping":
+      return "Your shopper is shopping for your order now. I’ll update you once the items are picked up.";
+
+    case "picked_up":
+      return "Your shopper has picked up the order. It’s getting ready for delivery.";
+
+    case "out_for_delivery":
+      return "Your order is on the way 🚴 I’ll let you know when it’s delivered.";
+
+    case "awaiting_customer_price_confirmation":
+      return "The shopper has sent the product and delivery price. I’m waiting for your approval.";
+
+    case "awaiting_confirmation":
+      return "Your order is waiting for confirmation from you.";
+
+    case "collecting_details":
+      return "I’m still collecting the details for your order.";
+
+    case "delivered":
+      return "Your order has already been delivered 🎉";
+
+    case "cancelled":
+      return "That order has been cancelled.";
+
+    default:
+      return "I’m checking the latest status of your order.";
+  }
+}
+
+function buildHumanNewOrderReply() {
+  return "Absolutely 👍 Let’s start a new order. What would you like me to fetch?";
 }
 
 function isSimpleConfirmation(text) {
@@ -2501,6 +2638,174 @@ async function handleCustomerMessage({
     await getRecentMessages(
       customer.id
     );
+
+
+  /*
+    -------------------------------------------------------
+    HUMAN CONVERSATION GATE
+
+    These messages are handled without OpenAI so a normal
+    conversation can never accidentally become an order
+    update or an item list.
+    -------------------------------------------------------
+  */
+
+  if (
+    isNewOrderPrompt(
+      userMessage
+    )
+  ) {
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    const reply =
+      buildHumanNewOrderReply();
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  if (
+    isThankYouMessage(
+      userMessage
+    )
+  ) {
+    const orderId =
+      activeOrder?.id ||
+      latestOrder?.id ||
+      null;
+
+    const reply =
+      "You’re welcome 😊";
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId,
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId,
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  if (
+    isEtaQuestion(
+      userMessage
+    )
+  ) {
+    const order =
+      activeOrder ||
+      latestOrder;
+
+    const reply =
+      buildHumanEtaReply(
+        order
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order?.id || null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order?.id || null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
 
 
   /* -----------------------------------------
@@ -3944,6 +4249,7 @@ async function handleCustomerMessage({
     let order;
 
     if (
+      false &&
       activeOrder &&
       [
         "collecting_details",
@@ -4078,7 +4384,16 @@ async function handleCustomerMessage({
   if (
     decision.intent ===
       "update_order" &&
-    activeOrder
+    activeOrder &&
+    !isThankYouMessage(
+      userMessage
+    ) &&
+    !isEtaQuestion(
+      userMessage
+    ) &&
+    !isNewOrderPrompt(
+      userMessage
+    )
   ) {
     const updates = {};
 
