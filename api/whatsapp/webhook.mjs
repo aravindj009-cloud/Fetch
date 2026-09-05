@@ -1252,7 +1252,7 @@ function getOrderStatusText(
       return "Your order is on the way to you.";
 
     case "delivered":
-      return "Your order has been delivered. 🎉";
+      return "Your order has been delivered. 🎉 I’ve also sent you the receipt.";
 
     case "cancelled":
       return "Your order has been cancelled.";
@@ -1590,9 +1590,6 @@ Rules:
 11. Never copy old customer messages, assistant replies, confirmations, cancellations, store names, pricing text, or conversation history into "items".
 12. For a clearly new shopping request, treat the latest message as a new order rather than modifying an older order.
 13. For an item addition, add only the item explicitly mentioned in the latest message.
-14. A customer may specify ANY store, even if it is not in Fetch's store database. Never reject a request because the store is not registered.
-15. Store is optional. If no store is specified, use "Any available local store" and let the shopper find the item.
-16. If the customer provides an address or says "my address", use the saved customer address when available.
 14. Return only the JSON requested.
 11. The items field must contain ONLY actual products the customer wants Fetch to buy. NEVER copy greetings, confirmations, cancellations, questions, store names, addresses, or previous conversation messages into the items field.
 12. When an active order exists, treat active_order.items as the source of truth. Only change the item list when the CURRENT customer message clearly adds, removes, or replaces products.
@@ -2208,59 +2205,6 @@ function normalizeCustomerText(text) {
   return String(text || '')
     .trim()
     .replace(/\s+/g, ' ');
-}
-
-
-function extractFlexibleShoppingRequest(text) {
-  const value = normalizeCustomerText(text);
-  if (!value) return null;
-
-  const prefix =
-    "(?:i\\s+want|i\\s+need|i'd\\s+like|i\\s+would\\s+like|please\\s+get|please\\s+fetch|can\\s+you\\s+get|can\\s+you\\s+fetch|get\\s+me|fetch\\s+me|buy\\s+me|order)";
-
-  const withStore = new RegExp(
-    `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+?)(?:\\s*,?\\s*(?:deliver(?:\\s+it)?\\s+to|delivery\\s+to|to)\\s+(.+))?$`,
-    "i"
-  );
-
-  const deliveryOnly = new RegExp(
-    `^${prefix}\\s+(.+?)\\s+(?:deliver(?:\\s+it)?\\s+to|delivery\\s+to|to)\\s+(.+)$`,
-    "i"
-  );
-
-  const itemOnly = new RegExp(
-    `^${prefix}\\s+(.+)$`,
-    "i"
-  );
-
-  let match = value.match(withStore);
-  if (match) {
-    return {
-      items: cleanNewOrderItems(match[1]),
-      store: match[2].trim(),
-      address: match[3]?.trim() || "",
-    };
-  }
-
-  match = value.match(deliveryOnly);
-  if (match) {
-    return {
-      items: cleanNewOrderItems(match[1]),
-      store: "",
-      address: match[2].trim(),
-    };
-  }
-
-  match = value.match(itemOnly);
-  if (match) {
-    return {
-      items: cleanNewOrderItems(match[1]),
-      store: "",
-      address: "",
-    };
-  }
-
-  return null;
 }
 
 function extractDeterministicShoppingRequest(text) {
@@ -3169,24 +3113,26 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
-     FLEXIBLE NEW ORDER INTAKE
+     DETERMINISTIC NEW ORDER ISOLATION
   ----------------------------------------- */
 
-  const flexibleRequest =
-    extractFlexibleShoppingRequest(
+  const deterministicRequest =
+    extractDeterministicShoppingRequest(
       userMessage
     );
 
   if (
-    flexibleRequest &&
-    flexibleRequest.items
+    deterministicRequest &&
+    isExplicitNewOrderRequest(
+      userMessage
+    )
   ) {
-    const items =
+    const cleanItems =
       cleanNewOrderItems(
-        flexibleRequest.items
+        deterministicRequest.items
       );
 
-    if (!items) {
+    if (!cleanItems) {
       await sendWhatsAppMessage(
         normalizedPhone,
         "Tell me what you’d like me to fetch."
@@ -3194,106 +3140,244 @@ async function handleCustomerMessage({
       return;
     }
 
+    /*
+      CRITICAL:
+      Every explicit "I want / I need / get me / order"
+      request starts a NEW order.
+
+      We NEVER merge it into activeOrder and we NEVER
+      inherit activeOrder.items.
+
+      This is the primary protection against the
+      repeated-order contamination bug.
+    */
+
     const requestedStore =
       String(
-        flexibleRequest.store ||
+        deterministicRequest.store ||
         ""
       ).trim();
 
-    const storeName =
-      requestedStore &&
-      !looksLikeNearbyStoreRequest(
+    const nearbyRequest =
+      looksLikeNearbyStoreRequest(
         requestedStore
-      )
-        ? requestedStore
-        : "Any available local store";
+      ) ||
+      /\b(?:any|local|nearby|nearest|closest)\b[\s\S]*\b(?:shop|store)s?\b/i.test(
+        userMessage
+      );
 
-    const address =
-      String(
-        flexibleRequest.address ||
-        customer.address ||
-        ""
-      ).trim();
+    /*
+      -------------------------------------------------------
+      NEW ORDER WITHOUT A SPECIFIC STORE
+      -------------------------------------------------------
+    */
 
-    const order =
+    if (
+      !requestedStore ||
+      nearbyRequest
+    ) {
+      /*
+        We still create the new order immediately so the
+        exact requested items have their own order_id.
+
+        A temporary store label is used only while details
+        are being collected. It can NEVER be priced or
+        dispatched to a shopper.
+      */
+
+      const pendingStore =
+        nearbyRequest
+          ? "Pending nearby store"
+          : "Pending store";
+
+      const newOrder =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName:
+            pendingStore,
+
+          items:
+            cleanItems,
+
+          budget:
+            null,
+
+          // Do NOT inherit the old saved address on a
+          // brand-new order. Ask for a fresh address/pin.
+          deliveryAddress:
+            "",
+
+          status:
+            "collecting_details",
+        });
+
+      if (!newOrder) {
+        throw new Error(
+          "Could not create new Fetch order"
+        );
+      }
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          newOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "assistant",
+
+        message:
+          `New order created: ${cleanItems}`,
+      });
+
+      if (nearbyRequest) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+
+          `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: nearest available local shop\n\nThis new order is separate from your previous order. Please send your WhatsApp location pin 📍. I’ll need to select an available nearby store before I can calculate the delivery distance and charge.`
+        );
+      } else {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+
+          `Got it 👍\n\n🛒 Items: ${cleanItems}\n\nThis is a new order. Which store should I use?\n\nYou can also send the delivery location pin 📍.`
+        );
+      }
+
+      return;
+    }
+
+    /*
+      -------------------------------------------------------
+      NEW ORDER WITH A SPECIFIC STORE
+      -------------------------------------------------------
+    */
+
+    const storeRecord =
+      await getStoreByName(
+        requestedStore
+      );
+
+    if (!storeRecord) {
+      /*
+        Keep the new order isolated even when the store is
+        not yet registered. Do not touch or reuse the old
+        order.
+      */
+
+      const newOrder =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName:
+            requestedStore,
+
+          items:
+            cleanItems,
+
+          budget:
+            null,
+
+          deliveryAddress:
+            "",
+
+          status:
+            "collecting_details",
+        });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: ${requestedStore}\n\nI don’t have this store in the Fetch store list yet. Please send the store address, or choose one of the Fetch stores already available.`
+      );
+
+      return;
+    }
+
+    const deliveryAddress =
+      deterministicRequest.address ||
+      "";
+
+    const newOrder =
       await createOrder({
         customerId:
           customer.id,
 
-        storeName,
+        storeName:
+          storeRecord.name,
 
-        items,
+        items:
+          cleanItems,
 
         budget:
           null,
 
         deliveryAddress:
-          address,
+          deliveryAddress,
 
         status:
-          address
-            ? "finding_shopper"
-            : "collecting_details",
+          "collecting_details",
       });
 
-    if (!order) {
-      throw new Error(
-        "Could not create new Fetch order"
-      );
-    }
-
-    await saveMessage({
-      customerId:
-        customer.id,
-
-      orderId:
-        order.id,
-
-      phone:
-        normalizedPhone,
-
-      role:
-        "user",
-
-      message:
-        userMessage,
-    });
-
-    if (!address) {
+    if (!deliveryAddress) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+
+        `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n\nPlease send the delivery address or WhatsApp location pin 📍.`
       );
+
       return;
     }
 
-    if (customer.address !== address) {
-      await updateCustomerAddress(
-        customer.id,
-        address
-      );
-    }
+    try {
+      const pricedOrder =
+        await applyDeliveryPricing(
+          newOrder
+        );
 
-    const dispatch =
-      await offerOrderToShopper(
-        order
-      );
+      const reply =
+        buildPricingConfirmationMessage(
+          pricedOrder
+        );
 
-    if (dispatch.success) {
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          pricedOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "assistant",
+
+        message:
+          reply,
+      });
+
       await sendWhatsAppMessage(
         normalizedPhone,
-        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to an available shopper. They’ll check the product price and delivery fee and send the details to you for approval.`
+        reply
       );
-    } else {
+    } catch (pricingError) {
+      console.error(
+        "FETCH DETERMINISTIC NEW ORDER PRICING ERROR:",
+        pricingError
+      );
+
       await sendWhatsAppMessage(
         normalizedPhone,
-        `Got it 👍 I have your order for ${items}` +
-        (
-          requestedStore
-            ? ` from ${requestedStore}`
-            : ""
-        ) +
-        `. There isn’t an available shopper right now, but your order is saved.`
+
+        `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n📍 Deliver to: ${deliveryAddress}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nPlease share your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
       );
     }
 
@@ -4431,24 +4515,11 @@ async function handleCustomerMessage({
     decision.intent ===
     "shopping_request"
   ) {
+    const store =
+      decision.store_name?.trim();
+
     const items =
-      cleanNewOrderItems(
-        decision.items?.trim() || ""
-      );
-
-    const requestedStore =
-      String(
-        decision.store_name ||
-        ""
-      ).trim();
-
-    const storeName =
-      requestedStore &&
-      !looksLikeNearbyStoreRequest(
-        requestedStore
-      )
-        ? requestedStore
-        : "Any available local store";
+      decision.items?.trim();
 
     const address =
       (
@@ -4457,65 +4528,18 @@ async function handleCustomerMessage({
         ""
       ).trim();
 
-    if (!items) {
+    if (
+      !store ||
+      !items ||
+      !address
+    ) {
       await sendWhatsAppMessage(
         normalizedPhone,
+
         decision.reply ||
-          "Sure. What would you like me to fetch?"
+          "Sure. Tell me the items, the store, and the delivery location."
       );
-      return;
-    }
 
-    const order =
-      await createOrder({
-        customerId:
-          customer.id,
-
-        storeName,
-
-        items,
-
-        budget:
-          decision.budget ??
-          null,
-
-        deliveryAddress:
-          address,
-
-        status:
-          address
-            ? "finding_shopper"
-            : "collecting_details",
-      });
-
-    if (!order) {
-      throw new Error(
-        "Could not create Fetch order"
-      );
-    }
-
-    await saveMessage({
-      customerId:
-        customer.id,
-
-      orderId:
-        order.id,
-
-      phone:
-        normalizedPhone,
-
-      role:
-        "user",
-
-      message:
-        userMessage,
-    });
-
-    if (!address) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
-      );
       return;
     }
 
@@ -4524,22 +4548,149 @@ async function handleCustomerMessage({
       address
     );
 
-    const dispatch =
-      await offerOrderToShopper(
-        order
+    // A known store is required for the MVP distance calculation.
+    const storeRecord =
+      await getStoreByName(store);
+
+    if (!storeRecord) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        `I can take this order, but I don’t yet have ${store} in my Fetch store list. Please send the store address so I can calculate the delivery distance and charge.`
       );
 
-    if (dispatch.success) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to an available shopper. They’ll check the product price and delivery fee and send the details to you for approval.`
-      );
+      return;
+    }
+
+    let order;
+
+    if (
+      false &&
+      activeOrder &&
+      [
+        "collecting_details",
+        "awaiting_confirmation",
+      ].includes(
+        activeOrder.status
+      )
+    ) {
+      order =
+        await updateOrder(
+          activeOrder.id,
+          {
+            store_name:
+              store,
+
+            store_id:
+              storeRecord.id,
+
+            items,
+
+            budget:
+              decision.budget ??
+              activeOrder.budget ??
+              null,
+
+            delivery_address:
+              address,
+
+            item_total: 0,
+
+            fetch_fee: FETCH_FEE,
+
+            delivery_fee: 0,
+
+            total_amount: 0,
+
+            delivery_pricing_status:
+              "pending",
+
+            delivery_pricing_source:
+              null,
+
+            priced_at: null,
+
+            status:
+              "collecting_details",
+          }
+        );
     } else {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Got it 👍 I have your order for ${items}. There isn’t an available shopper right now, but your order is saved.`
+      order =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName:
+            store,
+
+          items,
+
+          budget:
+            decision.budget ??
+            null,
+
+          deliveryAddress:
+            address,
+
+          status:
+            "collecting_details",
+        });
+    }
+
+    if (!order) {
+      throw new Error(
+        "Could not create or update Fetch order"
       );
     }
+
+    let pricedOrder;
+
+    try {
+      pricedOrder =
+        await applyDeliveryPricing(
+          order
+        );
+    } catch (pricingError) {
+      console.error(
+        "FETCH DELIVERY PRICING ERROR:",
+        pricingError
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        `I have your order details 👍\n\n🏪 Store: ${store}\n🛒 Items: ${items}\n📍 Deliver to: ${address}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t calculate the exact road distance right now, so I’m not asking you to confirm yet.`
+      );
+
+      return;
+    }
+
+    const reply =
+      buildPricingConfirmationMessage(
+        pricedOrder
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        pricedOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
 
     return;
   }
@@ -4851,6 +5002,60 @@ async function ensureStoreForOrder(order) {
 
     return null;
   }
+}
+
+
+/* =========================================================
+   ORDER RECEIPTS
+========================================================= */
+
+function buildCustomerReceiptMessage(order) {
+  const productPrice =
+    Number(order?.item_total || 0);
+
+  const deliveryFee =
+    Number(order?.delivery_fee || 0);
+
+  const fetchFee =
+    Number(order?.fetch_fee || 0);
+
+  const total =
+    Number(
+      order?.total_amount ??
+      productPrice +
+      deliveryFee +
+      fetchFee
+    );
+
+  const paymentLine =
+    order?.payment_method === "shopper_upi"
+      ? "💳 Payment: Paid directly to shopper via UPI"
+      : order?.payment_status === "paid"
+        ? "💳 Payment: Paid"
+        : "💳 Payment: Payment details recorded";
+
+  return (
+    `🎉 Order delivered!\n\n` +
+    `🏪 Store: ${order?.store_name || "Store"}\n` +
+    `🛒 Items: ${order?.items || "Your items"}\n\n` +
+    `🧾 Product price: ₹${formatRupees(productPrice)}\n` +
+    `🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n` +
+    `💼 Fetch fee: ₹${formatRupees(fetchFee)}\n` +
+    `💰 Total: ₹${formatRupees(total)}\n\n` +
+    `${paymentLine}\n\n` +
+    `Thanks for using Fetch ❤️`
+  );
+}
+
+function buildShopperCompletionMessage(order) {
+  const deliveryFee =
+    Number(order?.delivery_fee || 0);
+
+  return (
+    `Order completed ✅\n\n` +
+    `💰 Delivery earnings: ₹${formatRupees(deliveryFee)}\n\n` +
+    `Thanks for completing the Fetch order. You’re available for the next job.`
+  );
 }
 
 /* =========================================================
@@ -5576,13 +5781,44 @@ async function handleShopperMessage({
     command ===
       "DELIVERED DONE"
   ) {
-    await updateOrder(
-      order.id,
-      {
-        status:
-          "delivered",
-      }
-    );
+    if (
+      order.status !==
+        "out_for_delivery"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        shopperStateMessage(
+          order.status
+        )
+      );
+      return;
+    }
+
+    const completedAt =
+      new Date().toISOString();
+
+    const receiptOrder =
+      await updateOrder(
+        order.id,
+        {
+          status:
+            "delivered",
+
+          receipt_sent_at:
+            completedAt,
+
+          shopper_delivery_earnings:
+            Number(
+              order.delivery_fee || 0
+            ),
+        }
+      );
+
+    if (!receiptOrder) {
+      throw new Error(
+        "Could not complete Fetch order"
+      );
+    }
 
     await updateShopperJob(
       job.id,
@@ -5591,7 +5827,7 @@ async function handleShopperMessage({
           "completed",
 
         completed_at:
-          new Date().toISOString(),
+          completedAt,
       }
     );
 
@@ -5605,20 +5841,22 @@ async function handleShopperMessage({
           null,
 
         last_seen_at:
-          new Date().toISOString(),
+          completedAt,
       }
     );
 
     await sendWhatsAppMessage(
       normalizedPhone,
-
-      "Delivered 🎉\n\nYou’re available for the next Fetch job."
+      buildShopperCompletionMessage(
+        receiptOrder
+      )
     );
 
     await notifyCustomerForOrder(
       order.id,
-
-      "🎉 Your Fetch order has been delivered. Enjoy!"
+      buildCustomerReceiptMessage(
+        receiptOrder
+      )
     );
 
     return;
