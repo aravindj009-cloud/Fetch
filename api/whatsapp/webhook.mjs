@@ -3414,71 +3414,126 @@ async function getPendingOrderActionFromConversation(
    CUSTOMER ORDER MODIFICATIONS
 ========================================================= */
 
-function parseOrderModification(text) {
+function parseOrderModifications(text) {
   const raw =
     cleanConversationText(
       text
     );
 
-  const lower =
-    raw.toLowerCase();
-
-  let match =
-    lower.match(
-      /^(?:add|also\s+add|include)\s+(.+)$/i
-    );
-
-  if (match) {
-    return {
-      type: "add",
-      value:
-        match[1].trim(),
-    };
+  if (!raw) {
+    return [];
   }
 
-  match =
+  const modifications = [];
+  let remaining = raw;
+
+  /*
+    Delivery-address changes are extracted first. This prevents
+    "delivered to ..." from ever becoming part of the item/store.
+  */
+  const addressMatch =
     raw.match(
-      /^(?:remove|delete|take\s+out)\s+(.+)$/i
+      /(?:^|[;,]|\balso\b)\s*(?:change\s+(?:the\s+)?delivery\s+(?:address|location)|delivery\s+address|deliver\s+to)\s*:?\s*(.+)$/i
     );
 
-  if (match) {
-    return {
-      type: "remove",
+  if (addressMatch) {
+    modifications.push({
+      type:
+        "address",
       value:
-        match[1].trim(),
-    };
+        addressMatch[1].trim(),
+    });
+
+    remaining =
+      raw
+        .slice(
+          0,
+          addressMatch.index
+        )
+        .replace(
+          /[;,]\s*$/,
+          ""
+        )
+        .replace(
+          /\s+also\s*$/i,
+          ""
+        )
+        .trim();
   }
 
-  match =
-    raw.match(
-      /^(?:change|replace)\s+(.+?)\s+(?:to|with)\s+(.+)$/i
-    );
+  const clauses =
+    remaining
+      .split(
+        /\s*(?:,|;|\balso\b|\band\b(?=\s*(?:add|include|remove|delete|take\s+out|change|replace)\b))\s*/i
+      )
+      .map(
+        (value) =>
+          value.trim()
+      )
+      .filter(Boolean);
 
-  if (match) {
-    return {
-      type: "replace",
-      from:
-        match[1].trim(),
-      to:
-        match[2].trim(),
-    };
+  for (const clause of clauses) {
+    let match =
+      clause.match(
+        /^(?:add|include|also\s+add)\s+(.+)$/i
+      );
+
+    if (match) {
+      modifications.push({
+        type:
+          "add",
+        value:
+          match[1].trim(),
+      });
+      continue;
+    }
+
+    match =
+      clause.match(
+        /^(?:remove|delete|take\s+out)\s+(.+)$/i
+      );
+
+    if (match) {
+      modifications.push({
+        type:
+          "remove",
+        value:
+          match[1].trim(),
+      });
+      continue;
+    }
+
+    match =
+      clause.match(
+        /^(?:change|replace)\s+(.+?)\s+(?:to|with)\s+(.+)$/i
+      );
+
+    if (match) {
+      modifications.push({
+        type:
+          "replace",
+        from:
+          match[1].trim(),
+        to:
+          match[2].trim(),
+      });
+    }
   }
 
-  match =
-    raw.match(
-      /^(?:delivery\s+address|deliver\s+to|change\s+(?:the\s+)?delivery\s+(?:address|location))\s*:?\s*(.+)$/i
-    );
-
-  if (match) {
-    return {
-      type: "address",
-      value:
-        match[1].trim(),
-    };
-  }
-
-  return null;
+  return modifications;
 }
+
+function parseOrderModification(text) {
+  const modifications =
+    parseOrderModifications(
+      text
+    );
+
+  return modifications.length
+    ? modifications[0]
+    : null;
+}
+
 
 function canModifyOrder(order) {
   return Boolean(
@@ -5637,6 +5692,271 @@ async function handleCustomerMessage({
     message:
       userMessage,
   });
+
+  /*
+    -------------------------------------------------------
+    DETERMINISTIC ACTIVE-ORDER MODIFICATIONS
+    -------------------------------------------------------
+    Handle simple customer changes before OpenAI. This prevents
+    messages like "add 2 eggs" or "change delivery address to..."
+    from entering the old pricing/update branch.
+  */
+
+  const directModifications =
+    parseOrderModifications(
+      userMessage
+    );
+
+  if (
+    activeOrder &&
+    directModifications.length
+  ) {
+    if (
+      !canModifyOrder(
+        activeOrder
+      )
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `I can’t change order #${shortOrderReference(
+          activeOrder.id
+        )} because it is already ${formatOrderHistoryStatus(
+          activeOrder.status
+        )}.`
+      );
+
+      return;
+    }
+
+    let updatedItems =
+      String(
+        activeOrder.items ||
+        ""
+      ).trim();
+
+    let updatedAddress =
+      String(
+        activeOrder.delivery_address ||
+        customer.address ||
+        ""
+      ).trim();
+
+    let itemChanged =
+      false;
+
+    let addressChanged =
+      false;
+
+    const appliedChanges =
+      [];
+
+    for (
+      const modification of
+        directModifications
+    ) {
+      if (
+        modification.type ===
+        "address"
+      ) {
+        updatedAddress =
+          modification.value;
+
+        addressChanged =
+          true;
+
+        appliedChanges.push(
+          `changed the delivery address to ${updatedAddress}`
+        );
+
+        continue;
+      }
+
+      const nextItems =
+        applyOrderItemModification(
+          updatedItems,
+          modification
+        );
+
+      if (!nextItems) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `I couldn’t apply "${modification.value || modification.from}". Tell me exactly what you want changed.`
+        );
+
+        return;
+      }
+
+      updatedItems =
+        nextItems;
+
+      itemChanged =
+        true;
+
+      if (
+        modification.type ===
+        "add"
+      ) {
+        appliedChanges.push(
+          `added ${modification.value}`
+        );
+      } else if (
+        modification.type ===
+        "remove"
+      ) {
+        appliedChanges.push(
+          `removed ${modification.value}`
+        );
+      } else if (
+        modification.type ===
+        "replace"
+      ) {
+        appliedChanges.push(
+          `changed ${modification.from} to ${modification.to}`
+        );
+      }
+    }
+
+    const updates = {
+      items:
+        updatedItems,
+
+      delivery_address:
+        updatedAddress,
+    };
+
+    /*
+      Any customer change invalidates the old shopper quote.
+      The shopper must quote the revised order again.
+    */
+    if (
+      itemChanged ||
+      addressChanged
+    ) {
+      updates.item_total =
+        0;
+
+      updates.fetch_fee =
+        FETCH_FEE;
+
+      updates.delivery_fee =
+        0;
+
+      updates.total_amount =
+        0;
+
+      updates.distance_km =
+        null;
+
+      updates.delivery_pricing_status =
+        "pending";
+
+      updates.delivery_pricing_source =
+        null;
+
+      updates.priced_at =
+        null;
+
+      updates.payment_status =
+        "pending";
+    }
+
+    /*
+      Keep the existing shopper attached while they re-check
+      the modified order. If there is no shopper, send it to one.
+    */
+    updates.status =
+      activeOrder.shopper_id
+        ? "shopper_assigned"
+        : "finding_shopper";
+
+    const changedOrder =
+      await updateOrder(
+        activeOrder.id,
+        updates
+      );
+
+    if (!changedOrder) {
+      throw new Error(
+        "Could not update active Fetch order"
+      );
+    }
+
+    if (
+      addressChanged
+    ) {
+      await updateCustomerAddress(
+        customer.id,
+        updatedAddress
+      );
+    }
+
+    if (
+      changedOrder.shopper_id
+    ) {
+      const shoppers =
+        await supabaseRequest(
+          `shoppers?id=eq.${encodeURIComponent(
+            changedOrder.shopper_id
+          )}&select=*&limit=1`
+        );
+
+      const shopper =
+        Array.isArray(
+          shoppers
+        ) &&
+        shoppers.length
+          ? shoppers[0]
+          : null;
+
+      if (
+        shopper?.phone
+      ) {
+        const details =
+          [
+            itemChanged
+              ? `🛒 Updated items: ${changedOrder.items}`
+              : "",
+            `🏪 Store: ${changedOrder.store_name}`,
+            `📍 Deliver to: ${changedOrder.delivery_address || "customer location"}`,
+          ]
+            .filter(Boolean)
+            .join("\n");
+
+        await sendWhatsAppMessage(
+          shopper.phone,
+          `🔄 The customer updated the order.\n\n${details}\n\nPlease re-check the product price and delivery fee and reply:\nPRICE: product price DELIVERY FEE: delivery fee`
+        );
+      }
+    } else {
+      const dispatch =
+        await offerOrderToShopper(
+          changedOrder
+        );
+
+      if (
+        !dispatch.success
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I’ve updated the order, but there isn’t an available shopper right now."
+        );
+
+        return;
+      }
+    }
+
+    const summary =
+      appliedChanges.length
+        ? `Updated 👍 I’ve ${appliedChanges.join(" and ")}.`
+        : "Updated 👍 I’ve updated your order.";
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `${summary}\n\nI’ve asked the shopper to re-check the product price and delivery fee before we continue.`
+    );
+
+    return;
+  }
 
   let decision;
 
