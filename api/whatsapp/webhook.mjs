@@ -2312,6 +2312,32 @@ function cleanConversationText(text) {
 }
 
 
+
+function parseShopperUpiId(text) {
+  const value =
+    String(text || "")
+      .trim()
+      .replace(/\s+/g, " ");
+
+  const match =
+    value.match(
+      /^(?:upi(?:\s+id)?|upi\s+address)\s*:?\s*([A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9._-]+)$/i
+    );
+
+  return match
+    ? match[1].trim()
+    : null;
+}
+
+function isShopperNotReceivedMessage(text) {
+  const value =
+    cleanConversationText(text).toLowerCase();
+
+  return /^(not received|not received it|didn't receive|did not receive|payment not received|money not received|haven't received|have not received|not got|didn't get the payment|did not get the payment)$/.test(
+    value
+  );
+}
+
 function isCustomerPaidMessage(text) {
   const value =
     cleanConversationText(text).toLowerCase();
@@ -2325,7 +2351,7 @@ function isShopperPaymentReceivedMessage(text) {
   const value =
     cleanConversationText(text).toLowerCase();
 
-  return /^(received|payment received|got it|got the payment|yes received|yes i received|yes received it|money received)$/.test(
+  return /^(received|payment received|got it|got the payment|yes received|yes i received|yes received it|money received|received the payment)$/.test(
     value
   );
 }
@@ -2335,7 +2361,7 @@ function buildShopperPaymentMessage(order, upiId) {
     Number(order?.total_amount || 0);
 
   return (
-    `💳 Please pay ₹${formatRupees(total)} to the shopper.\\n\\n` +
+    `💳 Please pay ₹${formatRupees(total)} directly to the shopper.\\n\\n` +
     `UPI ID: ${upiId}\\n\\n` +
     `After payment, reply PAID here.`
   );
@@ -3443,7 +3469,7 @@ async function handleCustomerMessage({
         ) {
           await sendWhatsAppMessage(
             shopper.phone,
-            "Please add your UPI ID to your Fetch shopper profile so the customer can pay you directly."
+            "Please add your UPI ID by replying like this:\nUPI ID: yourname@bank\n\nThe customer will use this UPI ID to pay you directly."
           );
         }
 
@@ -4943,6 +4969,44 @@ async function handleShopperMessage({
     }
   );
 
+  /* UPI ID */
+
+  const shopperUpiId =
+    parseShopperUpiId(
+      rawText
+    );
+
+  if (
+    shopperUpiId
+  ) {
+    const savedShopper =
+      await updateShopper(
+        shopper.id,
+        {
+          upi_id:
+            shopperUpiId,
+
+          last_seen_at:
+            new Date().toISOString(),
+        }
+      );
+
+    if (!savedShopper) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save your UPI ID. Please use: UPI ID: yourname@bank"
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `UPI ID saved ✅\n\n${shopperUpiId}\n\nYou can now receive Fetch customer payments through this UPI ID.`
+    );
+
+    return;
+  }
+
   /* START */
 
   if (
@@ -5240,6 +5304,73 @@ async function handleShopperMessage({
       order.id,
 
       `⚠️ Your Fetch shopper has a substitution request.\n\n${substitution.originalItem} is unavailable.\n\nThey propose: ${substitution.proposedItem}\n\nReply YES to approve or NO to reject.`
+    );
+
+    return;
+  }
+
+  /* CUSTOMER PAYMENT NOT RECEIVED */
+
+  if (
+    isShopperNotReceivedMessage(
+      rawText
+    )
+  ) {
+    const openAcceptedJob =
+      await getAcceptedShopperJob(
+        shopper.id
+      );
+
+    if (!openAcceptedJob) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I don’t have an active Fetch payment waiting for confirmation."
+      );
+      return;
+    }
+
+    const paymentOrder =
+      await getOrderById(
+        openAcceptedJob.order_id
+      );
+
+    if (!paymentOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find the order linked to this payment."
+      );
+      return;
+    }
+
+    if (
+      paymentOrder.status !==
+        "payment_pending" ||
+      paymentOrder.payment_status !==
+        "customer_reported_paid"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "There isn’t a customer payment waiting for your confirmation right now."
+      );
+      return;
+    }
+
+    await updateOrder(
+      paymentOrder.id,
+      {
+        payment_status:
+          "pending",
+      }
+    );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Okay. I haven’t verified the payment. Please wait for the customer to pay and check your UPI again."
+    );
+
+    await notifyCustomerForOrder(
+      paymentOrder.id,
+      "The shopper hasn’t received the payment yet. Please check your payment and send it again if needed."
     );
 
     return;
@@ -5559,7 +5690,7 @@ async function handleShopperMessage({
   await sendWhatsAppMessage(
     normalizedPhone,
 
-    "I didn’t recognise that command. Use ACCEPT, PRICE: product price DELIVERY FEE: delivery fee, RECEIVED, SHOPPING, SUBSTITUTE: old item -> new item, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
+    "I didn’t recognise that command. Use ACCEPT, UPI ID: yourname@bank, PRICE: product price DELIVERY FEE: delivery fee, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE: old item -> new item, PICKED UP, OUT FOR DELIVERY, DELIVERED or STATUS."
   );
 }
 
