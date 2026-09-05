@@ -1952,6 +1952,40 @@ function fallbackDecision(
   }
 
   if (
+    isExplicitNewOrderRequest(text)
+  ) {
+    const deterministicParts =
+      extractDeterministicShoppingRequest(
+        text
+      );
+
+    if (
+      deterministicParts &&
+      deterministicParts.items
+    ) {
+      return {
+        intent:
+          "shopping_request",
+
+        store_name:
+          deterministicParts.store,
+
+        items:
+          deterministicParts.items,
+
+        delivery_address:
+          deterministicParts.address,
+
+        budget:
+          null,
+
+        reply:
+          `Got it — ${deterministicParts.items}.`,
+      };
+    }
+  }
+
+  if (
     activeOrder &&
     /^(add|also|include|and)\s+/i.test(
       text
@@ -1989,42 +2023,7 @@ function fallbackDecision(
     }
   }
 
-    // Deterministic item-only new orders are handled before the
-  // short-message "add to active order" fallback.
-  if (
-    isExplicitNewOrderRequest(text)
-  ) {
-    const deterministicParts =
-      extractDeterministicShoppingRequest(
-        text
-      );
-
-    if (
-      deterministicParts
-    ) {
-      return {
-        intent:
-          "shopping_request",
-
-        store_name:
-          deterministicParts.store,
-
-        items:
-          deterministicParts.items,
-
-        delivery_address:
-          deterministicParts.address,
-
-        budget:
-          null,
-
-        reply:
-          `Got it — ${deterministicParts.items}.`,
-      };
-    }
-  }
-
-  // Common natural shopping-request shapes. This is only a
+    // Common natural shopping-request shapes. This is only a
   // temporary fallback for OpenAI rate-limit periods.
   const shoppingPatterns = [
     /^(?:i\s+want|i\s+need|fetch|get|buy|please\s+get|can\s+you\s+get)\s+(.+?)\s+(?:from|at)\s+(.+?)\s+(?:deliver(?:\s+it)?\s+to|delivery\s+to|to)\s+(.+)$/i,
@@ -2493,10 +2492,273 @@ async function handleCustomerMessage({
       customer.id
     );
 
-  const history =
-    await getRecentMessages(
-      customer.id
+  const latestMessage =
+    normalizeCustomerText(
+      userMessage
     );
+
+  const hardNewOrder =
+    isExplicitNewOrderRequest(
+      latestMessage
+    );
+
+  const hardNewOrderParts =
+    hardNewOrder
+      ? extractDeterministicShoppingRequest(
+          latestMessage
+        )
+      : null;
+
+  /*
+    HARD ORDER BOUNDARY:
+    A clearly new request starts a new order regardless
+    of whether an older order is still active.
+
+    This block runs before substitution, confirmation,
+    AI classification, or update-order logic.
+  */
+  if (
+    hardNewOrder &&
+    hardNewOrderParts &&
+    hardNewOrderParts.items
+  ) {
+    const cleanItems =
+      cleanNewOrderItems(
+        hardNewOrderParts.items
+      );
+
+    if (!cleanItems) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Tell me what you’d like me to fetch."
+      );
+      return;
+    }
+
+    const requestedStore =
+      String(
+        hardNewOrderParts.store || ""
+      ).trim();
+
+    const nearbyRequest =
+      looksLikeNearbyStoreRequest(
+        requestedStore
+      ) ||
+      /\b(?:any|some|local|nearby|nearest|closest)\b[\s\S]*\b(?:shop|store)s?\b/i.test(
+        latestMessage
+      );
+
+    const deliveryAddress =
+      String(
+        hardNewOrderParts.address || ""
+      ).trim();
+
+    let newOrder;
+
+    if (
+      !requestedStore ||
+      nearbyRequest
+    ) {
+      newOrder =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName:
+            nearbyRequest
+              ? "Pending nearby store"
+              : "Pending store",
+
+          items:
+            cleanItems,
+
+          budget:
+            null,
+
+          deliveryAddress:
+            deliveryAddress,
+
+          status:
+            "collecting_details",
+        });
+
+      if (!newOrder) {
+        throw new Error(
+          "Could not create isolated new Fetch order"
+        );
+      }
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          newOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "user",
+
+        message:
+          latestMessage,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        nearbyRequest
+          ? `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: nearest available local shop\n\nThis is a new order. Please tell me the store to use and send your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
+          : `Got it 👍\n\n🛒 Items: ${cleanItems}\n\nThis is a new order. Please tell me the store and send the delivery location/address.`
+      );
+
+      return;
+    }
+
+    const storeRecord =
+      await getStoreByName(
+        requestedStore
+      );
+
+    if (!storeRecord) {
+      newOrder =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName:
+            requestedStore,
+
+          items:
+            cleanItems,
+
+          budget:
+            null,
+
+          deliveryAddress:
+            deliveryAddress,
+
+          status:
+            "collecting_details",
+        });
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          newOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "user",
+
+        message:
+          latestMessage,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: ${requestedStore}\n\nI don’t have this store in the Fetch store list yet. Please send the store address so I can add/use it.`
+      );
+
+      return;
+    }
+
+    newOrder =
+      await createOrder({
+        customerId:
+          customer.id,
+
+        storeName:
+          storeRecord.name,
+
+        items:
+          cleanItems,
+
+        budget:
+          null,
+
+        deliveryAddress:
+          deliveryAddress,
+
+        status:
+          "collecting_details",
+      });
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        newOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        latestMessage,
+    });
+
+    if (!deliveryAddress) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n\nPlease send the delivery address or WhatsApp location pin 📍.`
+      );
+      return;
+    }
+
+    try {
+      const pricedOrder =
+        await applyDeliveryPricing(
+          newOrder
+        );
+
+      const reply =
+        buildPricingConfirmationMessage(
+          pricedOrder
+        );
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          pricedOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "assistant",
+
+        message:
+          reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+    } catch (error) {
+      console.error(
+        "FETCH HARD NEW ORDER PRICING ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🏪 Store: ${storeRecord.name}\n🛒 Items: ${cleanItems}\n📍 Deliver to: ${deliveryAddress}\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nPlease send your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
+      );
+    }
+
+    return;
+  }
 
   /* -----------------------------------------
      DETERMINISTIC NEW ORDER ISOLATION
@@ -3675,14 +3937,13 @@ async function handleCustomerMessage({
 
     let order;
 
+    /*
+      A shopping_request is always a NEW order.
+      Existing active orders are never overwritten by
+      a new shopping request.
+    */
     if (
-      activeOrder &&
-      [
-        "collecting_details",
-        "awaiting_confirmation",
-      ].includes(
-        activeOrder.status
-      )
+      false
     ) {
       order =
         await updateOrder(
