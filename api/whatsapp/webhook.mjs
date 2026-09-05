@@ -2905,6 +2905,18 @@ function parseShopperUpiId(text) {
   return null;
 }
 
+
+function isShopperAvailabilityMessage(text) {
+  const value =
+    cleanConversationText(
+      text
+    ).toLowerCase();
+
+  return /^(?:available|available for next job|ready for next job|ready for a job|i'?m ready|im ready|ready|make me available|set me available|free now|i'?m free|im free)$/.test(
+    value
+  );
+}
+
 function isShopperNotReceivedMessage(text) {
   const value =
     cleanConversationText(text).toLowerCase();
@@ -7063,6 +7075,51 @@ async function handleShopperMessage({
         new Date().toISOString(),
     }
   );
+
+  /* AVAILABLE / READY */
+
+  if (
+    isShopperAvailabilityMessage(
+      rawText
+    )
+  ) {
+    if (
+      shopper.current_order_id
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You’re already assigned to an active Fetch order. Finish that order before taking another job."
+      );
+      return;
+    }
+
+    const updatedShopper =
+      await updateShopper(
+        shopper.id,
+        {
+          available:
+            true,
+
+          last_seen_at:
+            new Date().toISOString(),
+        }
+      );
+
+    if (!updatedShopper) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t update your availability right now. Please try again."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "You’re available ✅ I’ll send you the next Fetch job."
+    );
+
+    return;
+  }
 
   /* UPI ID */
 
