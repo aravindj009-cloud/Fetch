@@ -5234,6 +5234,87 @@ function buildCustomerRatingThanks(rating) {
   return `Thanks! ${stars}\nYour feedback helps Fetch improve.`;
 }
 
+
+/* =========================================================
+   SHOPPER EARNINGS
+========================================================= */
+
+async function getShopperEarningsSummary(shopperId) {
+  const data =
+    await supabaseRequest(
+      `orders?shopper_id=eq.${encodeURIComponent(
+        shopperId
+      )}&status=eq.delivered&select=id,shopper_delivery_earnings,created_at&order=created_at.desc&limit=200`
+    );
+
+  const orders =
+    Array.isArray(data)
+      ? data
+      : [];
+
+  const now =
+    new Date();
+
+  const todayKey =
+    now.toISOString()
+      .slice(0, 10);
+
+  let todayEarnings = 0;
+  let totalEarnings = 0;
+  let completedOrders = 0;
+
+  for (const order of orders) {
+    const amount =
+      Number(
+        order?.shopper_delivery_earnings ??
+        0
+      );
+
+    if (
+      Number.isFinite(amount)
+    ) {
+      totalEarnings += amount;
+    }
+
+    completedOrders += 1;
+
+    const created =
+      String(
+        order?.created_at || ""
+      );
+
+    if (
+      created.startsWith(
+        todayKey
+      ) &&
+      Number.isFinite(amount)
+    ) {
+      todayEarnings += amount;
+    }
+  }
+
+  return {
+    todayEarnings,
+    totalEarnings,
+    completedOrders,
+  };
+}
+
+function buildShopperEarningsMessage(
+  summary
+) {
+  return (
+    `💰 Your Fetch earnings\n\n` +
+    `Today: ₹${formatRupees(
+      summary.todayEarnings
+    )}\n` +
+    `Completed orders: ${summary.completedOrders}\n` +
+    `Total earnings: ₹${formatRupees(
+      summary.totalEarnings
+    )}`
+  );
+}
+
 /* =========================================================
    SHOPPER ENGINE
 ========================================================= */
@@ -5502,6 +5583,40 @@ async function handleShopperMessage({
       await offerOrderToShopper(
         order,
         [shopper.id]
+      );
+    }
+
+    return;
+  }
+
+  /* EARNINGS */
+
+  if (
+    command === "EARNINGS" ||
+    command === "EARNING" ||
+    command === "MY EARNINGS"
+  ) {
+    try {
+      const summary =
+        await getShopperEarningsSummary(
+          shopper.id
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildShopperEarningsMessage(
+          summary
+        )
+      );
+    } catch (error) {
+      console.error(
+        "FETCH SHOPPER EARNINGS ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t load your earnings right now. Please try again."
       );
     }
 
