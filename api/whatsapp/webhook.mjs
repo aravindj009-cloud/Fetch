@@ -23,6 +23,7 @@ const OPENAI_MODEL =
 const ACTIVE_ORDER_STATUSES = [
   "collecting_details",
   "awaiting_confirmation",
+  "awaiting_customer_price_confirmation",
   "finding_shopper",
   "shopper_assigned",
   "shopping",
@@ -1229,7 +1230,10 @@ function getOrderStatusText(
       return "I’m still collecting the details for your order.";
 
     case "awaiting_confirmation":
-      return "Your order is waiting for your confirmation.";
+      return "Your order is waiting for confirmation.";
+
+    case "awaiting_customer_price_confirmation":
+      return "Your shopper has checked the product price and your order is waiting for your approval.";
 
     case "finding_shopper":
       return "I’m finding a Fetch shopper for your order right now.";
@@ -2060,6 +2064,39 @@ function fallbackDecision(
     }
   }
 
+  // Only treat a short message as an addition when it is not an explicit new-order request.
+  if (
+    activeOrder &&
+    !isExplicitNewOrderRequest(text) &&
+    text.length >= 2 &&
+    text.length <= 80 &&
+    !/[?]$/.test(text) &&
+    !/^(new order|cancel|status|track|help)$/i.test(text)
+  ) {
+    return {
+      intent:
+        "update_order",
+
+      store_name:
+        activeOrder.store_name,
+
+      items:
+        `${activeOrder.items}; ${text}`,
+
+      delivery_address:
+        activeOrder.delivery_address ||
+        customer?.address ||
+        "",
+
+      budget:
+        activeOrder.budget ??
+        null,
+
+      reply:
+        `Added ${text}. I’ll recalculate the delivery charge before confirmation.`,
+    };
+  }
+
   return {
     intent:
       "general_question",
@@ -2090,75 +2127,6 @@ function normalizeCustomerText(text) {
   return String(text || '')
     .trim()
     .replace(/\s+/g, ' ');
-}
-
-
-function looksLikeStandaloneItemRequest(text) {
-  const value =
-    normalizeCustomerText(text).toLowerCase();
-
-  if (!value) return false;
-
-  // Never treat control messages as products.
-  if (
-    isSimpleConfirmation(value) ||
-    isSimpleRejection(value) ||
-    isCancellationRequest(value)
-  ) {
-    return false;
-  }
-
-  if (
-    /^(hi|hello|hey|helo|hii|hiii|thanks|thank you|shukriya|ok|okay|proceed|continue|status|track|help)$/i.test(
-      value
-    )
-  ) {
-    return false;
-  }
-
-  // Explicit modifications belong to the current order.
-  if (
-    /^(add|also add|include|also include|plus|remove|delete|replace|change)\b/i.test(
-      value
-    )
-  ) {
-    return false;
-  }
-
-  // Store-selection / delivery messages are not products.
-  if (
-    /\b(?:supermarket|hypermarket|bakery|medicals?|pharmacy|mart|shop|store|market)\b/i.test(
-      value
-    )
-  ) {
-    return false;
-  }
-
-  // Full structured order messages are handled by the dedicated parser.
-  if (
-    /\b(?:from|at|deliver(?:ed)?\s+to|delivery\s+to)\b/i.test(
-      value
-    )
-  ) {
-    return false;
-  }
-
-  // A short product-like message means NEW ORDER by default.
-  // To add to an existing order, the user must explicitly say "add ...".
-  return (
-    value.length >= 2 &&
-    value.length <= 100 &&
-    !/[?]$/.test(value) &&
-    !/^(?:please|can you|could you|where|when|why|how)\b/i.test(
-      value
-    )
-  );
-}
-
-function extractStandaloneItem(text) {
-  return cleanNewOrderItems(
-    normalizeCustomerText(text)
-  );
 }
 
 function extractDeterministicShoppingRequest(text) {
@@ -2534,100 +2502,123 @@ async function handleCustomerMessage({
       customer.id
     );
 
-  /*
-    HARD STANDALONE ITEM BOUNDARY
 
-    "2 eggs", "bread", "milk", etc. are NEW ORDERS.
-    They are never appended to or used to rebuild the
-    previous active order.
+  /* -----------------------------------------
+     SIMPLE MVP: NEW ORDER -> SHOPPER
+  ----------------------------------------- */
 
-    To modify an existing order the customer must say:
-    "add 2 eggs", "remove bread", "replace X with Y", etc.
-  */
-  const standaloneItem =
-    looksLikeStandaloneItemRequest(
+  const simpleOrderParts =
+    extractDeterministicShoppingRequest(
       userMessage
-    )
-      ? extractStandaloneItem(
-          userMessage
-        )
-      : "";
+    );
 
-  if (standaloneItem) {
-    const newOrder =
-      await createOrder({
+  const hasSimpleNewOrder =
+    isExplicitNewOrderRequest(
+      userMessage
+    ) &&
+    simpleOrderParts?.items &&
+    simpleOrderParts?.store;
+
+  if (hasSimpleNewOrder) {
+    const cleanItems =
+      cleanNewOrderItems(
+        simpleOrderParts.items
+      );
+
+    const requestedStore =
+      String(
+        simpleOrderParts.store
+      ).trim();
+
+    if (
+      cleanItems &&
+      requestedStore
+    ) {
+      const deliveryAddress =
+        String(
+          simpleOrderParts.address ||
+          ""
+        ).trim();
+
+      const newOrder =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName:
+            requestedStore,
+
+          items:
+            cleanItems,
+
+          budget:
+            null,
+
+          deliveryAddress:
+            deliveryAddress,
+
+          status:
+            "finding_shopper",
+        });
+
+      if (!newOrder) {
+        throw new Error(
+          "Could not create Fetch order"
+        );
+      }
+
+      await saveMessage({
         customerId:
           customer.id,
 
-        storeName:
-          "Pending store",
+        orderId:
+          newOrder.id,
 
-        items:
-          standaloneItem,
+        phone:
+          normalizedPhone,
 
-        budget:
-          null,
+        role:
+          "user",
 
-        deliveryAddress:
-          "",
-
-        status:
-          "collecting_details",
+        message:
+          userMessage,
       });
 
-    if (!newOrder) {
-      throw new Error(
-        "Could not create standalone-item Fetch order"
+      // Register the store when possible, but NEVER block
+      // the shopper dispatch on store registration.
+      await ensureStoreForOrder(
+        newOrder
       );
+
+      const dispatch =
+        await offerOrderToShopper(
+          newOrder
+        );
+
+      if (
+        dispatch.success
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+
+          `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: ${requestedStore}\n` +
+          (
+            deliveryAddress
+              ? `📍 Deliver to: ${deliveryAddress}\n`
+              : ""
+          ) +
+          `\nI’ve sent the order to an available shopper. They’ll check the product price and send it to you for approval.`
+        );
+      } else {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+
+          `Got it 👍 I have your order for ${cleanItems} from ${requestedStore}, but there isn’t an available shopper right now.`
+        );
+      }
+
+      return;
     }
-
-    const reply =
-      `Got it 👍
-
-🛒 Items: ${standaloneItem}
-
-This is a new order. Which store should I use? Please send the delivery location or WhatsApp location pin 📍.`;
-
-    await saveMessage({
-      customerId:
-        customer.id,
-
-      orderId:
-        newOrder.id,
-
-      phone:
-        normalizedPhone,
-
-      role:
-        "user",
-
-      message:
-        userMessage,
-    });
-
-    await saveMessage({
-      customerId:
-        customer.id,
-
-      orderId:
-        newOrder.id,
-
-      phone:
-        normalizedPhone,
-
-      role:
-        "assistant",
-
-      message:
-        reply,
-    });
-
-    await sendWhatsAppMessage(
-      normalizedPhone,
-      reply
-    );
-
-    return;
   }
 
   /* -----------------------------------------
@@ -2903,8 +2894,96 @@ This is a new order. Which store should I use? Please send the delivery location
   }
 
   /* -----------------------------------------
-     DETERMINISTIC CANCELLATION
+     SIMPLE MVP: CUSTOMER PRICE APPROVAL
   ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_customer_price_confirmation"
+  ) {
+    if (
+      isSimpleConfirmation(
+        userMessage
+      )
+    ) {
+      if (
+        activeOrder.delivery_pricing_status !==
+        "calculated"
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I still need the delivery charge. Please send your WhatsApp location pin 📍 first."
+        );
+        return;
+      }
+
+      const approvedOrder =
+        await updateOrder(
+          activeOrder.id,
+          {
+            status:
+              "shopper_assigned",
+          }
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Approved 👍 I’ve told the shopper to continue shopping."
+      );
+
+      if (
+        approvedOrder?.shopper_id
+      ) {
+        const shoppers =
+          await supabaseRequest(
+            `shoppers?id=eq.${encodeURIComponent(
+              approvedOrder.shopper_id
+            )}&select=*&limit=1`
+          );
+
+        const shopper =
+          Array.isArray(
+            shoppers
+          ) &&
+          shoppers.length
+            ? shoppers[0]
+            : null;
+
+        if (
+          shopper?.phone
+        ) {
+          await sendWhatsAppMessage(
+            shopper.phone,
+            "✅ Customer approved the price. Continue shopping.\n\nReply SHOPPING when you start shopping."
+          );
+        }
+      }
+
+      return;
+    }
+
+    if (
+      isSimpleRejection(
+        userMessage
+      )
+    ) {
+      await cancelOrderAndReleaseShopper(
+        activeOrder
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Okay 👍 The order is cancelled. I’ve informed the shopper."
+      );
+
+      return;
+    }
+  }
+
+  /* -----------------------------------------
+     DETERMINISTIC CANCELLATION
+  -----------------------------------------
 
   if (isCancellationRequest(userMessage)) {
     await saveMessage({
@@ -2989,6 +3068,131 @@ This is a new order. Which store should I use? Please send the delivery location
   }
 
   /* -----------------------------------------
+     SIMPLE MVP: LOCATION AFTER PRODUCT PRICE
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_customer_price_confirmation" &&
+    location &&
+    Number.isFinite(
+      Number(location.latitude)
+    ) &&
+    Number.isFinite(
+      Number(location.longitude)
+    )
+  ) {
+    const locationLabel =
+      [
+        location.name,
+        location.address,
+      ]
+        .map(
+          (value) =>
+            String(value || "").trim()
+        )
+        .filter(Boolean)
+        .join(", ");
+
+    const updatedOrder =
+      await updateOrder(
+        activeOrder.id,
+        {
+          delivery_address:
+            locationLabel ||
+            activeOrder.delivery_address ||
+            "WhatsApp location",
+        }
+      );
+
+    if (!updatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location, but I couldn’t update the order. Please send it again."
+      );
+      return;
+    }
+
+    try {
+      const store =
+        await ensureStoreForOrder(
+          updatedOrder
+        );
+
+      if (!store) {
+        throw new Error(
+          "Store unavailable for price calculation"
+        );
+      }
+
+      const distanceKm =
+        await calculateRoadDistanceKmFromCoordinates(
+          store,
+          Number(location.latitude),
+          Number(location.longitude)
+        );
+
+      const deliveryFee =
+        calculateDeliveryFee(
+          distanceKm
+        );
+
+      const pricedOrder =
+        await updateOrder(
+          updatedOrder.id,
+          {
+            distance_km:
+              distanceKm,
+
+            delivery_fee:
+              deliveryFee,
+
+            total_amount:
+              Number(
+                updatedOrder.item_total || 0
+              ) +
+              Number(
+                updatedOrder.fetch_fee || 0
+              ) +
+              deliveryFee,
+
+            delivery_pricing_status:
+              "calculated",
+
+            delivery_pricing_source:
+              "whatsapp_location_osrm_mvp",
+
+            priced_at:
+              new Date().toISOString(),
+
+            status:
+              "awaiting_customer_price_confirmation",
+          }
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildCustomerPriceApprovalMessage(
+          pricedOrder || updatedOrder
+        )
+      );
+    } catch (error) {
+      console.error(
+        "FETCH PRICE FLOW LOCATION ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location 📍, but I couldn’t calculate the delivery charge right now. Please try sending the location once more."
+      );
+    }
+
+    return;
+  }
+
+  /* -----------------------------------------
      WHATSAPP LOCATION
   ----------------------------------------- */
 
@@ -3011,6 +3215,7 @@ This is a new order. Which store should I use? Please send the delivery location
       ![
         "collecting_details",
         "awaiting_confirmation",
+        "awaiting_customer_price_confirmation",
       ].includes(activeOrder.status)
     ) {
       await saveMessage({
@@ -3120,102 +3325,8 @@ This is a new order. Which store should I use? Please send the delivery location
   }
 
   /* -----------------------------------------
-     DETERMINISTIC STORE SELECTION
-  ----------------------------------------- */
-
-  if (
-    activeOrder &&
-    activeOrder.status ===
-      "collecting_details" &&
-    /^pending\s+store$/i.test(
-      String(
-        activeOrder.store_name || ""
-      ).trim()
-    )
-  ) {
-    const possibleStore =
-      normalizeCustomerText(
-        userMessage
-      );
-
-    const storeRecord =
-      await getStoreByName(
-        possibleStore
-      );
-
-    if (storeRecord) {
-      const updatedDraft =
-        await updateOrder(
-          activeOrder.id,
-          {
-            store_name:
-              storeRecord.name,
-
-            store_id:
-              storeRecord.id,
-          }
-        );
-
-      if (
-        updatedDraft?.delivery_address
-      ) {
-        try {
-          const pricedOrder =
-            await applyDeliveryPricing(
-              updatedDraft
-            );
-
-          const reply =
-            buildPricingConfirmationMessage(
-              pricedOrder
-            );
-
-          await saveMessage({
-            customerId:
-              customer.id,
-
-            orderId:
-              pricedOrder.id,
-
-            phone:
-              normalizedPhone,
-
-            role:
-              "assistant",
-
-            message:
-              reply,
-          });
-
-          await sendWhatsAppMessage(
-            normalizedPhone,
-            reply
-          );
-        } catch (error) {
-          console.error(
-            "FETCH DRAFT STORE PRICING ERROR:",
-            error
-          );
-
-          await sendWhatsAppMessage(
-            normalizedPhone,
-            `Store selected: ${storeRecord.name} 👍\n\nPlease send your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
-          );
-        }
-      } else {
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          `Store selected: ${storeRecord.name} 👍\n\nPlease send your WhatsApp location pin 📍 so I can calculate the exact delivery charge.`
-        );
-      }
-
-      return;
-    }
-  }
-
-  /* -----------------------------------------
      PENDING SUBSTITUTION
-  -----------------------------------------
+  ----------------------------------------- */
 
   if (activeOrder) {
     const pending =
@@ -3902,7 +4013,6 @@ This is a new order. Which store should I use? Please send the delivery location
     let order;
 
     if (
-      false &&
       activeOrder &&
       [
         "collecting_details",
@@ -4169,6 +4279,163 @@ This is a new order. Which store should I use? Please send the delivery location
   );
 }
 
+
+/* =========================================================
+   SIMPLE MVP PRICE FLOW
+========================================================= */
+
+function parseShopperPrice(text) {
+  const value =
+    String(text || "")
+      .trim()
+      .replace(/,/g, "");
+
+  const match =
+    value.match(
+      /^PRICE\s*:?\s*₹?\s*(\d+(?:\.\d{1,2})?)$/i
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const amount =
+    Number(match[1]);
+
+  return Number.isFinite(amount) &&
+    amount >= 0
+    ? amount
+    : null;
+}
+
+function buildCustomerPriceApprovalMessage(order) {
+  const itemTotal =
+    Number(order.item_total || 0);
+
+  const fetchFee =
+    Number(order.fetch_fee || 0);
+
+  if (
+    order.delivery_pricing_status !==
+    "calculated"
+  ) {
+    return (
+      `🧾 Product price: ₹${formatRupees(itemTotal)}\n` +
+      `🚚 Delivery charge: pending\n` +
+      `💼 Fetch fee: ₹${formatRupees(fetchFee)}\n\n` +
+      `Please send your WhatsApp location pin 📍 so I can calculate the delivery charge before you approve.`
+    );
+  }
+
+  const deliveryFee =
+    Number(order.delivery_fee || 0);
+
+  const total =
+    itemTotal +
+    fetchFee +
+    deliveryFee;
+
+  return (
+    `🧾 Product price: ₹${formatRupees(itemTotal)}\n` +
+    `🚚 Delivery charge: ₹${formatRupees(deliveryFee)}\n` +
+    `💼 Fetch fee: ₹0\n` +
+    `💰 Total: ₹${formatRupees(total)}\n\n` +
+    `Shall I continue? Reply YES or NO.`
+  );
+}
+
+async function ensureStoreForOrder(order) {
+  if (!order?.store_name) {
+    return null;
+  }
+
+  const existing =
+    await getStoreByName(
+      order.store_name
+    );
+
+  if (existing) {
+    return existing;
+  }
+
+  const raw =
+    String(
+      order.store_name
+    ).trim();
+
+  const pieces =
+    raw
+      .split(",")
+      .map(
+        (piece) =>
+          piece.trim()
+      )
+      .filter(Boolean);
+
+  const name =
+    pieces.length >= 2
+      ? pieces[0]
+      : raw;
+
+  const address =
+    pieces.length >= 2
+      ? pieces.slice(1).join(", ")
+      : raw;
+
+  try {
+    const data =
+      await supabaseRequest(
+        "stores",
+        {
+          method:
+            "POST",
+
+          headers: {
+            Prefer:
+              "return=representation",
+          },
+
+          body:
+            JSON.stringify({
+              name,
+              address,
+              active:
+                true,
+            }),
+        }
+      );
+
+    const store =
+      Array.isArray(data)
+        ? data[0]
+        : data;
+
+    if (
+      store?.id
+    ) {
+      await updateOrder(
+        order.id,
+        {
+          store_id:
+            store.id,
+
+          store_name:
+            store.name,
+        }
+      );
+    }
+
+    return store;
+  } catch (error) {
+    console.error(
+      "FETCH ENSURE STORE ERROR:",
+      error
+    );
+
+    return null;
+  }
+}
+
 /* =========================================================
    SHOPPER ENGINE
 ========================================================= */
@@ -4333,7 +4600,7 @@ async function handleShopperMessage({
     await sendWhatsAppMessage(
       normalizedPhone,
 
-      "Accepted ✅\n\nReply SHOPPING when you start shopping."
+      "Accepted ✅\n\nPlease check the product price at the store and reply PRICE: amount\nExample: PRICE: 180"
     );
 
     await notifyCustomerForOrder(
@@ -4519,6 +4786,131 @@ async function handleShopperMessage({
       order.id,
 
       `⚠️ Your Fetch shopper has a substitution request.\n\n${substitution.originalItem} is unavailable.\n\nThey propose: ${substitution.proposedItem}\n\nReply YES to approve or NO to reject.`
+    );
+
+    return;
+  }
+
+  /* PRODUCT PRICE */
+
+  const shopperProductPrice =
+    parseShopperPrice(
+      rawText
+    );
+
+  if (
+    shopperProductPrice != null
+  ) {
+    const updated =
+      await updateOrder(
+        order.id,
+        {
+          item_total:
+            shopperProductPrice,
+
+          fetch_fee:
+            FETCH_FEE,
+
+          status:
+            "awaiting_customer_price_confirmation",
+        }
+      );
+
+    if (!updated) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save the product price. Please use PRICE: amount"
+      );
+      return;
+    }
+
+    let pricedOrder =
+      updated;
+
+    /*
+      If the customer already supplied a delivery address
+      that can be routed, calculate the delivery fee now.
+      Otherwise, the customer will be asked for a location pin.
+    */
+    try {
+      const store =
+        await ensureStoreForOrder(
+          updated
+        );
+
+      if (
+        store &&
+        updated.delivery_address
+      ) {
+        const distanceKm =
+          await calculateRoadDistanceKm(
+            store,
+            updated.delivery_address
+          );
+
+        const deliveryFee =
+          calculateDeliveryFee(
+            distanceKm
+          );
+
+        pricedOrder =
+          await updateOrder(
+            updated.id,
+            {
+              item_total:
+                shopperProductPrice,
+
+              fetch_fee:
+                FETCH_FEE,
+
+              delivery_rate_per_km:
+                DELIVERY_RATE_PER_KM,
+
+              distance_km:
+                distanceKm,
+
+              delivery_fee:
+                deliveryFee,
+
+              total_amount:
+                shopperProductPrice +
+                FETCH_FEE +
+                deliveryFee,
+
+              delivery_pricing_status:
+                "calculated",
+
+              delivery_pricing_source:
+                "osm_osrm_mvp",
+
+              priced_at:
+                new Date().toISOString(),
+
+              status:
+                "awaiting_customer_price_confirmation",
+            }
+          ) || updated;
+      }
+    } catch (error) {
+      console.error(
+        "FETCH SHOPPER PRICE DELIVERY ERROR:",
+        error
+      );
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      `Price saved ✅\n\n🧾 Product price: ₹${formatRupees(
+        shopperProductPrice
+      )}\n\nI’ve sent the price to the customer for approval.`
+    );
+
+    await notifyCustomerForOrder(
+      order.id,
+      buildCustomerPriceApprovalMessage(
+        pricedOrder
+      )
     );
 
     return;
