@@ -421,7 +421,7 @@ async function getShopperByPhone(
     : null;
 }
 
-async function createShopper(
+async function createPendingShopper(
   phone
 ) {
   const normalizedPhone =
@@ -439,22 +439,12 @@ async function createShopper(
         },
 
         body: JSON.stringify({
-          name:
-            `Fetch Shopper ${normalizedPhone.slice(
-              -4
-            )}`,
-
-          phone:
-            normalizedPhone,
-
-          available:
-            true,
-
-          whatsapp_opted_in:
-            true,
-
-          last_seen_at:
-            new Date().toISOString(),
+          phone: normalizedPhone,
+          available: false,
+          whatsapp_opted_in: true,
+          approval_status: "pending",
+          onboarding_step: "name",
+          last_seen_at: new Date().toISOString(),
         }),
       }
     );
@@ -464,27 +454,26 @@ async function createShopper(
     : data;
 }
 
-async function getOrCreateShopper(
+async function getOrCreatePendingShopper(
   phone
 ) {
+  const normalizedPhone =
+    normalizePhone(phone);
+
   let shopper =
-    await getShopperByPhone(
-      phone
-    );
+    await getShopperByPhone(normalizedPhone);
 
   if (shopper) {
     return shopper;
   }
 
   try {
-    return await createShopper(
-      phone
+    return await createPendingShopper(
+      normalizedPhone
     );
   } catch (error) {
     shopper =
-      await getShopperByPhone(
-        phone
-      );
+      await getShopperByPhone(normalizedPhone);
 
     if (shopper) {
       return shopper;
@@ -1485,7 +1474,7 @@ async function getAvailableShoppers(
 ) {
   const data =
     await supabaseRequest(
-      "shoppers?available=eq.true&whatsapp_opted_in=eq.true&select=*&limit=100"
+      "shoppers?available=eq.true&whatsapp_opted_in=eq.true&approval_status=eq.approved&select=*&limit=100"
     );
 
   if (!Array.isArray(data)) {
@@ -8032,6 +8021,166 @@ async function dispatchNextQueuedOrder(
 
 
 /* =========================================================
+   SHOPPER ONBOARDING
+========================================================= */
+
+function isShopperJoinIntent(text) {
+  const value = cleanConversationText(text).toLowerCase();
+
+  return (
+    value === "join" ||
+    /^(?:i\s+want\s+to\s+be(?:come)?|i\s+want\s+to\s+join(?:\s+as)?|i\s+would\s+like\s+to\s+be(?:come)?|register(?:\s+as)?|sign\s+up(?:\s+as)?|apply(?:\s+as)?)\s+(?:a\s+)?fetch\s+shopper$/i.test(value) ||
+    /\b(?:become|be|join|register|sign\s*up|apply)\b.*\bshopper\b/i.test(value)
+  );
+}
+
+function looksLikeShopperOnboardingPayment(text) {
+  return Boolean(parseShopperUpiId(text));
+}
+
+function normalizeShopperName(text) {
+  const raw = cleanConversationText(text);
+  if (!raw) return "";
+
+  return raw
+    .replace(/^(?:my\s+name\s+is|i\s+am|i\s*\'m|this\s+is|name\s*[:=-])\s*/i, "")
+    .trim();
+}
+
+function isReasonableShopperName(text) {
+  const name = normalizeShopperName(text);
+  if (!name) return false;
+  if (name.length < 2 || name.length > 80) return false;
+  if (looksLikeShopperOnboardingPayment(name)) return false;
+  if (/^(?:join|start|accept|decline|available|status|shopping|delivered|received)$/i.test(name)) return false;
+  return /^[\p{L}][\p{L} .'-]{1,79}$/u.test(name);
+}
+
+async function handleShopperOnboardingMessage({
+  phone,
+  shopper,
+  text,
+}) {
+  const normalizedPhone = normalizePhone(phone);
+  const rawText = String(text || "").trim();
+  const step = String(
+    shopper?.onboarding_step || "name"
+  ).toLowerCase();
+  const approval = String(
+    shopper?.approval_status || "pending"
+  ).toLowerCase();
+
+  await updateShopper(shopper.id, {
+    last_seen_at: new Date().toISOString(),
+  });
+
+  if (approval === "rejected" || step === "inactive") {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Your Fetch shopper application is currently not approved. You won’t receive Fetch jobs. Please contact Fetch if you need help."
+    );
+    return;
+  }
+
+  if (approval === "approved" && step === "active") {
+    await handleShopperMessage({
+      phone: normalizedPhone,
+      text: rawText,
+    });
+    return;
+  }
+
+  if (step === "name" || !shopper.name) {
+    if (!isReasonableShopperName(rawText)) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Welcome to Fetch Shopper 🛍️\n\nWhat is your full name?"
+      );
+      return;
+    }
+
+    const name = normalizeShopperName(rawText);
+
+    const updated = await updateShopper(
+      shopper.id,
+      {
+        name,
+        onboarding_step: "payment",
+        approval_status: "pending",
+        available: false,
+        whatsapp_opted_in: true,
+        last_seen_at: new Date().toISOString(),
+      }
+    );
+
+    if (!updated) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save your name right now. Please send it again."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `Thanks, ${name} 👍\n\nNow send your UPI ID or UPI-linked mobile number so customers can pay you directly.\n\nExample: name@bank or 9876543210`
+    );
+    return;
+  }
+
+  if (step === "payment") {
+    const paymentDestination = parseShopperUpiId(rawText);
+
+    if (!paymentDestination) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Please send your UPI ID or UPI-linked mobile number.\n\nExample: name@bank or 9876543210"
+      );
+      return;
+    }
+
+    const updated = await updateShopper(
+      shopper.id,
+      {
+        upi_id: paymentDestination,
+        onboarding_step: "pending_approval",
+        approval_status: "pending",
+        available: false,
+        whatsapp_opted_in: true,
+        last_seen_at: new Date().toISOString(),
+      }
+    );
+
+    if (!updated) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save your payment details right now. Please send them again."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Application submitted ✅\n\nYour Fetch shopper application is now waiting for approval. You will receive a WhatsApp message here once you’re approved.\n\nPlease do not send START yet."
+    );
+    return;
+  }
+
+  if (step === "pending_approval") {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Your Fetch shopper application is still pending approval ⏳\n\nI’ll message you here once Fetch approves your application."
+    );
+    return;
+  }
+
+  await sendWhatsAppMessage(
+    normalizedPhone,
+    "Your Fetch shopper application is being processed ⏳. Please wait for approval."
+  );
+}
+
+/* =========================================================
    SHOPPER ENGINE
 ========================================================= */
 
@@ -8062,17 +8211,32 @@ async function handleShopperMessage({
   if (!shopper) {
     /*
       Extra safety layer.
-      Even if this function is accidentally
-      called somewhere else, an unknown number
-      can NEVER become a shopper.
+      Unknown numbers must never become shoppers
+      unless they explicitly start shopper onboarding.
     */
 
     await sendWhatsAppMessage(
       normalizedPhone,
-
-      "You’re not registered as a Fetch shopper. Please contact Fetch to become a shopper."
+      "You’re not registered as a Fetch shopper. Send JOIN to apply as a Fetch shopper."
     );
 
+    return;
+  }
+
+  const approvalStatus = String(
+    shopper.approval_status || "approved"
+  ).toLowerCase();
+
+  const onboardingStep = String(
+    shopper.onboarding_step || "active"
+  ).toLowerCase();
+
+  if (approvalStatus !== "approved" || onboardingStep !== "active") {
+    await handleShopperOnboardingMessage({
+      phone: normalizedPhone,
+      shopper,
+      text: rawText,
+    });
     return;
   }
 
@@ -9516,28 +9680,28 @@ export default async function handler(
     */
 
     const shopper =
-      await getShopperByPhone(
-        from
-      );
+      await getShopperByPhone(from);
 
     if (shopper) {
       await handleShopperMessage({
-        phone:
-          from,
+        phone: from,
+        text: text || "LOCATION",
+      });
+    } else if (isShopperJoinIntent(text || "")) {
+      const pendingShopper =
+        await getOrCreatePendingShopper(from);
 
-        text:
-          text ||
-          "LOCATION",
+      await handleShopperOnboardingMessage({
+        phone: from,
+        shopper: pendingShopper,
+        text: text || "JOIN",
       });
     } else {
       await handleCustomerMessage({
-        phone:
-          from,
-
+        phone: from,
         userMessage:
           text ||
           "Shared a WhatsApp location pin",
-
         location,
       });
     }
