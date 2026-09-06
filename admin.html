@@ -6,7 +6,7 @@
   <title>Fetch Admin Control Room</title>
   <style>
     :root {
-      --bg: #f6f7f9;
+      --bg: #f4f6f8;
       --card: #ffffff;
       --text: #111827;
       --muted: #6b7280;
@@ -15,6 +15,7 @@
       --red: #dc2626;
       --amber: #d97706;
       --blue: #2563eb;
+      --purple: #7c3aed;
       --shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
     }
 
@@ -37,7 +38,7 @@
       gap: 16px;
       position: sticky;
       top: 0;
-      z-index: 10;
+      z-index: 20;
     }
 
     header h1 {
@@ -66,7 +67,7 @@
 
     main {
       padding: 24px 28px 40px;
-      max-width: 1600px;
+      max-width: 1700px;
       margin: 0 auto;
     }
 
@@ -122,6 +123,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      flex-wrap: wrap;
     }
 
     .section-head h2 {
@@ -134,6 +136,31 @@
       font-size: 12px;
     }
 
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafa;
+    }
+
+    .filter {
+      background: #fff;
+      border: 1px solid var(--line);
+      color: #374151;
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .filter.active {
+      background: #111827;
+      color: #fff;
+      border-color: #111827;
+    }
+
     .table-wrap {
       overflow-x: auto;
     }
@@ -141,7 +168,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 1000px;
+      min-width: 1250px;
     }
 
     th, td {
@@ -163,6 +190,18 @@
 
     tr:last-child td { border-bottom: 0; }
 
+    .order-id {
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .subline {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+
     .status {
       display: inline-flex;
       align-items: center;
@@ -171,7 +210,6 @@
       border-radius: 999px;
       font-size: 11px;
       font-weight: 800;
-      text-transform: lowercase;
       white-space: nowrap;
     }
 
@@ -179,7 +217,31 @@
     .red { background: #fee2e2; color: #991b1b; }
     .amber { background: #fef3c7; color: #92400e; }
     .blue { background: #dbeafe; color: #1d4ed8; }
+    .purple { background: #ede9fe; color: #6d28d9; }
     .gray { background: #f3f4f6; color: #374151; }
+
+    .alert-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .alert-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 15px;
+    }
+
+    .alert-title {
+      font-weight: 800;
+      margin-bottom: 7px;
+    }
+
+    .alert-number {
+      font-size: 28px;
+      font-weight: 900;
+    }
 
     .shopper-grid {
       display: grid;
@@ -229,8 +291,9 @@
       padding: 16px 18px;
     }
 
-    @media (max-width: 1200px) {
+    @media (max-width: 1250px) {
       .metrics { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+      .alert-grid { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 800px) {
@@ -246,24 +309,75 @@
   <header>
     <div>
       <h1>🛍️ Fetch Admin Control Room</h1>
-      <p>Live operational view · auto refresh every 10 seconds</p>
+      <p>Operations · payments · shoppers · live orders</p>
     </div>
     <button class="refresh" onclick="loadDashboard()">Refresh now</button>
   </header>
 
   <main>
     <div class="notice">
-      <strong>MVP admin prototype:</strong> this page currently reads Supabase directly using the publishable key. Before a public launch, we should lock the underlying Supabase RLS policies and put admin access behind authentication/server-side authorization.
+      <strong>MVP admin prototype:</strong>
+      this dashboard reads Supabase directly with the publishable key.
+      Before public launch, admin access and Supabase RLS must be secured behind authentication/server-side authorization.
     </div>
 
     <div class="metrics">
-      <div class="metric"><div class="label">Orders today</div><div class="value" id="ordersToday">—</div></div>
-      <div class="metric"><div class="label">Active orders</div><div class="value" id="activeOrders">—</div></div>
-      <div class="metric"><div class="label">Available shoppers</div><div class="value" id="availableShoppers">—</div></div>
-      <div class="metric"><div class="label">Completed orders</div><div class="value" id="completedOrders">—</div></div>
-      <div class="metric"><div class="label">GMV today</div><div class="value" id="gmvToday">—</div></div>
-      <div class="metric"><div class="label">Shopper earnings today</div><div class="value" id="shopperEarningsToday">—</div></div>
+      <div class="metric">
+        <div class="label">Orders today</div>
+        <div class="value" id="ordersToday">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">Active now</div>
+        <div class="value" id="activeOrders">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">Available shoppers</div>
+        <div class="value" id="availableShoppers">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">Delivered today</div>
+        <div class="value" id="completedOrders">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">GMV today</div>
+        <div class="value" id="gmvToday">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">Pending payment verification</div>
+        <div class="value" id="pendingPayments">—</div>
+      </div>
     </div>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>⚠️ Operations Alerts</h2>
+          <div class="small">Things that may need your attention</div>
+        </div>
+      </div>
+
+      <div class="alert-grid">
+        <div class="alert-card">
+          <div class="alert-title">Orders waiting for shopper</div>
+          <div class="alert-number" id="waitingShopperAlert">—</div>
+        </div>
+
+        <div class="alert-card">
+          <div class="alert-title">Customer says PAID</div>
+          <div class="alert-number" id="customerPaidAlert">—</div>
+        </div>
+
+        <div class="alert-card">
+          <div class="alert-title">Substitutions pending</div>
+          <div class="alert-number" id="substitutionAlert">—</div>
+        </div>
+      </div>
+    </section>
 
     <section class="section">
       <div class="section-head">
@@ -272,33 +386,36 @@
           <div class="small" id="ordersUpdated">Loading…</div>
         </div>
       </div>
+
+      <div class="toolbar">
+        <button class="filter active" data-filter="active" onclick="setOrderFilter('active')">Active</button>
+        <button class="filter" data-filter="all" onclick="setOrderFilter('all')">All</button>
+        <button class="filter" data-filter="waiting" onclick="setOrderFilter('waiting')">Waiting for shopper</button>
+        <button class="filter" data-filter="payment" onclick="setOrderFilter('payment')">Payment</button>
+        <button class="filter" data-filter="shopping" onclick="setOrderFilter('shopping')">Shopping</button>
+        <button class="filter" data-filter="delivered" onclick="setOrderFilter('delivered')">Delivered</button>
+      </div>
+
       <div id="ordersArea"></div>
     </section>
 
     <section class="section">
       <div class="section-head">
         <div>
-          <h2>Shoppers</h2>
+          <h2>🛍️ Shoppers</h2>
           <div class="small">Current availability and assignment</div>
         </div>
       </div>
       <div id="shoppersArea"></div>
     </section>
-
-    <section class="section">
-      <div class="section-head">
-        <div>
-          <h2>Recent Customers</h2>
-          <div class="small">Latest customer records</div>
-        </div>
-      </div>
-      <div id="customersArea"></div>
-    </section>
   </main>
 
   <script>
-    const SUPABASE_URL = "https://skfxzagxlxputwpwxwbe.supabase.co";
-    const SUPABASE_KEY = "sb_publishable_zQueXzNbRTTsdV5xjn398Q_nSB4njep";
+    const SUPABASE_URL =
+      "https://skfxzagxlxputwpwxwbe.supabase.co";
+
+    const SUPABASE_KEY =
+      "sb_publishable_zQueXzNbRTTsdV5xjn398Q_nSB4njep";
 
     const headers = {
       apikey: SUPABASE_KEY,
@@ -317,10 +434,17 @@
       "out_for_delivery"
     ]);
 
-    const COMPLETED_STATUSES = new Set([
-      "delivered",
-      "completed"
+    const WAITING_STATUS = "finding_shopper";
+
+    const PAYMENT_STATUSES = new Set([
+      "payment_pending",
+      "customer_reported_paid"
     ]);
+
+    let allOrders = [];
+    let allShoppers = [];
+    let allCustomers = [];
+    let currentFilter = "active";
 
     function money(value) {
       const n = Number(value || 0);
@@ -338,19 +462,21 @@
         .replaceAll("'", "&#039;");
     }
 
-    function statusClass(status) {
-      const s = String(status || "").toLowerCase();
-      if (["delivered", "completed", "paid"].includes(s)) return "green";
-      if (["cancelled", "rejected"].includes(s)) return "red";
-      if (["finding_shopper", "payment_pending", "awaiting_customer_price_confirmation"].includes(s)) return "amber";
-      if (["shopping", "picked_up", "out_for_delivery", "shopper_assigned"].includes(s)) return "blue";
-      return "gray";
+    function shortId(id) {
+      return String(id || "")
+        .slice(0, 6)
+        .toUpperCase();
     }
 
     function fmtDate(value) {
       if (!value) return "—";
+
       const d = new Date(value);
-      if (Number.isNaN(d.getTime())) return esc(value);
+
+      if (Number.isNaN(d.getTime())) {
+        return esc(value);
+      }
+
       return d.toLocaleString("en-IN", {
         day: "2-digit",
         month: "short",
@@ -359,24 +485,12 @@
       });
     }
 
-    async function api(path) {
-      const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/${path}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`${response.status}: ${text}`);
-      }
-
-      return response.json();
-    }
-
     function isToday(value) {
       if (!value) return false;
+
       const d = new Date(value);
       const now = new Date();
+
       return (
         d.getFullYear() === now.getFullYear() &&
         d.getMonth() === now.getMonth() &&
@@ -384,199 +498,644 @@
       );
     }
 
-    function renderOrders(orders) {
+    function statusLabel(status) {
+      const map = {
+        collecting_details: "Collecting details",
+        finding_shopper: "Finding shopper",
+        shopper_assigned: "Shopper assigned",
+        awaiting_customer_price_confirmation:
+          "Waiting for customer approval",
+        payment_pending: "Payment pending",
+        customer_reported_paid:
+          "Customer says paid",
+        shopping: "Shopping",
+        picked_up: "Picked up",
+        out_for_delivery: "Out for delivery",
+        delivered: "Delivered",
+        cancelled: "Cancelled",
+        completed: "Completed"
+      };
+
+      return map[
+        String(status || "").toLowerCase()
+      ] || String(status || "Unknown");
+    }
+
+    function statusClass(status) {
+      const s =
+        String(status || "")
+          .toLowerCase();
+
+      if (
+        ["delivered", "completed"].includes(s)
+      ) {
+        return "green";
+      }
+
+      if (
+        ["cancelled", "rejected"].includes(s)
+      ) {
+        return "red";
+      }
+
+      if (
+        [
+          "finding_shopper",
+          "payment_pending",
+          "awaiting_customer_price_confirmation",
+          "customer_reported_paid"
+        ].includes(s)
+      ) {
+        return "amber";
+      }
+
+      if (
+        [
+          "shopping",
+          "picked_up",
+          "out_for_delivery",
+          "shopper_assigned"
+        ].includes(s)
+      ) {
+        return "blue";
+      }
+
+      if (
+        s === "collecting_details"
+      ) {
+        return "purple";
+      }
+
+      return "gray";
+    }
+
+    async function api(path) {
+      const response =
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/${path}`,
+          {
+            headers
+          }
+        );
+
+      if (!response.ok) {
+        const text =
+          await response.text();
+
+        throw new Error(
+          `${response.status}: ${text}`
+        );
+      }
+
+      return response.json();
+    }
+
+    function shopperMap() {
+      return new Map(
+        allShoppers.map(
+          s => [
+            s.id,
+            s
+          ]
+        )
+      );
+    }
+
+    function customerMap() {
+      return new Map(
+        allCustomers.map(
+          c => [
+            c.id,
+            c
+          ]
+        )
+      );
+    }
+
+    function renderOrders() {
+      let orders =
+        [...allOrders];
+
+      if (
+        currentFilter ===
+        "active"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              ACTIVE_STATUSES.has(
+                String(
+                  o.status || ""
+                ).toLowerCase()
+              )
+          );
+      }
+
+      if (
+        currentFilter ===
+        "waiting"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              String(
+                o.status || ""
+              ).toLowerCase() ===
+              WAITING_STATUS
+          );
+      }
+
+      if (
+        currentFilter ===
+        "payment"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              PAYMENT_STATUSES.has(
+                String(
+                  o.status || ""
+                ).toLowerCase()
+              )
+          );
+      }
+
+      if (
+        currentFilter ===
+        "shopping"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              [
+                "shopping",
+                "picked_up",
+                "out_for_delivery"
+              ].includes(
+                String(
+                  o.status || ""
+                ).toLowerCase()
+              )
+          );
+      }
+
+      if (
+        currentFilter ===
+        "delivered"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              [
+                "delivered",
+                "completed"
+              ].includes(
+                String(
+                  o.status || ""
+                ).toLowerCase()
+              )
+          );
+      }
+
       if (!orders.length) {
-        document.getElementById("ordersArea").innerHTML =
-          `<div class="empty">No orders found.</div>`;
+        document.getElementById(
+          "ordersArea"
+        ).innerHTML =
+          `<div class="empty">No orders in this view.</div>`;
         return;
       }
 
-      const rows = orders.map(o => `
-        <tr>
-          <td><strong>#${esc(String(o.id || "").slice(0, 6).toUpperCase())}</strong></td>
-          <td>${esc(o.items || "—")}</td>
-          <td>${esc(o.store_name || "Any suitable local store")}</td>
-          <td>${esc(o.delivery_address || "—")}</td>
-          <td>${esc(o.shopper_id || "Not assigned")}</td>
-          <td><span class="status ${statusClass(o.status)}">${esc(o.status || "unknown")}</span></td>
-          <td>${money(o.total_amount)}</td>
-          <td>${money(o.shopper_earnings)}</td>
-          <td>${fmtDate(o.created_at)}</td>
-        </tr>
-      `).join("");
+      const shoppers =
+        shopperMap();
 
-      document.getElementById("ordersArea").innerHTML = `
+      const customers =
+        customerMap();
+
+      const rows =
+        orders.map(
+          o => {
+            const shopper =
+              shoppers.get(
+                o.shopper_id
+              );
+
+            const customer =
+              customers.get(
+                o.customer_id
+              );
+
+            const shopperName =
+              shopper?.name ||
+              "Not assigned";
+
+            const shopperPhone =
+              shopper?.phone ||
+              "";
+
+            const customerPhone =
+              customer?.phone ||
+              "";
+
+            const customerName =
+              customer?.name ||
+              "Customer";
+
+            const payment =
+              String(
+                o.payment_status ||
+                ""
+              ).toLowerCase();
+
+            return `
+              <tr>
+                <td>
+                  <div class="order-id">
+                    #${esc(shortId(o.id))}
+                  </div>
+                  <div class="subline">
+                    ${fmtDate(o.created_at)}
+                  </div>
+                </td>
+
+                <td>
+                  <strong>
+                    ${esc(o.items || "—")}
+                  </strong>
+                  <div class="subline">
+                    ${esc(customerName)}
+                    ${customerPhone
+                      ? ` · ${esc(customerPhone)}`
+                      : ""}
+                  </div>
+                </td>
+
+                <td>
+                  ${esc(
+                    o.store_name ||
+                    "Any suitable local store"
+                  )}
+                </td>
+
+                <td>
+                  ${esc(
+                    o.delivery_address ||
+                    "—"
+                  )}
+                </td>
+
+                <td>
+                  <strong>
+                    ${esc(shopperName)}
+                  </strong>
+                  ${
+                    shopperPhone
+                      ? `<div class="subline">${esc(shopperPhone)}</div>`
+                      : ""
+                  }
+                </td>
+
+                <td>
+                  <span class="status ${statusClass(o.status)}">
+                    ${esc(statusLabel(o.status))}
+                  </span>
+                  ${
+                    payment
+                      ? `<div class="subline">Payment: ${esc(payment)}</div>`
+                      : ""
+                  }
+                </td>
+
+                <td>
+                  <strong>${money(o.total_amount)}</strong>
+                  <div class="subline">
+                    Product ${money(o.item_total)}
+                    <br>
+                    Delivery ${money(o.delivery_fee)}
+                  </div>
+                </td>
+
+                <td>
+                  ${money(
+                    o.shopper_earnings ??
+                    o.shopper_delivery_earnings ??
+                    0
+                  )}
+                </td>
+              </tr>
+            `;
+          }
+        ).join("");
+
+      document.getElementById(
+        "ordersArea"
+      ).innerHTML = `
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Order</th>
-                <th>Items</th>
+                <th>Customer / Items</th>
                 <th>Store</th>
                 <th>Deliver to</th>
                 <th>Shopper</th>
                 <th>Status</th>
                 <th>Total</th>
                 <th>Shopper earnings</th>
-                <th>Created</th>
               </tr>
             </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      `;
-    }
 
-    function renderShoppers(shoppers) {
-      if (!shoppers.length) {
-        document.getElementById("shoppersArea").innerHTML =
-          `<div class="empty">No shoppers found.</div>`;
-        return;
-      }
-
-      document.getElementById("shoppersArea").innerHTML = `
-        <div class="shopper-grid">
-          ${shoppers.map(s => `
-            <div class="shopper">
-              <div class="shopper-name">${esc(s.name || "Unnamed shopper")}</div>
-              <div class="shopper-phone">${esc(s.phone || "—")}</div>
-              <div>
-                <span class="dot ${s.available ? "online" : "offline"}"></span>
-                ${s.available ? "Available" : "Busy"}
-              </div>
-              <div class="small" style="margin-top:8px;">
-                ${s.current_order_id
-                  ? `Current order: #${esc(String(s.current_order_id).slice(0, 6).toUpperCase())}`
-                  : "No current order"}
-              </div>
-            </div>
-          `).join("")}
-        </div>
-      `;
-    }
-
-    function renderCustomers(customers) {
-      if (!customers.length) {
-        document.getElementById("customersArea").innerHTML =
-          `<div class="empty">No customers found.</div>`;
-        return;
-      }
-
-      document.getElementById("customersArea").innerHTML = `
-        <div class="table-wrap">
-          <table style="min-width:700px;">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Phone</th>
-                <th>Address</th>
-                <th>Current order</th>
-                <th>Created</th>
-              </tr>
-            </thead>
             <tbody>
-              ${customers.map(c => `
-                <tr>
-                  <td>${esc(c.name || "—")}</td>
-                  <td>${esc(c.phone || "—")}</td>
-                  <td>${esc(c.address || "—")}</td>
-                  <td>${c.current_order_id
-                    ? `#${esc(String(c.current_order_id).slice(0, 6).toUpperCase())}`
-                    : "—"}</td>
-                  <td>${fmtDate(c.created_at)}</td>
-                </tr>
-              `).join("")}
+              ${rows}
             </tbody>
           </table>
         </div>
       `;
     }
 
-    async function loadDashboard() {
-      const ordersArea = document.getElementById("ordersArea");
-      const shoppersArea = document.getElementById("shoppersArea");
+    function renderShoppers() {
+      if (!allShoppers.length) {
+        document.getElementById(
+          "shoppersArea"
+        ).innerHTML =
+          `<div class="empty">No shoppers found.</div>`;
+        return;
+      }
 
-      try {
-        const [orders, shoppers, customers] =
-          await Promise.all([
-            api("orders?select=*&order=created_at.desc&limit=100"),
-            api("shoppers?select=*&order=name.asc&limit=100"),
-            api("customers?select=*&order=created_at.desc&limit=100")
-          ]);
+      document.getElementById(
+        "shoppersArea"
+      ).innerHTML = `
+        <div class="shopper-grid">
+          ${
+            allShoppers.map(
+              s => `
+                <div class="shopper">
+                  <div class="shopper-name">
+                    ${esc(
+                      s.name ||
+                      "Unnamed shopper"
+                    )}
+                  </div>
 
-        const todayOrders =
-          orders.filter(o => isToday(o.created_at));
+                  <div class="shopper-phone">
+                    ${esc(s.phone || "—")}
+                  </div>
 
-        const active =
-          orders.filter(o =>
+                  <div>
+                    <span class="dot ${
+                      s.available
+                        ? "online"
+                        : "offline"
+                    }"></span>
+                    ${
+                      s.available
+                        ? "Available"
+                        : "Busy"
+                    }
+                  </div>
+
+                  <div class="small" style="margin-top:8px;">
+                    ${
+                      s.current_order_id
+                        ? `Current order: #${esc(shortId(s.current_order_id))}`
+                        : "No current order"
+                    }
+                  </div>
+                </div>
+              `
+            ).join("")
+          }
+        </div>
+      `;
+    }
+
+    function updateMetrics() {
+      const today =
+        allOrders.filter(
+          o =>
+            isToday(
+              o.created_at
+            )
+        );
+
+      const active =
+        allOrders.filter(
+          o =>
             ACTIVE_STATUSES.has(
-              String(o.status || "").toLowerCase()
+              String(
+                o.status || ""
+              ).toLowerCase()
             )
-          );
+        );
 
-        const completed =
-          todayOrders.filter(o =>
-            COMPLETED_STATUSES.has(
-              String(o.status || "").toLowerCase()
+      const delivered =
+        today.filter(
+          o =>
+            ["delivered", "completed"].includes(
+              String(
+                o.status || ""
+              ).toLowerCase()
             )
+        );
+
+      const pendingPayments =
+        allOrders.filter(
+          o =>
+            PAYMENT_STATUSES.has(
+              String(
+                o.payment_status || ""
+              ).toLowerCase()
+            )
+        );
+
+      const waiting =
+        allOrders.filter(
+          o =>
+            String(
+              o.status || ""
+            ).toLowerCase() ===
+            WAITING_STATUS
+        );
+
+      const customerPaid =
+        allOrders.filter(
+          o =>
+            String(
+              o.payment_status || ""
+            ).toLowerCase() ===
+            "customer_reported_paid"
+        );
+
+      const gmv =
+        today.reduce(
+          (sum, o) =>
+            sum +
+            Number(
+              o.total_amount ||
+              0
+            ),
+          0
+        );
+
+      const available =
+        allShoppers.filter(
+          s =>
+            s.available === true &&
+            !s.current_order_id
+        ).length;
+
+      document.getElementById(
+        "ordersToday"
+      ).textContent =
+        today.length;
+
+      document.getElementById(
+        "activeOrders"
+      ).textContent =
+        active.length;
+
+      document.getElementById(
+        "availableShoppers"
+      ).textContent =
+        available;
+
+      document.getElementById(
+        "completedOrders"
+      ).textContent =
+        delivered.length;
+
+      document.getElementById(
+        "gmvToday"
+      ).textContent =
+        money(gmv);
+
+      document.getElementById(
+        "pendingPayments"
+      ).textContent =
+        pendingPayments.length;
+
+      document.getElementById(
+        "waitingShopperAlert"
+      ).textContent =
+        waiting.length;
+
+      document.getElementById(
+        "customerPaidAlert"
+      ).textContent =
+        customerPaid.length;
+    }
+
+    async function loadSubstitutionAlert() {
+      try {
+        const substitutions =
+          await api(
+            "substitution_requests?status=eq.pending&select=id&limit=100"
           );
 
-        const gmv =
-          todayOrders.reduce(
-            (sum, o) => sum + Number(o.total_amount || 0),
-            0
-          );
-
-        const earnings =
-          todayOrders.reduce(
-            (sum, o) =>
-              sum +
-              Number(
-                o.shopper_earnings ??
-                o.shopper_delivery_earnings ??
-                0
-              ),
-            0
-          );
-
-        const available =
-          shoppers.filter(
-            s =>
-              s.available === true &&
-              !s.current_order_id
-          ).length;
-
-        document.getElementById("ordersToday").textContent =
-          todayOrders.length;
-        document.getElementById("activeOrders").textContent =
-          active.length;
-        document.getElementById("availableShoppers").textContent =
-          available;
-        document.getElementById("completedOrders").textContent =
-          completed.length;
-        document.getElementById("gmvToday").textContent =
-          money(gmv);
-        document.getElementById("shopperEarningsToday").textContent =
-          money(earnings);
-
-        renderOrders(orders);
-        renderShoppers(shoppers);
-        renderCustomers(customers);
-
-        document.getElementById("ordersUpdated").textContent =
-          `Last updated ${new Date().toLocaleTimeString("en-IN")}`;
-      } catch (error) {
-        console.error(error);
-        const message =
-          `<div class="error">Dashboard error: ${esc(error.message)}</div>`;
-        ordersArea.innerHTML = message;
-        shoppersArea.innerHTML = message;
-        document.getElementById("customersArea").innerHTML = message;
+        document.getElementById(
+          "substitutionAlert"
+        ).textContent =
+          substitutions.length;
+      } catch {
+        document.getElementById(
+          "substitutionAlert"
+        ).textContent =
+          "—";
       }
     }
 
+    async function loadDashboard() {
+      try {
+        const [
+          orders,
+          shoppers,
+          customers
+        ] =
+          await Promise.all([
+            api(
+              "orders?select=*&order=created_at.desc&limit=200"
+            ),
+            api(
+              "shoppers?select=*&order=name.asc&limit=100"
+            ),
+            api(
+              "customers?select=*&order=created_at.desc&limit=200"
+            )
+          ]);
+
+        allOrders =
+          Array.isArray(
+            orders
+          )
+            ? orders
+            : [];
+
+        allShoppers =
+          Array.isArray(
+            shoppers
+          )
+            ? shoppers
+            : [];
+
+        allCustomers =
+          Array.isArray(
+            customers
+          )
+            ? customers
+            : [];
+
+        updateMetrics();
+        renderOrders();
+        renderShoppers();
+        await loadSubstitutionAlert();
+
+        document.getElementById(
+          "ordersUpdated"
+        ).textContent =
+          `Last updated ${new Date().toLocaleTimeString("en-IN")}`;
+      } catch (error) {
+        console.error(
+          error
+        );
+
+        document.getElementById(
+          "ordersArea"
+        ).innerHTML =
+          `<div class="error">Dashboard error: ${esc(error.message)}</div>`;
+
+        document.getElementById(
+          "shoppersArea"
+        ).innerHTML =
+          `<div class="error">Dashboard error: ${esc(error.message)}</div>`;
+      }
+    }
+
+    function setOrderFilter(filter) {
+      currentFilter =
+        filter;
+
+      document
+        .querySelectorAll(
+          ".filter"
+        )
+        .forEach(
+          button => {
+            button.classList.toggle(
+              "active",
+              button.dataset.filter ===
+                filter
+            );
+          }
+        );
+
+      renderOrders();
+    }
+
     loadDashboard();
-    setInterval(loadDashboard, 10000);
+
+    setInterval(
+      loadDashboard,
+      10000
+    );
   </script>
 </body>
 </html>
