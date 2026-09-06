@@ -302,6 +302,216 @@
       .metrics { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
       .shopper-grid { grid-template-columns: 1fr; }
     }
+  
+    .clickable-row {
+      cursor: pointer;
+    }
+
+    .clickable-row:hover {
+      background: #f8fafc;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 22px;
+      z-index: 100;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal {
+      width: min(980px, 100%);
+      max-height: 90vh;
+      overflow: auto;
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 30px 80px rgba(15, 23, 42, 0.28);
+    }
+
+    .modal-head {
+      position: sticky;
+      top: 0;
+      background: #111827;
+      color: #fff;
+      padding: 18px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 2;
+    }
+
+    .modal-title {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .modal-subtitle {
+      margin-top: 5px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .modal-close {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 18px;
+      width: 38px;
+      height: 38px;
+      padding: 0;
+    }
+
+    .modal-body {
+      padding: 20px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .detail-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .detail-label {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 5px;
+    }
+
+    .detail-value {
+      font-weight: 800;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .timeline {
+      position: relative;
+      margin: 6px 0 22px;
+      padding-left: 30px;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 9px;
+      top: 4px;
+      bottom: 4px;
+      width: 2px;
+      background: #e5e7eb;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding: 0 0 18px;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: -27px;
+      top: 1px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      border: 3px solid #94a3b8;
+      z-index: 1;
+    }
+
+    .timeline-item.done .timeline-dot {
+      border-color: var(--green);
+      background: #dcfce7;
+    }
+
+    .timeline-item.current .timeline-dot {
+      border-color: var(--amber);
+      background: #fef3c7;
+    }
+
+    .timeline-title {
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .timeline-meta {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+
+    .timeline-extra {
+      margin-top: 6px;
+      color: #374151;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .modal-section {
+      margin-top: 20px;
+    }
+
+    .modal-section h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .mini-table {
+      width: 100%;
+      min-width: 0;
+      border-collapse: collapse;
+    }
+
+    .mini-table th,
+    .mini-table td {
+      padding: 9px 10px;
+      font-size: 12px;
+    }
+
+    .message-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .message-role {
+      font-weight: 800;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .message-body {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 850px) {
+      .detail-grid {
+        grid-template-columns: repeat(2, minmax(140px, 1fr));
+      }
+    }
+
   </style>
 </head>
 
@@ -409,6 +619,27 @@
       <div id="shoppersArea"></div>
     </section>
   </main>
+
+  
+  <div
+    id="orderModalBackdrop"
+    class="modal-backdrop"
+    onclick="closeOrderModal(event)"
+  >
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-head">
+        <div>
+          <h2 class="modal-title" id="modalTitle">Order details</h2>
+          <div class="modal-subtitle" id="modalSubtitle">Loading…</div>
+        </div>
+        <button class="modal-close" onclick="closeOrderModal()">×</button>
+      </div>
+
+      <div class="modal-body" id="modalBody">
+        Loading…
+      </div>
+    </div>
+  </div>
 
   <script>
     const SUPABASE_URL =
@@ -747,7 +978,11 @@
               ).toLowerCase();
 
             return `
-              <tr>
+              <tr
+                class="clickable-row"
+                onclick="openOrderModal('${esc(o.id)}')"
+                title="Click to view full order timeline"
+              >
                 <td>
                   <div class="order-id">
                     #${esc(shortId(o.id))}
@@ -1042,6 +1277,660 @@
           "—";
       }
     }
+
+
+    function humanRole(role) {
+      const value =
+        String(role || "").toLowerCase();
+
+      if (value === "user") return "Customer";
+      if (value === "assistant") return "Fetch";
+      if (value === "shopper") return "Shopper";
+      if (value === "system") return "System";
+      return role || "Unknown";
+    }
+
+    function timelineState(index, currentIndex) {
+      if (index < currentIndex) return "done";
+      if (index === currentIndex) return "current";
+      return "";
+    }
+
+    function buildOrderTimeline(order, jobs, substitutions, messages) {
+      const status =
+        String(order?.status || "").toLowerCase();
+
+      const timeline = [];
+
+      timeline.push({
+        title: "Order created",
+        time: order.created_at,
+        extra:
+          `${order.items || "Items"} · ${order.store_name || "Any suitable local store"}`,
+        state: "done"
+      });
+
+      const acceptedJob =
+        jobs.find(
+          j =>
+            String(j.status || "").toLowerCase() ===
+            "accepted"
+        );
+
+      const offeredJob =
+        jobs.find(
+          j =>
+            String(j.status || "").toLowerCase() ===
+            "offered"
+        );
+
+      if (jobs.length) {
+        const firstOffer =
+          [...jobs].sort(
+            (a, b) =>
+              new Date(a.offered_at || 0) -
+              new Date(b.offered_at || 0)
+          )[0];
+
+        timeline.push({
+          title: "Shopper broadcast",
+          time: firstOffer?.offered_at,
+          extra:
+            `${jobs.length} shopper job record${jobs.length === 1 ? "" : "s"}`,
+          state: "done"
+        });
+      }
+
+      if (acceptedJob) {
+        const acceptedShopper =
+          allShoppers.find(
+            s =>
+              s.id ===
+              acceptedJob.shopper_id
+          );
+
+        timeline.push({
+          title: "Shopper accepted",
+          time: acceptedJob.accepted_at || acceptedJob.offered_at,
+          extra:
+            acceptedShopper
+              ? acceptedShopper.name
+              : "Shopper assigned",
+          state: "done"
+        });
+      } else if (
+        offeredJob ||
+        status === "finding_shopper"
+      ) {
+        timeline.push({
+          title: "Waiting for shopper",
+          time:
+            offeredJob?.offered_at ||
+            order.created_at,
+          extra:
+            jobs.length
+              ? `${jobs.filter(j => j.status === "offered").length} active offer(s)`
+              : "No shopper has accepted yet",
+          state: "current"
+        });
+      }
+
+      if (
+        order.priced_at ||
+        order.item_total ||
+        order.delivery_fee ||
+        [
+          "awaiting_customer_price_confirmation",
+          "payment_pending",
+          "customer_reported_paid",
+          "shopping",
+          "picked_up",
+          "out_for_delivery",
+          "delivered",
+          "completed"
+        ].includes(status)
+      ) {
+        timeline.push({
+          title: "Price submitted",
+          time: order.priced_at,
+          extra:
+            `Product ${money(order.item_total)} · Delivery ${money(order.delivery_fee)} · Total ${money(order.total_amount)}`,
+          state:
+            status ===
+            "awaiting_customer_price_confirmation"
+              ? "current"
+              : "done"
+        });
+      }
+
+      if (
+        [
+          "payment_pending",
+          "customer_reported_paid",
+          "shopping",
+          "picked_up",
+          "out_for_delivery",
+          "delivered",
+          "completed"
+        ].includes(status)
+      ) {
+        timeline.push({
+          title: "Customer approved price",
+          time:
+            order.priced_at,
+          extra:
+            "Order moved to payment",
+          state:
+            status ===
+            "payment_pending" ||
+            status ===
+            "customer_reported_paid"
+              ? "current"
+              : "done"
+        });
+      }
+
+      if (
+        [
+          "payment_pending",
+          "customer_reported_paid",
+          "shopping",
+          "picked_up",
+          "out_for_delivery",
+          "delivered",
+          "completed"
+        ].includes(status)
+      ) {
+        timeline.push({
+          title:
+            order.payment_status ===
+            "paid"
+              ? "Payment verified"
+              : order.payment_status ===
+                "customer_reported_paid"
+              ? "Customer says PAID"
+              : "Payment pending",
+          time:
+            order.payment_status ===
+            "paid"
+              ? order.paid_at ||
+                null
+              : null,
+          extra:
+            order.payment_status ===
+            "paid"
+              ? "Shopper confirmed RECEIVED"
+              : "Waiting for shopper verification",
+          state:
+            order.payment_status ===
+            "paid"
+              ? "done"
+              : "current"
+        });
+      }
+
+      const progression = [
+        ["shopping", "Shopping started"],
+        ["picked_up", "Items picked up"],
+        ["out_for_delivery", "Out for delivery"],
+        ["delivered", "Order delivered"]
+      ];
+
+      const rank = {
+        finding_shopper: -1,
+        shopper_assigned: -1,
+        awaiting_customer_price_confirmation: -1,
+        payment_pending: -1,
+        customer_reported_paid: -1,
+        shopping: 0,
+        picked_up: 1,
+        out_for_delivery: 2,
+        delivered: 3,
+        completed: 3
+      };
+
+      const currentRank =
+        Object.prototype.hasOwnProperty.call(rank, status)
+          ? rank[status]
+          : -1;
+
+      progression.forEach(
+        ([needed, title], index) => {
+          if (
+            currentRank >= index
+          ) {
+            timeline.push({
+              title,
+              time: null,
+              extra:
+                index === 0
+                  ? "Shopper started fulfilment"
+                  : index === 1
+                  ? "Items have been picked up"
+                  : index === 2
+                  ? "Shopper is on the way"
+                  : "Customer delivery completed",
+              state: "done"
+            });
+          } else if (
+            currentRank === index - 1 &&
+            [
+              "shopping",
+              "picked_up",
+              "out_for_delivery"
+            ].includes(status)
+          ) {
+            timeline.push({
+              title,
+              time: null,
+              extra: "Next expected stage",
+              state: "current"
+            });
+          }
+        }
+      );
+
+      if (
+        status === "cancelled"
+      ) {
+        timeline.push({
+          title: "Order cancelled",
+          time: null,
+          extra: "Order is no longer being fulfilled",
+          state: "current"
+        });
+      }
+
+      if (
+        substitutions.length
+      ) {
+        timeline.push({
+          title:
+            substitutions.some(
+              s =>
+                String(s.status || "").toLowerCase() ===
+                "pending"
+            )
+              ? "Substitution awaiting customer"
+              : "Substitution activity",
+          time:
+            substitutions[
+              substitutions.length - 1
+            ]?.created_at,
+          extra:
+            `${substitutions.length} substitution request${substitutions.length === 1 ? "" : "s"}`,
+          state:
+            substitutions.some(
+              s =>
+                String(s.status || "").toLowerCase() ===
+                "pending"
+            )
+              ? "current"
+              : "done"
+        });
+      }
+
+      return timeline;
+    }
+
+    function renderOrderModal(
+      order,
+      jobs,
+      substitutions,
+      messages
+    ) {
+      const shopper =
+        allShoppers.find(
+          s =>
+            s.id ===
+            order.shopper_id
+        );
+
+      const customer =
+        allCustomers.find(
+          c =>
+            c.id ===
+            order.customer_id
+        );
+
+      const timeline =
+        buildOrderTimeline(
+          order,
+          jobs,
+          substitutions,
+          messages
+        );
+
+      document.getElementById(
+        "modalTitle"
+      ).textContent =
+        `Order #${shortId(order.id)}`;
+
+      document.getElementById(
+        "modalSubtitle"
+      ).textContent =
+        `${statusLabel(order.status)} · ${fmtDate(order.created_at)}`;
+
+      document.getElementById(
+        "modalBody"
+      ).innerHTML = `
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-label">Customer</div>
+            <div class="detail-value">
+              ${esc(customer?.name || "Customer")}
+              <div class="subline">${esc(customer?.phone || "—")}</div>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Items</div>
+            <div class="detail-value">
+              ${esc(order.items || "—")}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Store</div>
+            <div class="detail-value">
+              ${esc(order.store_name || "Any suitable local store")}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Shopper</div>
+            <div class="detail-value">
+              ${esc(shopper?.name || "Not assigned")}
+              <div class="subline">${esc(shopper?.phone || "—")}</div>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Delivery</div>
+            <div class="detail-value">
+              ${esc(order.delivery_address || "—")}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Product</div>
+            <div class="detail-value">
+              ${money(order.item_total)}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Delivery fee</div>
+            <div class="detail-value">
+              ${money(order.delivery_fee)}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Total</div>
+            <div class="detail-value">
+              ${money(order.total_amount)}
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Order timeline</h3>
+          <div class="timeline">
+            ${
+              timeline.length
+                ? timeline.map(
+                    item => `
+                      <div class="timeline-item ${item.state}">
+                        <span class="timeline-dot"></span>
+                        <div class="timeline-title">
+                          ${esc(item.title)}
+                        </div>
+                        <div class="timeline-meta">
+                          ${fmtDate(item.time)}
+                        </div>
+                        ${
+                          item.extra
+                            ? `<div class="timeline-extra">${esc(item.extra)}</div>`
+                            : ""
+                        }
+                      </div>
+                    `
+                  ).join("")
+                : `<div class="empty">No timeline data available.</div>`
+            }
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Shopper offers</h3>
+          ${
+            jobs.length
+              ? `
+                <div class="table-wrap">
+                  <table class="mini-table">
+                    <thead>
+                      <tr>
+                        <th>Shopper</th>
+                        <th>Status</th>
+                        <th>Offered</th>
+                        <th>Accepted</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${
+                        jobs
+                          .sort(
+                            (a, b) =>
+                              new Date(a.offered_at || 0) -
+                              new Date(b.offered_at || 0)
+                          )
+                          .map(
+                            j => {
+                              const s =
+                                allShoppers.find(
+                                  x =>
+                                    x.id ===
+                                    j.shopper_id
+                                );
+
+                              return `
+                                <tr>
+                                  <td>
+                                    ${esc(s?.name || "Unknown")}
+                                    <div class="subline">${esc(s?.phone || "")}</div>
+                                  </td>
+                                  <td>
+                                    <span class="status ${statusClass(j.status)}">
+                                      ${esc(j.status || "unknown")}
+                                    </span>
+                                  </td>
+                                  <td>${fmtDate(j.offered_at)}</td>
+                                  <td>${fmtDate(j.accepted_at)}</td>
+                                </tr>
+                              `;
+                            }
+                          )
+                          .join("")
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              `
+              : `<div class="empty">No shopper offers recorded.</div>`
+          }
+        </div>
+
+        <div class="modal-section">
+          <h3>Substitutions</h3>
+          ${
+            substitutions.length
+              ? `
+                <div class="table-wrap">
+                  <table class="mini-table">
+                    <thead>
+                      <tr>
+                        <th>Original</th>
+                        <th>Proposed</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${substitutions.map(
+                        s => `
+                          <tr>
+                            <td>${esc(s.original_item)}</td>
+                            <td>${esc(s.proposed_item)}</td>
+                            <td>${esc(s.status || "pending")}</td>
+                            <td>${fmtDate(s.created_at)}</td>
+                          </tr>
+                        `
+                      ).join("")}
+                    </tbody>
+                  </table>
+                </div>
+              `
+              : `<div class="empty">No substitutions.</div>`
+          }
+        </div>
+
+        <div class="modal-section">
+          <h3>Conversation</h3>
+          ${
+            messages.length
+              ? `
+                <div class="message-list">
+                  ${messages
+                    .slice()
+                    .reverse()
+                    .map(
+                      m => `
+                        <div class="message">
+                          <div class="message-role">
+                            ${esc(humanRole(m.role))} · ${fmtDate(m.created_at)}
+                          </div>
+                          <div class="message-body">
+                            ${esc(m.message)}
+                          </div>
+                        </div>
+                      `
+                    )
+                    .join("")
+                  }
+                </div>
+              `
+              : `<div class="empty">No messages stored for this order.</div>`
+          }
+        </div>
+      `;
+    }
+
+    async function openOrderModal(orderId) {
+      const order =
+        allOrders.find(
+          o =>
+            o.id ===
+            orderId
+        );
+
+      if (!order) {
+        return;
+      }
+
+      const backdrop =
+        document.getElementById(
+          "orderModalBackdrop"
+        );
+
+      backdrop.classList.add(
+        "open"
+      );
+
+      document.getElementById(
+        "modalTitle"
+      ).textContent =
+        `Order #${shortId(order.id)}`;
+
+      document.getElementById(
+        "modalSubtitle"
+      ).textContent =
+        "Loading full order details…";
+
+      document.getElementById(
+        "modalBody"
+      ).innerHTML =
+        `<div class="empty">Loading timeline, shopper offers, substitutions and messages…</div>`;
+
+      try {
+        const [
+          jobs,
+          substitutions,
+          messages
+        ] = await Promise.all([
+          api(
+            `shopper_jobs?order_id=eq.${encodeURIComponent(
+              order.id
+            )}&select=*&order=offered_at.asc&limit=100`
+          ),
+          api(
+            `substitution_requests?order_id=eq.${encodeURIComponent(
+              order.id
+            )}&select=*&order=created_at.asc&limit=100`
+          ),
+          api(
+            `messages?order_id=eq.${encodeURIComponent(
+              order.id
+            )}&select=*&order=created_at.asc&limit=200`
+          )
+        ]);
+
+        renderOrderModal(
+          order,
+          Array.isArray(jobs) ? jobs : [],
+          Array.isArray(substitutions)
+            ? substitutions
+            : [],
+          Array.isArray(messages)
+            ? messages
+            : []
+        );
+      } catch (error) {
+        document.getElementById(
+          "modalBody"
+        ).innerHTML =
+          `<div class="error">Could not load order details: ${esc(error.message)}</div>`;
+      }
+    }
+
+    function closeOrderModal(event) {
+      if (
+        event &&
+        event.target &&
+        event.target.id !==
+          "orderModalBackdrop"
+      ) {
+        return;
+      }
+
+      document.getElementById(
+        "orderModalBackdrop"
+      ).classList.remove(
+        "open"
+      );
+    }
+
+    document.addEventListener(
+      "keydown",
+      event => {
+        if (
+          event.key ===
+          "Escape"
+        ) {
+          closeOrderModal();
+        }
+      }
+    );
 
     async function loadDashboard() {
       try {
