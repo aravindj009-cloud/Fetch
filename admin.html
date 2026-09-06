@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fetch Admin Control Room</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --blue: #2563eb;
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 22px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+
+    header p {
+      margin: 5px 0 0;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .refresh {
+      background: #fff;
+      color: #111827;
+    }
+
+    main {
+      padding: 24px 28px 40px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    .notice {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+      color: #9a3412;
+      font-size: 13px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(140px, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .metric {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .metric .value {
+      font-size: 26px;
+      font-weight: 800;
+    }
+
+    .section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+      overflow: hidden;
+    }
+
+    .section-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1000px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f9fafb;
+      color: #4b5563;
+      font-size: 12px;
+      position: sticky;
+      top: 76px;
+      z-index: 2;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: lowercase;
+      white-space: nowrap;
+    }
+
+    .green { background: #dcfce7; color: #166534; }
+    .red { background: #fee2e2; color: #991b1b; }
+    .amber { background: #fef3c7; color: #92400e; }
+    .blue { background: #dbeafe; color: #1d4ed8; }
+    .gray { background: #f3f4f6; color: #374151; }
+
+    .shopper-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .shopper {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 15px;
+    }
+
+    .shopper-name {
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .shopper-phone {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .online { background: #22c55e; }
+    .offline { background: #94a3b8; }
+
+    .empty {
+      padding: 26px 18px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .error {
+      color: var(--red);
+      font-size: 13px;
+      padding: 16px 18px;
+    }
+
+    @media (max-width: 1200px) {
+      .metrics { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+    }
+
+    @media (max-width: 800px) {
+      header { padding: 16px; }
+      main { padding: 16px; }
+      .metrics { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+      .shopper-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <h1>🛍️ Fetch Admin Control Room</h1>
+      <p>Live operational view · auto refresh every 10 seconds</p>
+    </div>
+    <button class="refresh" onclick="loadDashboard()">Refresh now</button>
+  </header>
+
+  <main>
+    <div class="notice">
+      <strong>MVP admin prototype:</strong> this page currently reads Supabase directly using the publishable key. Before a public launch, we should lock the underlying Supabase RLS policies and put admin access behind authentication/server-side authorization.
+    </div>
+
+    <div class="metrics">
+      <div class="metric"><div class="label">Orders today</div><div class="value" id="ordersToday">—</div></div>
+      <div class="metric"><div class="label">Active orders</div><div class="value" id="activeOrders">—</div></div>
+      <div class="metric"><div class="label">Available shoppers</div><div class="value" id="availableShoppers">—</div></div>
+      <div class="metric"><div class="label">Completed orders</div><div class="value" id="completedOrders">—</div></div>
+      <div class="metric"><div class="label">GMV today</div><div class="value" id="gmvToday">—</div></div>
+      <div class="metric"><div class="label">Shopper earnings today</div><div class="value" id="shopperEarningsToday">—</div></div>
+    </div>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>Live Orders</h2>
+          <div class="small" id="ordersUpdated">Loading…</div>
+        </div>
+      </div>
+      <div id="ordersArea"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>Shoppers</h2>
+          <div class="small">Current availability and assignment</div>
+        </div>
+      </div>
+      <div id="shoppersArea"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>Recent Customers</h2>
+          <div class="small">Latest customer records</div>
+        </div>
+      </div>
+      <div id="customersArea"></div>
+    </section>
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://skfxzagxlxputwpwxwbe.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_zQueXzNbRTTsdV5xjn398Q_nSB4njep";
+
+    const headers = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`
+    };
+
+    const ACTIVE_STATUSES = new Set([
+      "collecting_details",
+      "finding_shopper",
+      "shopper_assigned",
+      "awaiting_customer_price_confirmation",
+      "payment_pending",
+      "customer_reported_paid",
+      "shopping",
+      "picked_up",
+      "out_for_delivery"
+    ]);
+
+    const COMPLETED_STATUSES = new Set([
+      "delivered",
+      "completed"
+    ]);
+
+    function money(value) {
+      const n = Number(value || 0);
+      return `₹${n.toLocaleString("en-IN", {
+        maximumFractionDigits: 2
+      })}`;
+    }
+
+    function esc(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function statusClass(status) {
+      const s = String(status || "").toLowerCase();
+      if (["delivered", "completed", "paid"].includes(s)) return "green";
+      if (["cancelled", "rejected"].includes(s)) return "red";
+      if (["finding_shopper", "payment_pending", "awaiting_customer_price_confirmation"].includes(s)) return "amber";
+      if (["shopping", "picked_up", "out_for_delivery", "shopper_assigned"].includes(s)) return "blue";
+      return "gray";
+    }
+
+    function fmtDate(value) {
+      if (!value) return "—";
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return esc(value);
+      return d.toLocaleString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    async function api(path) {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/${path}`,
+        { headers }
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status}: ${text}`);
+      }
+
+      return response.json();
+    }
+
+    function isToday(value) {
+      if (!value) return false;
+      const d = new Date(value);
+      const now = new Date();
+      return (
+        d.getFullYear() === now.getFullYear() &&
+        d.getMonth() === now.getMonth() &&
+        d.getDate() === now.getDate()
+      );
+    }
+
+    function renderOrders(orders) {
+      if (!orders.length) {
+        document.getElementById("ordersArea").innerHTML =
+          `<div class="empty">No orders found.</div>`;
+        return;
+      }
+
+      const rows = orders.map(o => `
+        <tr>
+          <td><strong>#${esc(String(o.id || "").slice(0, 6).toUpperCase())}</strong></td>
+          <td>${esc(o.items || "—")}</td>
+          <td>${esc(o.store_name || "Any suitable local store")}</td>
+          <td>${esc(o.delivery_address || "—")}</td>
+          <td>${esc(o.shopper_id || "Not assigned")}</td>
+          <td><span class="status ${statusClass(o.status)}">${esc(o.status || "unknown")}</span></td>
+          <td>${money(o.total_amount)}</td>
+          <td>${money(o.shopper_earnings)}</td>
+          <td>${fmtDate(o.created_at)}</td>
+        </tr>
+      `).join("");
+
+      document.getElementById("ordersArea").innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Items</th>
+                <th>Store</th>
+                <th>Deliver to</th>
+                <th>Shopper</th>
+                <th>Status</th>
+                <th>Total</th>
+                <th>Shopper earnings</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderShoppers(shoppers) {
+      if (!shoppers.length) {
+        document.getElementById("shoppersArea").innerHTML =
+          `<div class="empty">No shoppers found.</div>`;
+        return;
+      }
+
+      document.getElementById("shoppersArea").innerHTML = `
+        <div class="shopper-grid">
+          ${shoppers.map(s => `
+            <div class="shopper">
+              <div class="shopper-name">${esc(s.name || "Unnamed shopper")}</div>
+              <div class="shopper-phone">${esc(s.phone || "—")}</div>
+              <div>
+                <span class="dot ${s.available ? "online" : "offline"}"></span>
+                ${s.available ? "Available" : "Busy"}
+              </div>
+              <div class="small" style="margin-top:8px;">
+                ${s.current_order_id
+                  ? `Current order: #${esc(String(s.current_order_id).slice(0, 6).toUpperCase())}`
+                  : "No current order"}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderCustomers(customers) {
+      if (!customers.length) {
+        document.getElementById("customersArea").innerHTML =
+          `<div class="empty">No customers found.</div>`;
+        return;
+      }
+
+      document.getElementById("customersArea").innerHTML = `
+        <div class="table-wrap">
+          <table style="min-width:700px;">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Phone</th>
+                <th>Address</th>
+                <th>Current order</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${customers.map(c => `
+                <tr>
+                  <td>${esc(c.name || "—")}</td>
+                  <td>${esc(c.phone || "—")}</td>
+                  <td>${esc(c.address || "—")}</td>
+                  <td>${c.current_order_id
+                    ? `#${esc(String(c.current_order_id).slice(0, 6).toUpperCase())}`
+                    : "—"}</td>
+                  <td>${fmtDate(c.created_at)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    async function loadDashboard() {
+      const ordersArea = document.getElementById("ordersArea");
+      const shoppersArea = document.getElementById("shoppersArea");
+
+      try {
+        const [orders, shoppers, customers] =
+          await Promise.all([
+            api("orders?select=*&order=created_at.desc&limit=100"),
+            api("shoppers?select=*&order=name.asc&limit=100"),
+            api("customers?select=*&order=created_at.desc&limit=100")
+          ]);
+
+        const todayOrders =
+          orders.filter(o => isToday(o.created_at));
+
+        const active =
+          orders.filter(o =>
+            ACTIVE_STATUSES.has(
+              String(o.status || "").toLowerCase()
+            )
+          );
+
+        const completed =
+          todayOrders.filter(o =>
+            COMPLETED_STATUSES.has(
+              String(o.status || "").toLowerCase()
+            )
+          );
+
+        const gmv =
+          todayOrders.reduce(
+            (sum, o) => sum + Number(o.total_amount || 0),
+            0
+          );
+
+        const earnings =
+          todayOrders.reduce(
+            (sum, o) =>
+              sum +
+              Number(
+                o.shopper_earnings ??
+                o.shopper_delivery_earnings ??
+                0
+              ),
+            0
+          );
+
+        const available =
+          shoppers.filter(
+            s =>
+              s.available === true &&
+              !s.current_order_id
+          ).length;
+
+        document.getElementById("ordersToday").textContent =
+          todayOrders.length;
+        document.getElementById("activeOrders").textContent =
+          active.length;
+        document.getElementById("availableShoppers").textContent =
+          available;
+        document.getElementById("completedOrders").textContent =
+          completed.length;
+        document.getElementById("gmvToday").textContent =
+          money(gmv);
+        document.getElementById("shopperEarningsToday").textContent =
+          money(earnings);
+
+        renderOrders(orders);
+        renderShoppers(shoppers);
+        renderCustomers(customers);
+
+        document.getElementById("ordersUpdated").textContent =
+          `Last updated ${new Date().toLocaleTimeString("en-IN")}`;
+      } catch (error) {
+        console.error(error);
+        const message =
+          `<div class="error">Dashboard error: ${esc(error.message)}</div>`;
+        ordersArea.innerHTML = message;
+        shoppersArea.innerHTML = message;
+        document.getElementById("customersArea").innerHTML = message;
+      }
+    }
+
+    loadDashboard();
+    setInterval(loadDashboard, 10000);
+  </script>
+</body>
+</html>
