@@ -512,6 +512,59 @@
       }
     }
 
+  
+    .search-box {
+      min-width: 280px;
+      flex: 1;
+      max-width: 520px;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 9px;
+      padding: 9px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .search-box:focus {
+      border-color: #94a3b8;
+      box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.18);
+    }
+
+    .attention-row {
+      border-left: 4px solid var(--amber);
+      background: #fffbeb;
+    }
+
+    .attention-row.urgent {
+      border-left-color: var(--red);
+      background: #fef2f2;
+    }
+
+    .attention-badge {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .attention-badge.urgent {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .alert-card.clickable {
+      cursor: pointer;
+      transition: transform 0.12s ease;
+    }
+
+    .alert-card.clickable:hover {
+      transform: translateY(-2px);
+    }
+
   </style>
 </head>
 
@@ -572,12 +625,12 @@
       </div>
 
       <div class="alert-grid">
-        <div class="alert-card">
+        <div class="alert-card clickable" onclick="setOrderFilter('waiting')">
           <div class="alert-title">Orders waiting for shopper</div>
           <div class="alert-number" id="waitingShopperAlert">—</div>
         </div>
 
-        <div class="alert-card">
+        <div class="alert-card clickable" onclick="setOrderFilter('payment')">
           <div class="alert-title">Customer says PAID</div>
           <div class="alert-number" id="customerPaidAlert">—</div>
         </div>
@@ -598,6 +651,13 @@
       </div>
 
       <div class="toolbar">
+        <input
+          id="orderSearch"
+          class="search-box"
+          type="search"
+          placeholder="Search order, item, store, shopper or customer phone…"
+          oninput="setOrderSearch(this.value)"
+        />
         <button class="filter active" data-filter="active" onclick="setOrderFilter('active')">Active</button>
         <button class="filter" data-filter="all" onclick="setOrderFilter('all')">All</button>
         <button class="filter" data-filter="waiting" onclick="setOrderFilter('waiting')">Waiting for shopper</button>
@@ -676,6 +736,7 @@
     let allShoppers = [];
     let allCustomers = [];
     let currentFilter = "active";
+    let currentSearch = "";
 
     function money(value) {
       const n = Number(value || 0);
@@ -843,9 +904,131 @@
       );
     }
 
+
+    function orderMatchesSearch(order, search) {
+      const q =
+        String(search || "")
+          .trim()
+          .toLowerCase();
+
+      if (!q) {
+        return true;
+      }
+
+      const shopper =
+        allShoppers.find(
+          s =>
+            s.id ===
+            order.shopper_id
+        );
+
+      const customer =
+        allCustomers.find(
+          c =>
+            c.id ===
+            order.customer_id
+        );
+
+      const haystack = [
+        order.id,
+        shortId(order.id),
+        order.items,
+        order.store_name,
+        order.delivery_address,
+        order.status,
+        order.payment_status,
+        shopper?.name,
+        shopper?.phone,
+        customer?.name,
+        customer?.phone
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(q);
+    }
+
+    function orderAttention(order) {
+      const status =
+        String(order?.status || "")
+          .toLowerCase();
+
+      const payment =
+        String(order?.payment_status || "")
+          .toLowerCase();
+
+      if (
+        payment ===
+        "customer_reported_paid"
+      ) {
+        return {
+          label: "URGENT · Verify payment",
+          urgent: true
+        };
+      }
+
+      if (
+        status ===
+        "payment_pending"
+      ) {
+        return {
+          label: "Attention · Payment pending",
+          urgent: false
+        };
+      }
+
+      if (
+        status ===
+        "awaiting_customer_price_confirmation"
+      ) {
+        return {
+          label: "Attention · Customer approval",
+          urgent: false
+        };
+      }
+
+      if (
+        status ===
+        "finding_shopper"
+      ) {
+        const age =
+          Date.now() -
+          new Date(
+            order.created_at || 0
+          ).getTime();
+
+        if (
+          Number.isFinite(age) &&
+          age > 15 * 60 * 1000
+        ) {
+          return {
+            label: "URGENT · Waiting >15 min",
+            urgent: true
+          };
+        }
+
+        return {
+          label: "Waiting for shopper",
+          urgent: false
+        };
+      }
+
+      return null;
+    }
+
     function renderOrders() {
       let orders =
         [...allOrders];
+
+      orders =
+        orders.filter(
+          order =>
+            orderMatchesSearch(
+              order,
+              currentSearch
+            )
+        );
 
       if (
         currentFilter ===
@@ -977,9 +1160,17 @@
                 ""
               ).toLowerCase();
 
+            const attention =
+              orderAttention(o);
+
+            const rowClass =
+              attention
+                ? `clickable-row attention-row${attention.urgent ? " urgent" : ""}`
+                : "clickable-row";
+
             return `
               <tr
-                class="clickable-row"
+                class="${rowClass}"
                 onclick="openOrderModal('${esc(o.id)}')"
                 title="Click to view full order timeline"
               >
@@ -1033,6 +1224,11 @@
                   <span class="status ${statusClass(o.status)}">
                     ${esc(statusLabel(o.status))}
                   </span>
+                  ${
+                    attention
+                      ? `<div><span class="attention-badge${attention.urgent ? " urgent" : ""}">${esc(attention.label)}</span></div>`
+                      : ""
+                  }
                   ${
                     payment
                       ? `<div class="subline">Payment: ${esc(payment)}</div>`
@@ -1996,6 +2192,14 @@
         ).innerHTML =
           `<div class="error">Dashboard error: ${esc(error.message)}</div>`;
       }
+    }
+
+
+    function setOrderSearch(value) {
+      currentSearch =
+        String(value || "");
+
+      renderOrders();
     }
 
     function setOrderFilter(filter) {
