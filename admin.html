@@ -1414,7 +1414,80 @@ ype html>
       display: block;
     }
 
-  </style>
+  
+    .pending-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .application-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 14px;
+      padding: 16px 18px;
+    }
+
+    .application-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+      background: #fff;
+    }
+
+    .application-name {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+
+    .application-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      margin-bottom: 12px;
+    }
+
+    .application-status {
+      display: inline-flex;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .application-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .approve-btn {
+      background: #16a34a;
+      color: #fff;
+    }
+
+    .reject-btn {
+      background: #dc2626;
+      color: #fff;
+    }
+
+    .action-btn:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+</style>
 </head>
 
 <body>
@@ -1527,6 +1600,17 @@ ype html>
     <section class="section">
       <div class="section-head">
         <div>
+          <h2>🧑‍💼 Pending Shopper Applications</h2>
+          <div class="small">Review new Fetch shopper applications before they can receive jobs.</div>
+        </div>
+        <span class="pending-count" id="pendingShopperCount">0</span>
+      </div>
+      <div id="pendingShoppersArea"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
           <h2>🛍️ Shoppers</h2>
           <div class="small">Current availability and assignment</div>
         </div>
@@ -1602,6 +1686,7 @@ ype html>
     let allOrders = [];
     let allShoppers = [];
     let allCustomers = [];
+    let allPendingShoppers = [];
     let currentFilter = "active";
     let currentSearch = "";
 
@@ -1755,6 +1840,35 @@ ype html>
       }
 
       return response.json();
+    }
+
+    async function apiWrite(path, method, body, extraHeaders = {}) {
+      const token =
+        adminSession?.access_token ||
+        SUPABASE_KEY;
+
+      const response =
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/${path}`,
+          {
+            method,
+            headers: {
+              ...headers,
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+              ...extraHeaders
+            },
+            body: JSON.stringify(body)
+          }
+        );
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status}: ${text}`);
+      }
+
+      const text = await response.text();
+      return text ? JSON.parse(text) : null;
     }
 
     function shopperMap() {
@@ -2156,6 +2270,70 @@ ype html>
           </table>
         </div>
       `;
+    }
+
+    function renderPendingShoppers() {
+      const area = document.getElementById("pendingShoppersArea");
+      const count = document.getElementById("pendingShopperCount");
+
+      if (count) count.textContent = String(allPendingShoppers.length);
+
+      if (!allPendingShoppers.length) {
+        area.innerHTML = `<div class="empty">No pending shopper applications.</div>`;
+        return;
+      }
+
+      area.innerHTML = `
+        <div class="application-grid">
+          ${allPendingShoppers.map(s => `
+            <div class="application-card">
+              <div class="application-name">${esc(s.name || "Name not provided")}</div>
+              <div class="application-status">Pending approval</div>
+              <div class="application-meta">
+                <div><strong>Phone:</strong> ${esc(s.phone || "—")}</div>
+                <div><strong>UPI:</strong> ${esc(s.upi_id || "Not provided")}</div>
+                <div><strong>Applied:</strong> ${fmtDate(s.created_at)}</div>
+                <div><strong>Onboarding:</strong> ${esc(s.onboarding_step || "—")}</div>
+              </div>
+              <div class="application-actions">
+                <button class="action-btn approve-btn" onclick="updateShopperApproval('${esc(s.id)}', 'approved')">Approve</button>
+                <button class="action-btn reject-btn" onclick="updateShopperApproval('${esc(s.id)}', 'rejected')">Reject</button>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    async function updateShopperApproval(shopperId, decision) {
+      const shopper = allShoppers.find(s => s.id === shopperId);
+      if (!shopper) return;
+
+      const actionText = decision === "approved" ? "approve" : "reject";
+      const confirmed = window.confirm(`Are you sure you want to ${actionText} ${shopper.name || shopper.phone || "this shopper"}?`);
+      if (!confirmed) return;
+
+      try {
+        const update = decision === "approved"
+          ? { approval_status: "approved", onboarding_step: "active", available: false }
+          : { approval_status: "rejected", onboarding_step: "inactive", available: false };
+
+        await apiWrite(
+          `shoppers?id=eq.${encodeURIComponent(shopperId)}`,
+          "PATCH",
+          update,
+          { Prefer: "return=representation" }
+        );
+
+        alert(decision === "approved"
+          ? "Shopper approved successfully."
+          : "Shopper rejected successfully.");
+
+        await loadDashboard();
+      } catch (error) {
+        console.error("FETCH SHOPPER APPROVAL ERROR:", error);
+        alert(`Could not ${actionText} shopper: ${error.message}`);
+      }
     }
 
     function renderShoppers() {
@@ -3183,7 +3361,8 @@ ype html>
         const [
           orders,
           shoppers,
-          customers
+          customers,
+          pendingShoppers
         ] =
           await Promise.all([
             api(
@@ -3194,6 +3373,9 @@ ype html>
             ),
             api(
               "customers?select=*&order=created_at.desc&limit=200"
+            ),
+            api(
+              "shoppers?select=*&approval_status=eq.pending&order=created_at.asc&limit=100"
             )
           ]);
 
@@ -3218,9 +3400,17 @@ ype html>
             ? customers
             : [];
 
+        allPendingShoppers =
+          Array.isArray(
+            pendingShoppers
+          )
+            ? pendingShoppers
+            : [];
+
         updateMetrics();
         renderOrders();
         renderShoppers();
+        renderPendingShoppers();
         await loadSubstitutionAlert();
 
         document.getElementById(
