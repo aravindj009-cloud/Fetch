@@ -565,6 +565,855 @@
       transform: translateY(-2px);
     }
 
+  
+    .auth-screen {
+      min-height: 100vh;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: #f4f6f8;
+    }
+
+    .auth-screen.show {
+      display: flex;
+    }
+
+    .auth-card {
+      width: min(420px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .auth-logo {
+      font-size: 36px;
+      margin-bottom: 8px;
+    }
+
+    .auth-card h1 {
+      margin: 0;
+      font-size: 25px;
+    }
+
+    .auth-card p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .auth-card label {
+      display: block;
+      margin: 16px 0 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #374151;
+    }
+
+    .auth-input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .auth-input:focus {
+      border-color: #94a3b8;
+      box-shadow: 0 0 0 3px rgba(148,163,184,.18);
+    }
+
+    .auth-button {
+      width: 100%;
+      margin-top: 18px;
+      background: #111827;
+      color: #fff;
+      padding: 12px 16px;
+    }
+
+    .auth-button:disabled {
+      opacity: .6;
+      cursor: wait;
+    }
+
+    .auth-error {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .auth-error.show {
+      display: block;
+    }
+
+    .auth-help {
+      margin-top: 14px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .logout {
+      background: rgba(255,255,255,.12);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.2);
+    }
+
+    .session-user {
+      font-size: 11px;
+      color: #cbd5e1;
+      margin-top: 3px;
+    }
+
+    #appShell {
+      display: none;
+    }
+
+    #appShell.show {
+      display: block;
+    }
+
+  </style>
+</head>
+
+<body>
+
+  <div id="authScreen" class="auth-screen show">
+    <div class="auth-card">
+      <div class="auth-logo">🛍️</div>
+      <h1>Fetch Admin</h1>
+      <p>Sign in to open the Fetch Admin Control Room.</p>
+
+      <form id="loginForm">
+        <label for="loginEmail">Email</label>
+        <input
+          id="loginEmail"
+          class="auth-input"
+          type="email"
+          autocomplete="username"
+          placeholder="admin@example.com"
+          required
+        />
+
+        <label for="loginPassword">Password</label>
+        <input
+          id="loginPassword"
+          class="auth-input"
+          type="password"
+          autocomplete="current-password"
+          placeholder="Your password"
+          required
+        />
+
+        <button
+          id="loginButton"
+          class="auth-button"
+          type="submit"
+        >
+          Sign in
+        </button>
+
+        <div id="authError" class="auth-error"></div>
+
+        <div class="auth-help">
+          Use the admin user you created in Supabase Authentication → Users.
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="appShell">
+ype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fetch Admin Control Room</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --blue: #2563eb;
+      --purple: #7c3aed;
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 22px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+
+    header p {
+      margin: 5px 0 0;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .refresh {
+      background: #fff;
+      color: #111827;
+    }
+
+    main {
+      padding: 24px 28px 40px;
+      max-width: 1700px;
+      margin: 0 auto;
+    }
+
+    .notice {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+      color: #9a3412;
+      font-size: 13px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(140px, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .metric {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .metric .value {
+      font-size: 26px;
+      font-weight: 800;
+    }
+
+    .section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+      overflow: hidden;
+    }
+
+    .section-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafa;
+    }
+
+    .filter {
+      background: #fff;
+      border: 1px solid var(--line);
+      color: #374151;
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .filter.active {
+      background: #111827;
+      color: #fff;
+      border-color: #111827;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1250px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f9fafb;
+      color: #4b5563;
+      font-size: 12px;
+      position: sticky;
+      top: 76px;
+      z-index: 2;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .order-id {
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .subline {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .green { background: #dcfce7; color: #166534; }
+    .red { background: #fee2e2; color: #991b1b; }
+    .amber { background: #fef3c7; color: #92400e; }
+    .blue { background: #dbeafe; color: #1d4ed8; }
+    .purple { background: #ede9fe; color: #6d28d9; }
+    .gray { background: #f3f4f6; color: #374151; }
+
+    .alert-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .alert-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 15px;
+    }
+
+    .alert-title {
+      font-weight: 800;
+      margin-bottom: 7px;
+    }
+
+    .alert-number {
+      font-size: 28px;
+      font-weight: 900;
+    }
+
+    .shopper-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .shopper {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 15px;
+    }
+
+    .shopper-name {
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .shopper-phone {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .online { background: #22c55e; }
+    .offline { background: #94a3b8; }
+
+    .empty {
+      padding: 26px 18px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .error {
+      color: var(--red);
+      font-size: 13px;
+      padding: 16px 18px;
+    }
+
+    @media (max-width: 1250px) {
+      .metrics { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+      .alert-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 800px) {
+      header { padding: 16px; }
+      main { padding: 16px; }
+      .metrics { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+      .shopper-grid { grid-template-columns: 1fr; }
+    }
+  
+    .clickable-row {
+      cursor: pointer;
+    }
+
+    .clickable-row:hover {
+      background: #f8fafc;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 22px;
+      z-index: 100;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal {
+      width: min(980px, 100%);
+      max-height: 90vh;
+      overflow: auto;
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 30px 80px rgba(15, 23, 42, 0.28);
+    }
+
+    .modal-head {
+      position: sticky;
+      top: 0;
+      background: #111827;
+      color: #fff;
+      padding: 18px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 2;
+    }
+
+    .modal-title {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .modal-subtitle {
+      margin-top: 5px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .modal-close {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 18px;
+      width: 38px;
+      height: 38px;
+      padding: 0;
+    }
+
+    .modal-body {
+      padding: 20px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .detail-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .detail-label {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 5px;
+    }
+
+    .detail-value {
+      font-weight: 800;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .timeline {
+      position: relative;
+      margin: 6px 0 22px;
+      padding-left: 30px;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 9px;
+      top: 4px;
+      bottom: 4px;
+      width: 2px;
+      background: #e5e7eb;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding: 0 0 18px;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: -27px;
+      top: 1px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      border: 3px solid #94a3b8;
+      z-index: 1;
+    }
+
+    .timeline-item.done .timeline-dot {
+      border-color: var(--green);
+      background: #dcfce7;
+    }
+
+    .timeline-item.current .timeline-dot {
+      border-color: var(--amber);
+      background: #fef3c7;
+    }
+
+    .timeline-title {
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .timeline-meta {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+
+    .timeline-extra {
+      margin-top: 6px;
+      color: #374151;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .modal-section {
+      margin-top: 20px;
+    }
+
+    .modal-section h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .mini-table {
+      width: 100%;
+      min-width: 0;
+      border-collapse: collapse;
+    }
+
+    .mini-table th,
+    .mini-table td {
+      padding: 9px 10px;
+      font-size: 12px;
+    }
+
+    .message-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .message-role {
+      font-weight: 800;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .message-body {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 850px) {
+      .detail-grid {
+        grid-template-columns: repeat(2, minmax(140px, 1fr));
+      }
+    }
+
+  
+    .search-box {
+      min-width: 280px;
+      flex: 1;
+      max-width: 520px;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 9px;
+      padding: 9px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .search-box:focus {
+      border-color: #94a3b8;
+      box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.18);
+    }
+
+    .attention-row {
+      border-left: 4px solid var(--amber);
+      background: #fffbeb;
+    }
+
+    .attention-row.urgent {
+      border-left-color: var(--red);
+      background: #fef2f2;
+    }
+
+    .attention-badge {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .attention-badge.urgent {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .alert-card.clickable {
+      cursor: pointer;
+      transition: transform 0.12s ease;
+    }
+
+    .alert-card.clickable:hover {
+      transform: translateY(-2px);
+    }
+
+  
+    .auth-screen {
+      min-height: 100vh;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: #f4f6f8;
+    }
+
+    .auth-screen.show {
+      display: flex;
+    }
+
+    .auth-card {
+      width: min(420px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .auth-logo {
+      font-size: 36px;
+      margin-bottom: 8px;
+    }
+
+    .auth-card h1 {
+      margin: 0;
+      font-size: 25px;
+    }
+
+    .auth-card p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .auth-card label {
+      display: block;
+      margin: 16px 0 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #374151;
+    }
+
+    .auth-input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .auth-input:focus {
+      border-color: #94a3b8;
+      box-shadow: 0 0 0 3px rgba(148,163,184,.18);
+    }
+
+    .auth-button {
+      width: 100%;
+      margin-top: 18px;
+      background: #111827;
+      color: #fff;
+      padding: 12px 16px;
+    }
+
+    .auth-button:disabled {
+      opacity: .6;
+      cursor: wait;
+    }
+
+    .auth-error {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .auth-error.show {
+      display: block;
+    }
+
+    .auth-help {
+      margin-top: 14px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .logout {
+      background: rgba(255,255,255,.12);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.2);
+    }
+
+    .session-user {
+      font-size: 11px;
+      color: #cbd5e1;
+      margin-top: 3px;
+    }
+
+    #appShell {
+      display: none;
+    }
+
+    #appShell.show {
+      display: block;
+    }
+
   </style>
 </head>
 
@@ -574,7 +1423,13 @@
       <h1>🛍️ Fetch Admin Control Room</h1>
       <p>Operations · payments · shoppers · live orders</p>
     </div>
-    <button class="refresh" onclick="loadDashboard()">Refresh now</button>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+      <div style="text-align:right;">
+        <div class="session-user" id="sessionUser"></div>
+      </div>
+      <button class="refresh" onclick="loadDashboard()">Refresh now</button>
+      <button class="logout" onclick="logoutAdmin()">Log out</button>
+    </div>
   </header>
 
   <main>
@@ -701,12 +1556,24 @@
     </div>
   </div>
 
+
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <script>
     const SUPABASE_URL =
       "https://skfxzagxlxputwpwxwbe.supabase.co";
 
     const SUPABASE_KEY =
       "sb_publishable_zQueXzNbRTTsdV5xjn398Q_nSB4njep";
+
+    const supabaseClient =
+      window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_KEY
+      );
+
+    let adminSession = null;
 
     const headers = {
       apikey: SUPABASE_KEY,
@@ -862,11 +1729,19 @@
     }
 
     async function api(path) {
+      const token =
+        adminSession?.access_token ||
+        SUPABASE_KEY;
+
       const response =
         await fetch(
           `${SUPABASE_URL}/rest/v1/${path}`,
           {
-            headers
+            headers: {
+              ...headers,
+              Authorization:
+                `Bearer ${token}`
+            }
           }
         );
 
@@ -1453,6 +2328,181 @@
         "customerPaidAlert"
       ).textContent =
         customerPaid.length;
+    }
+
+
+    function showLoginScreen() {
+      document
+        .getElementById("authScreen")
+        .classList.add("show");
+
+      document
+        .getElementById("appShell")
+        .classList.remove("show");
+    }
+
+    function showAdminApp(session) {
+      adminSession =
+        session || null;
+
+      document
+        .getElementById("authScreen")
+        .classList.remove("show");
+
+      document
+        .getElementById("appShell")
+        .classList.add("show");
+
+      const email =
+        session?.user?.email ||
+        "";
+
+      document.getElementById(
+        "sessionUser"
+      ).textContent =
+        email
+          ? `Signed in: ${email}`
+          : "";
+    }
+
+    function showAuthError(message) {
+      const box =
+        document.getElementById(
+          "authError"
+        );
+
+      box.textContent =
+        message || "Could not sign in.";
+
+      box.classList.add("show");
+    }
+
+    async function loginAdmin(event) {
+      event.preventDefault();
+
+      const email =
+        document
+          .getElementById(
+            "loginEmail"
+          )
+          .value
+          .trim();
+
+      const password =
+        document
+          .getElementById(
+            "loginPassword"
+          )
+          .value;
+
+      const button =
+        document.getElementById(
+          "loginButton"
+        );
+
+      document
+        .getElementById(
+          "authError"
+        )
+        .classList.remove(
+          "show"
+        );
+
+      button.disabled = true;
+      button.textContent =
+        "Signing in…";
+
+      try {
+        const {
+          data,
+          error
+        } =
+          await supabaseClient.auth.signInWithPassword({
+            email,
+            password
+          });
+
+        if (error) {
+          throw error;
+        }
+
+        showAdminApp(
+          data.session
+        );
+
+        await loadDashboard();
+      } catch (error) {
+        console.error(
+          "FETCH ADMIN LOGIN ERROR:",
+          error
+        );
+
+        showAuthError(
+          error?.message ||
+            "Sign in failed."
+        );
+      } finally {
+        button.disabled =
+          false;
+
+        button.textContent =
+          "Sign in";
+      }
+    }
+
+    async function logoutAdmin() {
+      await supabaseClient.auth.signOut();
+
+      adminSession =
+        null;
+
+      showLoginScreen();
+    }
+
+    async function initializeAdminAuth() {
+      const {
+        data
+      } =
+        await supabaseClient.auth.getSession();
+
+      if (
+        data?.session
+      ) {
+        showAdminApp(
+          data.session
+        );
+
+        await loadDashboard();
+      } else {
+        showLoginScreen();
+      }
+
+      supabaseClient.auth.onAuthStateChange(
+        async (
+          event,
+          session
+        ) => {
+          if (
+            event ===
+              "SIGNED_IN" &&
+            session
+          ) {
+            showAdminApp(
+              session
+            );
+          }
+
+          if (
+            event ===
+            "SIGNED_OUT"
+          ) {
+            adminSession =
+              null;
+
+            showLoginScreen();
+          }
+        }
+      );
     }
 
     async function loadSubstitutionAlert() {
@@ -2223,10 +3273,23 @@
       renderOrders();
     }
 
-    loadDashboard();
+    document
+      .getElementById(
+        "loginForm"
+      )
+      .addEventListener(
+        "submit",
+        loginAdmin
+      );
+
+    initializeAdminAuth();
 
     setInterval(
-      loadDashboard,
+      () => {
+        if (adminSession) {
+          loadDashboard();
+        }
+      },
       10000
     );
   </script>
