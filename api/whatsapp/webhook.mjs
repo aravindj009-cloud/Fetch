@@ -713,7 +713,16 @@ function scoreStoreSearchResult(result, requestedName) {
   const placeType = String(result?.type || result?.class || "").toLowerCase();
   if (/(shop|amenity|tourism|office|leisure)/.test(placeType)) score += 0.05;
 
-  return Math.min(score, 1);
+  // Fetch is currently operating as a local Thiruvananthapuram MVP.
+  // A generic store name such as "Zam Zam" can exist in many cities, so
+  // a distant match must never beat a local match merely because the name
+  // tokens match.
+  const localityText = normalizeText(`${display} ${address}`);
+  if (/thiruvananthapuram|trivandrum/.test(localityText)) score += 0.20;
+  else if (/kerala/.test(localityText)) score += 0.08;
+  else score -= 0.25;
+
+  return Math.max(0, Math.min(score, 1));
 }
 
 function chooseStrongStoreResult(results, requestedName) {
@@ -4198,6 +4207,28 @@ async function cancelOrderAndReleaseShopper(order) {
       shopper_id: null,
     }
   );
+
+  // Critical: cancelling the order must also clear the customer's
+  // authoritative current_order_id. Otherwise the next "NEW ORDER"
+  // still sees the cancelled order as active.
+  try {
+    const customers = await supabaseRequest(
+      `customers?current_order_id=eq.${encodeURIComponent(order.id)}&select=id&limit=100`
+    );
+
+    if (Array.isArray(customers)) {
+      for (const customer of customers) {
+        if (customer?.id) {
+          await setCustomerCurrentOrder(customer.id, null);
+        }
+      }
+    }
+  } catch (error) {
+    console.error(
+      "FETCH CANCEL CUSTOMER POINTER CLEAR ERROR:",
+      error
+    );
+  }
 }
 
 
@@ -7918,7 +7949,10 @@ function buildCustomerPriceApprovalMessage(order) {
         String(order.delivery_pricing_source || "") ===
         "osm_osrm_mvp"
         ? `Delivery fee calculated by Fetch from road distance (up to 2 km = ₹20; above 2 km = ₹10/km).\n\n`
-        : `Delivery fee will be calculated from the delivery distance. Up to 2 km = ₹20; above 2 km = ₹10/km.\n\n`) +
+        : String(order.delivery_pricing_source || "") ===
+          "shopper_store_osrm_mvp"
+          ? `Delivery fee calculated by Fetch from the actual store-to-customer road distance (up to 2 km = ₹20; above 2 km = ₹10/km).\n\n`
+          : `Delivery fee will be calculated from the delivery distance. Up to 2 km = ₹20; above 2 km = ₹10/km.\n\n`) +
     `Is that okay? Reply YES or NO.`
   );
 }
@@ -9640,6 +9674,14 @@ async function handleShopperMessage({
         latitude,
         longitude
       );
+
+      // Safety guard: a local Fetch order must not produce a nonsensical
+      // city-to-city distance because a geocoder selected an unrelated store.
+      // Never charge a customer from an untrusted distance.
+      if (!Number.isFinite(distanceKm) || distanceKm > 100) {
+        throw new Error(`STORE_DISTANCE_UNTRUSTED: ${distanceKm} km`);
+      }
+
       const deliveryFee = calculateDeliveryFee(distanceKm);
       const total = storeAndPrice.itemTotal + deliveryFee + FETCH_FEE;
 
@@ -9676,7 +9718,7 @@ async function handleShopperMessage({
       console.error("FETCH SHOPPER STORE + PRICE ERROR:", error);
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I couldn’t calculate the delivery fee for that store. Please check the store name and reply like: Store Zam Zam Price:499"
+        "I couldn’t confidently identify that exact store location. Please reply with the actual store/branch name and price, for example: Store Zam Zam Palayam Price:499"
       );
       return;
     }
@@ -9778,6 +9820,11 @@ async function handleShopperMessage({
           latitude,
           longitude
         );
+
+        if (!Number.isFinite(distanceKm) || distanceKm > 100) {
+          throw new Error(`STORE_DISTANCE_UNTRUSTED: ${distanceKm} km`);
+        }
+
         const deliveryFee = calculateDeliveryFee(distanceKm);
         const total = storeAndPrice.itemTotal + deliveryFee + FETCH_FEE;
 
@@ -9814,7 +9861,7 @@ async function handleShopperMessage({
         console.error("FETCH FLEXIBLE STORE PRICING ERROR:", error);
         await sendWhatsAppMessage(
           normalizedPhone,
-          "I couldn’t calculate the delivery fee for that store. Please check the store name and reply: STORE: Store Name PRICE: 35"
+          "I couldn’t confidently identify that exact store location. Please reply with the actual store/branch name and price, for example: Store Zam Zam Palayam Price:499"
         );
         return;
       }
