@@ -4976,7 +4976,9 @@ async function handleCustomerMessage({
             deliveryAddress,
 
           status:
-            "finding_shopper",
+            deliveryAddress
+              ? "finding_shopper"
+              : "collecting_details",
         });
 
       if (!newOrder) {
@@ -5001,6 +5003,14 @@ async function handleCustomerMessage({
         message:
           userMessage,
       });
+
+      if (!deliveryAddress) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: ${requestedStore}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+        );
+        return;
+      }
 
       // Register the store when possible, but NEVER block
       // the shopper dispatch on store registration.
@@ -5081,10 +5091,12 @@ async function handleCustomerMessage({
         ? requestedStore
         : "Any available local store";
 
+    // A new order may use only an address explicitly present in
+    // the current customer message. Never inherit a previous
+    // customer address.
     const address =
       String(
         flexibleRequest.address ||
-        customer.address ||
         ""
       ).trim();
 
@@ -7116,10 +7128,17 @@ async function handleCustomerMessage({
         ? requestedStore
         : "Any available local store";
 
+    // For a new shopping request, accept a delivery address only
+    // when it came from the current customer message. Never fall
+    // back to customer.address, which may belong to an old order.
+    const currentMessageRequest =
+      extractFlexibleShoppingRequest(
+        userMessage
+      );
+
     const address =
-      (
-        decision.delivery_address ||
-        customer.address ||
+      String(
+        currentMessageRequest?.address ||
         ""
       ).trim();
 
