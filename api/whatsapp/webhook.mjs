@@ -3929,7 +3929,7 @@ async function resetCustomerForNewOrder(
     ];
 
     if (cancellableStatuses.includes(activeOrder.status)) {
-      await cancelOrderAndReleaseShopper(activeOrder);
+      await cancelOrderAndReleaseShopper(activeOrder, customer.id);
     } else if (ACTIVE_ORDER_STATUSES.includes(activeOrder.status)) {
       return { ok: false, reason: "active_live_order" };
     }
@@ -4132,7 +4132,7 @@ function looksLikeContaminatedItems(items) {
   return false;
 }
 
-async function cancelOrderAndReleaseShopper(order) {
+async function cancelOrderAndReleaseShopper(order, customerId = null) {
   if (!order?.id) return;
 
   const jobs =
@@ -4208,18 +4208,27 @@ async function cancelOrderAndReleaseShopper(order) {
     }
   );
 
-  // Critical: cancelling the order must also clear the customer's
-  // authoritative current_order_id. Otherwise the next "NEW ORDER"
-  // still sees the cancelled order as active.
+  // Critical: clear the authoritative customer pointer directly.
+  // The previous implementation searched by order_id. If the pointer was
+  // stale, missing, or temporarily inconsistent, cancellation could still
+  // report success while NEW ORDER continued to see the old order.
   try {
-    const customers = await supabaseRequest(
-      `customers?current_order_id=eq.${encodeURIComponent(order.id)}&select=id&limit=100`
-    );
+    if (customerId) {
+      await setCustomerCurrentOrder(customerId, null);
+      console.log(
+        "FETCH CANCEL CUSTOMER POINTER CLEARED:",
+        JSON.stringify({ customerId, orderId: order.id })
+      );
+    } else {
+      const customers = await supabaseRequest(
+        `customers?current_order_id=eq.${encodeURIComponent(order.id)}&select=id&limit=100`
+      );
 
-    if (Array.isArray(customers)) {
-      for (const customer of customers) {
-        if (customer?.id) {
-          await setCustomerCurrentOrder(customer.id, null);
+      if (Array.isArray(customers)) {
+        for (const customer of customers) {
+          if (customer?.id) {
+            await setCustomerCurrentOrder(customer.id, null);
+          }
         }
       }
     }
@@ -4228,6 +4237,7 @@ async function cancelOrderAndReleaseShopper(order) {
       "FETCH CANCEL CUSTOMER POINTER CLEAR ERROR:",
       error
     );
+    throw new Error("Cancellation could not clear the customer order pointer");
   }
 }
 
