@@ -83,49 +83,60 @@ function normalizePhone(phone) {
 async function supabaseRequest(path, options = {}) {
   if (!SUPABASE_KEY) {
     throw new Error(
-      "VITE_SUPABASE_PUBLISHABLE_KEY is missing"
+      "SUPABASE_SECRET_KEY is missing"
     );
   }
 
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/${path}`,
-    {
-      ...options,
-      headers: {
-        apikey: SUPABASE_KEY,
-        Authorization:
-          `Bearer ${SUPABASE_KEY}`,
-        "Content-Type":
-          "application/json",
-        ...(options.headers || {}),
-      },
+  const maxAttempts = 2;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/${path}`,
+      {
+        ...options,
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          "Content-Type": "application/json",
+          ...(options.headers || {}),
+        },
+      }
+    );
+
+    const raw = await response.text();
+
+    let data = null;
+    if (raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = raw;
+      }
     }
-  );
 
-  const raw =
-    await response.text();
-
-  let data = null;
-
-  if (raw) {
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      data = raw;
+    if (response.ok) {
+      return data;
     }
-  }
 
-  if (!response.ok) {
+    // Supabase can occasionally return a transient gateway timeout.
+    // Retry once, then surface the real error instead of silently failing.
+    if (response.status === 504 && attempt < maxAttempts) {
+      console.warn(
+        "FETCH SUPABASE 504: retrying request",
+        JSON.stringify({ path })
+      );
+      await sleep(500);
+      continue;
+    }
+
     throw new Error(
       `Supabase ${response.status}: ${
-        typeof data === "string"
-          ? data
-          : JSON.stringify(data)
+        typeof data === "string" ? data : JSON.stringify(data)
       }`
     );
   }
 
-  return data;
+  throw new Error("Supabase request failed");
 }
 
 async function sendWhatsAppMessage(
@@ -1184,21 +1195,27 @@ function buildSingleOrderSummary(
 ========================================================= */
 
 async function getActiveOrder(
-  customerId
+  customerOrId
 ) {
+  const customerId =
+    typeof customerOrId === "object"
+      ? customerOrId?.id
+      : customerOrId;
+
   if (!customerId) {
     return null;
   }
 
   /*
     The customer's current_order_id is the authoritative
-    conversational order. This prevents YES / PAID / ADD /
-    CANCEL from jumping to another active order.
+    conversational order. If the customer row is already loaded,
+    use that value directly so every WhatsApp message does not make
+    an unnecessary second Supabase request.
   */
   const currentOrderId =
-    await getCustomerCurrentOrderId(
-      customerId
-    );
+    typeof customerOrId === "object"
+      ? customerOrId?.current_order_id || null
+      : await getCustomerCurrentOrderId(customerId);
 
   if (
     currentOrderId
@@ -4737,7 +4754,7 @@ async function handleCustomerMessage({
 
   const activeOrder =
     await getActiveOrder(
-      customer.id
+      customer
     );
 
   const latestOrder =
