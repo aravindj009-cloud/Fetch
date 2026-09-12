@@ -1266,6 +1266,32 @@ async function updateOrder(
     : null;
 }
 
+async function clearCustomerAddress(
+  customerId
+) {
+  if (!customerId) return;
+
+  await supabaseRequest(
+    `customers?id=eq.${encodeURIComponent(
+      customerId
+    )}`,
+    {
+      method: "PATCH",
+
+      headers: {
+        Prefer:
+          "return=minimal",
+        "Content-Type":
+          "application/json",
+      },
+
+      body: JSON.stringify({
+        address: null,
+      }),
+    }
+  );
+}
+
 /* =========================================================
    MESSAGE MEMORY
 ========================================================= */
@@ -4774,6 +4800,12 @@ async function handleCustomerMessage({
         customer.id,
         null
       );
+
+      // A new order must request a fresh delivery location.
+      // Do not carry the previous customer's saved address forward.
+      await clearCustomerAddress(
+        customer.id
+      );
     }
 
     await saveMessage({
@@ -5092,7 +5124,6 @@ async function handleCustomerMessage({
     const address =
       String(
         flexibleRequest.address ||
-        customer.address ||
         ""
       ).trim();
 
@@ -7100,9 +7131,8 @@ async function handleCustomerMessage({
         : "Any available local store";
 
     const address =
-      (
+      String(
         decision.delivery_address ||
-        customer.address ||
         ""
       ).trim();
 
