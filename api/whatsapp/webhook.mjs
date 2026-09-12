@@ -398,6 +398,25 @@ async function updateCustomerAddress(
   );
 }
 
+async function clearCustomerAddress(customerId) {
+  if (!customerId) return;
+
+  await supabaseRequest(
+    `customers?id=eq.${encodeURIComponent(
+      customerId
+    )}`,
+    {
+      method: "PATCH",
+      headers: {
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify({
+        address: null,
+      }),
+    }
+  );
+}
+
 /* =========================================================
    SHOPPERS
 ========================================================= */
@@ -1691,8 +1710,8 @@ async function offerOrderToShopper(
 
       const shopperInstruction =
         isFlexibleStore
-          ? "Please find the requested item at a suitable nearby shop, check the product price, and decide the delivery fee."
-          : "Please check the product price at the requested store and decide the delivery fee.";
+          ? "Please find the requested item at a suitable nearby shop and report the product price. Fetch will calculate the delivery fee after the actual store is known."
+          : "Please check the product price at the requested store. Fetch has already calculated the delivery fee from the customer’s delivery location.";
 
       const message =
         `🛍️ *New Fetch Job*\n\n` +
@@ -3666,6 +3685,35 @@ function buildHumanNewOrderReply() {
   return "Absolutely 👍 Let’s start a new order. What would you like me to fetch?";
 }
 
+async function resetCustomerForNewOrder(
+  customer,
+  activeOrder
+) {
+  if (!customer?.id) {
+    return { ok: false, reason: "customer_missing" };
+  }
+
+  if (activeOrder) {
+    const cancellableStatuses = [
+      "collecting_details",
+      "awaiting_confirmation",
+      "awaiting_customer_price_confirmation",
+      "finding_shopper",
+    ];
+
+    if (cancellableStatuses.includes(activeOrder.status)) {
+      await cancelOrderAndReleaseShopper(activeOrder);
+    } else if (ACTIVE_ORDER_STATUSES.includes(activeOrder.status)) {
+      return { ok: false, reason: "active_live_order" };
+    }
+  }
+
+  await setCustomerCurrentOrder(customer.id, null);
+  await clearCustomerAddress(customer.id);
+
+  return { ok: true };
+}
+
 function isSimpleConfirmation(text) {
   const value = normalizeCustomerText(text)
     .toLowerCase()
@@ -4771,19 +4819,33 @@ async function handleCustomerMessage({
     await saveMessage({
       customerId:
         customer.id,
-
       orderId:
         null,
-
       phone:
         normalizedPhone,
-
       role:
         "user",
-
       message:
         userMessage,
     });
+
+    const reset =
+      await resetCustomerForNewOrder(
+        customer,
+        activeOrder
+      );
+
+    if (!reset.ok) {
+      const reply =
+        "You already have an active order with a shopper. Please finish or cancel that order before starting a new one.";
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return;
+    }
 
     const reply =
       buildHumanNewOrderReply();
@@ -4791,16 +4853,12 @@ async function handleCustomerMessage({
     await saveMessage({
       customerId:
         customer.id,
-
       orderId:
         null,
-
       phone:
         normalizedPhone,
-
       role:
         "assistant",
-
       message:
         reply,
     });
@@ -5012,36 +5070,30 @@ async function handleCustomerMessage({
         return;
       }
 
-      // Register the store when possible, but NEVER block
-      // the shopper dispatch on store registration.
-      await ensureStoreForOrder(
-        newOrder
-      );
+      try {
+        const ensuredStore =
+          await ensureStoreForOrder(newOrder);
 
-      const dispatch =
-        await offerOrderToShopper(
-          newOrder
-        );
+        if (!ensuredStore) {
+          throw new Error("Could not resolve requested store");
+        }
 
-      if (
-        dispatch.success
-      ) {
+        const pricedOrder =
+          await applyDeliveryPricing(newOrder);
+
         await sendWhatsAppMessage(
           normalizedPhone,
-
-          `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: ${requestedStore}\n` +
-          (
-            deliveryAddress
-              ? `📍 Deliver to: ${deliveryAddress}\n`
-              : ""
-          ) +
-          `\nI’ve sent the order to all available Fetch shoppers nearby. Whoever accepts first will take the job. They’ll check the product price and send it to you for approval.`
+          buildPricingConfirmationMessage(pricedOrder)
         );
-      } else {
+      } catch (pricingError) {
+        console.error(
+          "FETCH NEW ORDER PRICING ERROR:",
+          pricingError
+        );
+
         await sendWhatsAppMessage(
           normalizedPhone,
-
-          `Got it 👍 I have your order for ${cleanItems} from ${requestedStore}, but there isn’t an available shopper right now.`
+          "I have your order and delivery address, but I couldn’t calculate the road distance yet. Please check the store/address and try again."
         );
       }
 
@@ -5152,33 +5204,62 @@ async function handleCustomerMessage({
       return;
     }
 
-    if (customer.address !== address) {
-      await updateCustomerAddress(
-        customer.id,
-        address
+    await updateCustomerAddress(
+      customer.id,
+      address
+    );
+
+    const isFlexibleStore =
+      /^any available local store$/i.test(
+        String(storeName).trim()
       );
+
+    if (isFlexibleStore) {
+      const findingShopper =
+        await updateOrder(
+          order.id,
+          { status: "finding_shopper" }
+        );
+
+      const dispatch =
+        await offerOrderToShopper(
+          findingShopper || order
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        dispatch.success
+          ? `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to an available shopper. They’ll find a suitable store first, and Fetch will calculate the delivery fee from the actual store location.`
+          : `Got it 👍 I have your order for ${items}, but there isn’t an available shopper right now. Your order is saved.`
+      );
+
+      return;
     }
 
-    const dispatch =
-      await offerOrderToShopper(
-        order
+    try {
+      const ensuredStore =
+        await ensureStoreForOrder(order);
+
+      if (!ensuredStore) {
+        throw new Error("Could not resolve requested store");
+      }
+
+      const pricedOrder =
+        await applyDeliveryPricing(order);
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildPricingConfirmationMessage(pricedOrder)
+      );
+    } catch (pricingError) {
+      console.error(
+        "FETCH NEW ORDER PRICING ERROR:",
+        pricingError
       );
 
-    if (dispatch.success) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to all available Fetch shoppers nearby. Whoever accepts first will take the job. They’ll check the product price and delivery fee and send the details to you for approval.`
-      );
-    } else {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Got it 👍 I have your order for ${items}` +
-        (
-          requestedStore
-            ? ` from ${requestedStore}`
-            : ""
-        ) +
-        `. There isn’t an available shopper right now, but your order is saved.`
+        "I have your order and delivery address, but I couldn’t calculate the road distance yet. Please check the store/address and try again."
       );
     }
 
@@ -5944,16 +6025,25 @@ async function handleCustomerMessage({
      WHATSAPP LOCATION
   ----------------------------------------- */
 
-  if (
-    location &&
-    Number.isFinite(Number(location.latitude)) &&
-    Number.isFinite(Number(location.longitude))
-  ) {
-    const latitude =
-      Number(location.latitude);
+  const locationLatitude = Number(location?.latitude);
+  const locationLongitude = Number(location?.longitude);
+  const hasValidLocation =
+    Number.isFinite(locationLatitude) &&
+    Number.isFinite(locationLongitude) &&
+    locationLatitude !== 0 &&
+    locationLongitude !== 0;
 
-    const longitude =
-      Number(location.longitude);
+  if (location && !hasValidLocation) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "I received the location, but it doesn’t contain valid coordinates. Please use WhatsApp → Location → Send your current location and try again. 📍"
+    );
+    return;
+  }
+
+  if (location && hasValidLocation) {
+    const latitude = locationLatitude;
+    const longitude = locationLongitude;
 
     const locationLabel =
       [
@@ -7487,7 +7577,7 @@ function buildCustomerPriceApprovalMessage(order) {
     (String(order.delivery_pricing_source || "") ===
       "whatsapp_location_osrm_mvp"
       ? `Delivery fee calculated by Fetch from road distance (₹10/km, ₹20 minimum).\n\n`
-      : `Delivery price is decided by the shopper; prices may vary.\nMinimum is ₹20 per order and may increase based on the KM.\n\n`) +
+      : `Delivery fee will be calculated by Fetch from the delivery distance once the store is known.\nMinimum is ₹20 per order and may increase based on the KM.\n\n`) +
     `Is that okay? Reply YES or NO.`
   );
 }
@@ -8628,7 +8718,7 @@ async function handleShopperMessage({
       claimedOrder.delivery_pricing_status === "calculated" &&
       claimedOrder.delivery_pricing_source === "whatsapp_location_osrm_mvp"
         ? "Accepted ✅\n\nYou Fetched this order first. Please check the product price and reply like this:\nPRICE: 35\n\nFetch has already calculated the delivery fee from the customer’s road distance."
-        : "Accepted ✅\n\nYou Fetched this order first. Please check the product price and decide the delivery fee. Reply like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery price is decided by the shopper; prices may vary. Minimum is ₹20 per order and may increase based on the KM.";
+        : "Accepted ✅\n\nYou Fetched this order first. Please find the item at a suitable nearby store, check the product price, and reply like this:\nPRICE: 35\n\nFetch will calculate the delivery fee from the actual store location.";
 
     await sendWhatsAppMessage(
       normalizedPhone,
@@ -9284,7 +9374,7 @@ async function handleShopperMessage({
   ) {
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Please include both values like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery price is decided by the shopper; prices may vary. Minimum is ₹20 per order and may increase based on the KM."
+      "Please include both values like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery fee is calculated by Fetch from the delivery distance. Minimum is ₹20 per order and may increase based on the KM."
     );
     return;
   }
