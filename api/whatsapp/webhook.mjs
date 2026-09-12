@@ -6053,9 +6053,10 @@ async function handleCustomerMessage({
     };
 
     /*
-      Location is for delivery coordination.
-      The shopper still decides the delivery fee in the MVP.
-      Do NOT reset the shopper's product price or delivery fee.
+      Save the customer's location first.
+      For a known store, Fetch calculates the road distance and
+      delivery fee before dispatching, so the customer can approve
+      a deterministic distance-based charge.
     */
 
     const updatedOrder =
@@ -6099,32 +6100,50 @@ async function handleCustomerMessage({
         hasItems &&
         hasStore
       ) {
-        const findingShopper =
-          await updateOrder(
-            updatedOrder.id,
-            {
-              status:
-                "finding_shopper",
-            }
-          );
+        /*
+          If the customer named a specific store, we know the origin
+          coordinates and can calculate the actual road distance now.
+          Do NOT dispatch until the customer has approved the price.
+        */
+        try {
+          const pricedOrder =
+            await applyDeliveryPricingFromCoordinates(
+              updatedOrder,
+              latitude,
+              longitude
+            );
 
-        const dispatch =
-          await offerOrderToShopper(
-            findingShopper ||
-              updatedOrder
-          );
+          const reply =
+            buildPricingConfirmationMessage(
+              pricedOrder
+            );
 
-        if (
-          dispatch.success
-        ) {
+          await saveMessage({
+            customerId:
+              customer.id,
+            orderId:
+              pricedOrder.id,
+            phone:
+              normalizedPhone,
+            role:
+              "assistant",
+            message:
+              reply,
+          });
+
           await sendWhatsAppMessage(
             normalizedPhone,
-            `Location saved 📍\n\nI’ve sent your order to an available shopper. They’ll check the product price and delivery fee and send the details to you for approval.`
+            reply
           );
-        } else {
+        } catch (pricingError) {
+          console.error(
+            "FETCH LOCATION PRICING ERROR:",
+            pricingError
+          );
+
           await sendWhatsAppMessage(
             normalizedPhone,
-            "Location saved 📍. Your order is ready, but there isn’t an available shopper right now."
+            "Location saved 📍, but I couldn’t calculate the delivery distance for this store yet. Please check the store name or use a nearby/local store request."
           );
         }
 
