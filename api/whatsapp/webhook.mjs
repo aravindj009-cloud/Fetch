@@ -9603,6 +9603,85 @@ async function handleShopperMessage({
     return;
   }
 
+  /* SHOPPER STORE + PRICE — CHECK FIRST
+   *
+   * A shopper may naturally report the actual store and product price
+   * even when the customer originally typed a store name. Do not use
+   * order.store_name alone to decide the workflow: an unverified store
+   * name is not proof that Fetch has a trusted store location.
+   */
+  const storeAndPrice = parseShopperStoreAndPrice(rawText);
+
+  if (storeAndPrice) {
+    const latitude = Number(order.customer_latitude);
+    const longitude = Number(order.customer_longitude);
+    const hasValidCustomerLocation =
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      latitude !== 0 &&
+      longitude !== 0;
+
+    if (!hasValidCustomerLocation) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I need the customer’s valid WhatsApp location before I can calculate the delivery fee."
+      );
+      return;
+    }
+
+    try {
+      const store = await getOrCreateStoreForPricing(storeAndPrice.storeName);
+      if (!store) {
+        throw new Error("STORE_NOT_FOUND");
+      }
+
+      const distanceKm = await calculateRoadDistanceKmFromCoordinates(
+        store,
+        latitude,
+        longitude
+      );
+      const deliveryFee = calculateDeliveryFee(distanceKm);
+      const total = storeAndPrice.itemTotal + deliveryFee + FETCH_FEE;
+
+      const updatedOrder = await updateOrder(order.id, {
+        store_id: store.id || null,
+        store_name: storeAndPrice.storeName,
+        item_total: storeAndPrice.itemTotal,
+        fetch_fee: FETCH_FEE,
+        delivery_rate_per_km: DELIVERY_RATE_PER_KM,
+        distance_km: distanceKm,
+        delivery_fee: deliveryFee,
+        total_amount: total,
+        delivery_pricing_status: "calculated",
+        delivery_pricing_source: "shopper_store_osrm_mvp",
+        priced_at: new Date().toISOString(),
+        status: "awaiting_customer_price_confirmation",
+      });
+
+      if (!updatedOrder) {
+        throw new Error("Could not save shopper store pricing");
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Price saved ✅\n\n🏪 Store: ${storeAndPrice.storeName}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(storeAndPrice.itemTotal)}\n🚚 Delivery fee (Fetch-calculated): ₹${formatRupees(deliveryFee)}\n💰 Total: ₹${formatRupees(total)}\n\nI’ve sent it to the customer for approval.`
+      );
+
+      await notifyCustomerForOrder(
+        order.id,
+        buildCustomerPriceApprovalMessage(updatedOrder)
+      );
+      return;
+    } catch (error) {
+      console.error("FETCH SHOPPER STORE + PRICE ERROR:", error);
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t calculate the delivery fee for that store. Please check the store name and reply like: Store Zam Zam Price:499"
+      );
+      return;
+    }
+  }
+
   /* PRODUCT PRICE + DELIVERY FEE */
 
   // Specific-store orders that already have a customer GPS location:
