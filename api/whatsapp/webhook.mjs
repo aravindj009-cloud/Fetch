@@ -7849,15 +7849,24 @@ function parseShopperProductPrice(text) {
 function parseShopperStoreAndPrice(text) {
   const value = String(text || "")
     .trim()
+    .replace(/[,;]+/g, " ")
     .replace(/\s+/g, " ");
 
+  // Accept both the instructed format and natural variations:
+  // STORE: Zam Zam PRICE: 499
+  // Store Zam Zam Price:499
+  // STORE: Zam Zam, PRICE 499
+  // Store: Zam Zam Price 499
   const match = value.match(
-    /^store\s*:\s*(.+?)\s+price\s*:\s*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
+    /^store\s*:?[\s]+(.+?)\s+price\s*:?[\s]*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
   );
 
   if (!match) return null;
 
-  const storeName = match[1].trim();
+  const storeName = match[1]
+    .trim()
+    .replace(/[,:;]+$/g, "")
+    .trim();
   const itemTotal = Number(match[2]);
 
   if (!storeName || !Number.isFinite(itemTotal) || itemTotal < 0) {
@@ -9996,7 +10005,7 @@ async function handleShopperMessage({
   await sendWhatsAppMessage(
     normalizedPhone,
 
-    "I didn’t recognise that command. You can send UPI/payment details, ACCEPT, DECLINE, PRICE + DELIVERY FEE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED, AVAILABLE, EARNINGS, PAYOUT, LAST ORDER or STATUS."
+    "I didn’t recognise that command. You can send UPI/payment details, ACCEPT, DECLINE, PRICE, STORE + PRICE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED, AVAILABLE, EARNINGS, PAYOUT, LAST ORDER or STATUS."
   );
 }
 
