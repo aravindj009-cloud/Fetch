@@ -554,6 +554,37 @@ async function getStoreByName(storeName) {
   }
 }
 
+async function getOrCreateStoreForPricing(storeName) {
+  const requested = String(storeName || "").trim();
+  if (!requested || /^any available local store$/i.test(requested)) {
+    return null;
+  }
+
+  const existing = await getStoreByName(requested);
+  if (existing) return existing;
+
+  // A customer may request a store that is not yet in Fetch's store table.
+  // Create a lightweight store record so its location can be geocoded/cached.
+  const pieces = requested.split(",").map(x => x.trim()).filter(Boolean);
+  const name = pieces.length >= 2 ? pieces[0] : requested;
+  const address = pieces.length >= 2
+    ? pieces.slice(1).join(", ")
+    : `${requested}, Thiruvananthapuram, Kerala, India`;
+
+  try {
+    const data = await supabaseRequest("stores", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ name, address, active: true }),
+    });
+    return Array.isArray(data) ? data[0] || null : data || null;
+  } catch (error) {
+    console.error("FETCH STORE CREATE FOR PRICING ERROR:", error);
+    // Do not block pricing; use a temporary geocodable store object.
+    return { name, address };
+  }
+}
+
 async function updateStoreLocation(
   storeId,
   latitude,
@@ -751,11 +782,11 @@ async function applyDeliveryPricingFromCoordinates(
   }
 
   const store =
-    await getStoreByName(order.store_name);
+    await getOrCreateStoreForPricing(order.store_name);
 
   if (!store) {
     throw new Error(
-      `Store not found in Fetch stores: ${order.store_name}`
+      `A specific store is required before distance pricing: ${order.store_name}`
     );
   }
 
@@ -1266,32 +1297,6 @@ async function updateOrder(
     : null;
 }
 
-async function clearCustomerAddress(
-  customerId
-) {
-  if (!customerId) return;
-
-  await supabaseRequest(
-    `customers?id=eq.${encodeURIComponent(
-      customerId
-    )}`,
-    {
-      method: "PATCH",
-
-      headers: {
-        Prefer:
-          "return=minimal",
-        "Content-Type":
-          "application/json",
-      },
-
-      body: JSON.stringify({
-        address: null,
-      }),
-    }
-  );
-}
-
 /* =========================================================
    MESSAGE MEMORY
 ========================================================= */
@@ -1637,17 +1642,17 @@ async function offerOrderToShopper(
           shopper.id
         );
 
-      const customerLatitude =
-        Number(order.customer_latitude);
-
-      const customerLongitude =
-        Number(order.customer_longitude);
-
       const hasCustomerCoordinates =
-        Number.isFinite(customerLatitude) &&
-        Number.isFinite(customerLongitude) &&
-        customerLatitude !== 0 &&
-        customerLongitude !== 0;
+        Number.isFinite(
+          Number(
+            order.customer_latitude
+          )
+        ) &&
+        Number.isFinite(
+          Number(
+            order.customer_longitude
+          )
+        );
 
       const storeName =
         String(
@@ -1671,7 +1676,11 @@ async function offerOrderToShopper(
       const locationPinLine =
         hasCustomerCoordinates
           ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-              `${customerLatitude},${customerLongitude}`
+              `${Number(
+                order.customer_latitude
+              )},${Number(
+                order.customer_longitude
+              )}`
             )}\n`
           : "";
 
@@ -4759,55 +4768,6 @@ async function handleCustomerMessage({
       userMessage
     )
   ) {
-    /*
-      NEW ORDER is a true conversation reset.
-
-      A pending order that is still collecting details or
-      finding a shopper must be cancelled before we start
-      another request. This prevents stale orders/offers from
-      being reused or dispatched later.
-
-      Once a shopper has accepted, do NOT silently cancel the
-      live order just because the customer says NEW ORDER.
-    */
-    if (activeOrder) {
-      const canResetPendingOrder =
-        [
-          "collecting_details",
-          "finding_shopper",
-        ].includes(
-          String(activeOrder.status || "").toLowerCase()
-        ) &&
-        !activeOrder.shopper_id;
-
-      if (!canResetPendingOrder) {
-        const reply =
-          "⚠️ You already have an active Fetch order in progress. Please finish or cancel that order before starting a new one.";
-
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          reply
-        );
-
-        return;
-      }
-
-      await cancelOrderAndReleaseShopper(
-        activeOrder
-      );
-
-      await setCustomerCurrentOrder(
-        customer.id,
-        null
-      );
-
-      // A new order must request a fresh delivery location.
-      // Do not carry the previous customer's saved address forward.
-      await clearCustomerAddress(
-        customer.id
-      );
-    }
-
     await saveMessage({
       customerId:
         customer.id,
@@ -5124,6 +5084,7 @@ async function handleCustomerMessage({
     const address =
       String(
         flexibleRequest.address ||
+        customer.address ||
         ""
       ).trim();
 
@@ -5971,27 +5932,16 @@ async function handleCustomerMessage({
      WHATSAPP LOCATION
   ----------------------------------------- */
 
-  if (location) {
+  if (
+    location &&
+    Number.isFinite(Number(location.latitude)) &&
+    Number.isFinite(Number(location.longitude))
+  ) {
     const latitude =
       Number(location.latitude);
 
     const longitude =
       Number(location.longitude);
-
-    const hasValidCustomerLocation =
-      Number.isFinite(latitude) &&
-      Number.isFinite(longitude) &&
-      latitude !== 0 &&
-      longitude !== 0;
-
-    if (!hasValidCustomerLocation) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "I received the location message, but the location coordinates were invalid. Please use WhatsApp 📎 → Location → Send your current location and try again."
-      );
-
-      return;
-    }
 
     const locationLabel =
       [
@@ -6053,10 +6003,9 @@ async function handleCustomerMessage({
     };
 
     /*
-      Save the customer's location first.
-      For a known store, Fetch calculates the road distance and
-      delivery fee before dispatching, so the customer can approve
-      a deterministic distance-based charge.
+      Location is for delivery coordination.
+      The shopper still decides the delivery fee in the MVP.
+      Do NOT reset the shopper's product price or delivery fee.
     */
 
     const updatedOrder =
@@ -6100,52 +6049,70 @@ async function handleCustomerMessage({
         hasItems &&
         hasStore
       ) {
-        /*
-          If the customer named a specific store, we know the origin
-          coordinates and can calculate the actual road distance now.
-          Do NOT dispatch until the customer has approved the price.
-        */
-        try {
-          const pricedOrder =
-            await applyDeliveryPricingFromCoordinates(
-              updatedOrder,
-              latitude,
-              longitude
+        const isFlexibleStore =
+          !updatedOrder.store_name ||
+          /^any available local store$/i.test(
+            String(updatedOrder.store_name).trim()
+          );
+
+        // For a specifically requested store, Fetch calculates the road distance
+        // and delivery fee before any shopper is dispatched.
+        if (!isFlexibleStore) {
+          try {
+            await getOrCreateStoreForPricing(
+              updatedOrder.store_name
             );
 
-          const reply =
-            buildPricingConfirmationMessage(
-              pricedOrder
-            );
+            const pricedOrder =
+              await applyDeliveryPricingFromCoordinates(
+                updatedOrder,
+                latitude,
+                longitude
+              );
 
-          await saveMessage({
-            customerId:
-              customer.id,
-            orderId:
-              pricedOrder.id,
-            phone:
+            const reply =
+              buildCustomerPriceApprovalMessage(
+                pricedOrder
+              );
+
+            await sendWhatsAppMessage(
               normalizedPhone,
-            role:
-              "assistant",
-            message:
-              reply,
-          });
+              `Location saved 📍\n\n${reply}`
+            );
+          } catch (pricingError) {
+            console.error(
+              "FETCH LOCATION PRICING ERROR:",
+              pricingError
+            );
 
-          await sendWhatsAppMessage(
-            normalizedPhone,
-            reply
-          );
-        } catch (pricingError) {
-          console.error(
-            "FETCH LOCATION PRICING ERROR:",
-            pricingError
-          );
+            await sendWhatsAppMessage(
+              normalizedPhone,
+              "Location saved 📍, but I couldn’t calculate the road distance for this store yet. Please check the store name or include the area/locality."
+            );
+          }
 
-          await sendWhatsAppMessage(
-            normalizedPhone,
-            "Location saved 📍, but I couldn’t calculate the delivery distance for this store yet. Please check the store name or use a nearby/local store request."
-          );
+          return;
         }
+
+        // For an open-ended nearby-store request, the shopper must first
+        // choose the actual store. Distance pricing happens after that.
+        const findingShopper =
+          await updateOrder(
+            updatedOrder.id,
+            { status: "finding_shopper" }
+          );
+
+        const dispatch =
+          await offerOrderToShopper(
+            findingShopper || updatedOrder
+          );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          dispatch.success
+            ? "Location saved 📍\n\nI’ve sent your order to an available shopper. They’ll find the item at a suitable nearby store, then Fetch will calculate the delivery fee from the actual store location."
+            : "Location saved 📍. Your order is ready, but there isn’t an available shopper right now."
+        );
 
         return;
       }
@@ -7150,8 +7117,9 @@ async function handleCustomerMessage({
         : "Any available local store";
 
     const address =
-      String(
+      (
         decision.delivery_address ||
+        customer.address ||
         ""
       ).trim();
 
@@ -7333,10 +7301,25 @@ async function handleCustomerMessage({
     }
 
     try {
+      // Register/resolve the requested store first. If the customer already
+      // shared GPS, price from the actual store coordinates to the customer;
+      // otherwise fall back to address-based geocoding.
+      await ensureStoreForOrder(changedOrder);
+
+      const hasCustomerCoordinates =
+        Number.isFinite(Number(changedOrder.customer_latitude)) &&
+        Number.isFinite(Number(changedOrder.customer_longitude)) &&
+        Number(changedOrder.customer_latitude) !== 0 &&
+        Number(changedOrder.customer_longitude) !== 0;
+
       const pricedOrder =
-        await applyDeliveryPricing(
-          changedOrder
-        );
+        hasCustomerCoordinates
+          ? await applyDeliveryPricingFromCoordinates(
+              changedOrder,
+              Number(changedOrder.customer_latitude),
+              Number(changedOrder.customer_longitude)
+            )
+          : await applyDeliveryPricing(changedOrder);
 
       const reply =
         buildPricingConfirmationMessage(
@@ -7431,6 +7414,23 @@ function parseShopperPriceAndDelivery(text) {
 }
 
 
+function parseShopperProductPrice(text) {
+  const value = String(text || "")
+    .trim()
+    .replace(/,/g, "")
+    .replace(/\s+/g, " ");
+
+  const match = value.match(
+    /^price\s*: ?\s*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
+  );
+
+  if (!match) return null;
+  const itemTotal = Number(match[1]);
+  return Number.isFinite(itemTotal) && itemTotal >= 0
+    ? itemTotal
+    : null;
+}
+
 function isSuccessfulExistingDispatch(
   dispatch
 ) {
@@ -7465,8 +7465,10 @@ function buildCustomerPriceApprovalMessage(order) {
     `💰 Total: ₹${formatRupees(
       total
     )}\n\n` +
-    `Delivery price is decided by the shopper; prices may vary.\n` +
-    `Minimum is ₹20 per order and may increase based on the KM.\n\n` +
+    (String(order.delivery_pricing_source || "") ===
+      "whatsapp_location_osrm_mvp"
+      ? `Delivery fee calculated by Fetch from road distance (₹10/km, ₹20 minimum).\n\n`
+      : `Delivery price is decided by the shopper; prices may vary.\nMinimum is ₹20 per order and may increase based on the KM.\n\n`) +
     `Is that okay? Reply YES or NO.`
   );
 }
@@ -8603,9 +8605,15 @@ async function handleShopperMessage({
       shopper.id
     );
 
+    const acceptanceMessage =
+      claimedOrder.delivery_pricing_status === "calculated" &&
+      claimedOrder.delivery_pricing_source === "whatsapp_location_osrm_mvp"
+        ? "Accepted ✅\n\nYou Fetched this order first. Please check the product price and reply like this:\nPRICE: 35\n\nFetch has already calculated the delivery fee from the customer’s road distance."
+        : "Accepted ✅\n\nYou Fetched this order first. Please check the product price and decide the delivery fee. Reply like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery price is decided by the shopper; prices may vary. Minimum is ₹20 per order and may increase based on the KM.";
+
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Accepted ✅\n\nYou Fetched this order first. Please check the product price and decide the delivery fee. Reply like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery price is decided by the shopper; prices may vary. Minimum is ₹20 per order and may increase based on the KM."
+      acceptanceMessage
     );
 
     await notifyCustomerForOrder(
@@ -9122,6 +9130,61 @@ async function handleShopperMessage({
   }
 
   /* PRODUCT PRICE + DELIVERY FEE */
+
+  // For orders already priced by Fetch from GPS/OSRM, the shopper only
+  // needs to report the product price. Fetch keeps the calculated delivery fee.
+  if (
+    order.delivery_pricing_status === "calculated" &&
+    order.delivery_pricing_source === "whatsapp_location_osrm_mvp"
+  ) {
+    const itemTotal = parseShopperProductPrice(rawText);
+
+    if (itemTotal != null) {
+      const deliveryFee = Number(order.delivery_fee || 0);
+      const total = itemTotal + deliveryFee + FETCH_FEE;
+
+      const updatedOrder = await updateOrder(
+        order.id,
+        {
+          item_total: itemTotal,
+          fetch_fee: FETCH_FEE,
+          delivery_fee: deliveryFee,
+          total_amount: total,
+          delivery_pricing_status: "calculated",
+          delivery_pricing_source: "whatsapp_location_osrm_mvp",
+          priced_at: new Date().toISOString(),
+          status: "awaiting_customer_price_confirmation",
+        }
+      );
+
+      if (!updatedOrder) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I couldn’t save the product price. Please use: PRICE: 35"
+        );
+        return;
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Price saved ✅\n\nProduct price: ₹${formatRupees(itemTotal)}\nDelivery fee (Fetch-calculated): ₹${formatRupees(deliveryFee)}\nTotal: ₹${formatRupees(total)}\n\nI’ve sent it to the customer for approval.`
+      );
+
+      await notifyCustomerForOrder(
+        order.id,
+        buildCustomerPriceApprovalMessage(updatedOrder)
+      );
+      return;
+    }
+
+    if (/^price\b/i.test(rawText)) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Please send only the product price like this: PRICE: 35\n\nFetch has already calculated the delivery fee from the road distance."
+      );
+      return;
+    }
+  }
 
   const shopperPrice =
     parseShopperPriceAndDelivery(
