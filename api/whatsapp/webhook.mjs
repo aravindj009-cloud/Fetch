@@ -599,7 +599,7 @@ async function getOrCreateStoreForPricing(storeName) {
   const name = pieces.length >= 2 ? pieces[0] : requested;
   const address = pieces.length >= 2
     ? pieces.slice(1).join(", ")
-    : `${requested}, Thirumala, Thiruvananthapuram, Kerala, India`;
+    : `${requested}, Thiruvananthapuram, Kerala, India`;
 
   try {
     const data = await supabaseRequest("stores", {
@@ -646,33 +646,126 @@ async function updateStoreLocation(
   }
 }
 
-async function geocodeAddress(address) {
-  const query = String(address || "").trim();
+function normalizeStoreToken(value) {
+  return normalizeText(value)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(trivandrum|thiruvananthapuram|tvm|kerala|india)\b/g, " ")
+    .replace(/\b(the|restaurant|restro|cafe|shop|store|mall|bakery)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  if (!query) {
-    throw new Error("Address is missing for geocoding");
+function getMeaningfulStoreTokens(value) {
+  return normalizeStoreToken(value)
+    .split(" ")
+    .map(token => token.trim())
+    .filter(token => token.length >= 3);
+}
+
+function scoreStoreSearchResult(result, requestedName) {
+  const requestedTokens = getMeaningfulStoreTokens(requestedName);
+  if (!requestedTokens.length || !result) return 0;
+
+  const name = String(result?.name || result?.namedetails?.name || "");
+  const display = String(result?.display_name || "");
+  const address = [
+    result?.address?.shop,
+    result?.address?.amenity,
+    result?.address?.building,
+    result?.address?.road,
+    result?.address?.suburb,
+    result?.address?.city,
+    result?.address?.town,
+  ].filter(Boolean).join(" ");
+
+  const candidateText = normalizeStoreToken(`${name} ${display} ${address}`);
+  const candidateTokens = new Set(getMeaningfulStoreTokens(candidateText));
+
+  let matched = 0;
+  for (const token of requestedTokens) {
+    if (candidateTokens.has(token)) {
+      matched += 1;
+      continue;
+    }
+
+    // Allow a modest prefix match for common local spelling variations.
+    if ([...candidateTokens].some(candidate =>
+      candidate.length >= 5 &&
+      token.length >= 5 &&
+      (candidate.startsWith(token) || token.startsWith(candidate))
+    )) {
+      matched += 0.75;
+    }
   }
 
-  const raw = query.replace(/\s+/g, " ").trim();
-  const candidates = [];
-  const addCandidate = (value) => {
-    const clean = String(value || "").replace(/\s+/g, " ").trim();
-    if (clean && !candidates.includes(clean)) candidates.push(clean);
-  };
+  const tokenScore = matched / requestedTokens.length;
+  const nameNormalized = normalizeStoreToken(name);
+  const requestedNormalized = normalizeStoreToken(requestedName);
 
-  // Small/local businesses are often not indexed under their exact name.
-  // Try the supplied address first, then progressively broader local queries.
-  addCandidate(raw);
-  addCandidate(`${raw}, Thirumala, Thiruvananthapuram, Kerala, India`);
-  addCandidate(`${raw}, Thiruvananthapuram, Kerala, India`);
-  addCandidate(`${raw}, Kerala, India`);
+  let score = tokenScore * 0.8;
+  if (nameNormalized && nameNormalized === requestedNormalized) score += 0.2;
+  if (nameNormalized && requestedNormalized &&
+      (nameNormalized.includes(requestedNormalized) || requestedNormalized.includes(nameNormalized))) {
+    score += 0.1;
+  }
+
+  // Prefer actual commercial/place results over roads/addresses when names match.
+  const placeType = String(result?.type || result?.class || "").toLowerCase();
+  if (/(shop|amenity|tourism|office|leisure)/.test(placeType)) score += 0.05;
+
+  return Math.min(score, 1);
+}
+
+function chooseStrongStoreResult(results, requestedName) {
+  if (!Array.isArray(results) || !results.length) return null;
+
+  const ranked = results
+    .filter(result => result?.lat && result?.lon)
+    .map(result => ({
+      result,
+      score: scoreStoreSearchResult(result, requestedName),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  if (!ranked.length) return null;
+
+  const best = ranked[0];
+  const second = ranked[1];
+
+  // Never silently use an unrelated nearby business.
+  // Require a strong name match and, when there is a close competitor,
+  // require a meaningful score advantage.
+  if (best.score < 0.55) return null;
+  if (second && second.score >= 0.50 && best.score - second.score < 0.12) {
+    return null;
+  }
+
+  return {
+    latitude: Number(best.result.lat),
+    longitude: Number(best.result.lon),
+    displayName: best.result.display_name || best.result.name || requestedName,
+    source: "nominatim_name_match",
+    matchScore: Number(best.score.toFixed(3)),
+  };
+}
+
+async function searchNominatimStore(requestedName) {
+  const raw = String(requestedName || "").replace(/\s+/g, " ").trim();
+  if (!raw) throw new Error("Store name is missing");
+
+  const candidates = [
+    `${raw}, Thiruvananthapuram, Kerala, India`,
+    `${raw}, Thirumala, Thiruvananthapuram, Kerala, India`,
+    `${raw}, Kerala, India`,
+    raw,
+  ];
 
   let lastError = null;
 
   for (const candidate of candidates) {
     try {
       const url =
-        `${NOMINATIM_URL}?format=jsonv2&limit=3&countrycodes=in&q=${encodeURIComponent(candidate)}`;
+        `${NOMINATIM_URL}?format=jsonv2&namedetails=1&addressdetails=1&limit=8&countrycodes=in&q=${encodeURIComponent(candidate)}`;
 
       const response = await fetch(url, {
         headers: {
@@ -681,111 +774,138 @@ async function geocodeAddress(address) {
         },
       });
 
-      if (!response.ok) {
-        throw new Error(`Nominatim ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Nominatim ${response.status}`);
 
       const data = await response.json();
-      const result = Array.isArray(data) && data.length ? data[0] : null;
+      const match = chooseStrongStoreResult(data, raw);
+      if (match) return match;
+    } catch (error) {
+      lastError = error;
+      console.error("FETCH STORE SEARCH ERROR:", candidate, error);
+    }
+  }
 
+  if (lastError) console.error("FETCH STORE SEARCH LAST ERROR:", lastError);
+  return null;
+}
+
+async function searchPhotonStore(requestedName) {
+  const raw = String(requestedName || "").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+
+  try {
+    const query = `${raw}, Thiruvananthapuram, Kerala, India`;
+    const response = await fetch(
+      `https://photon.komoot.io/api/?limit=8&q=${encodeURIComponent(query)}`,
+      { headers: { Accept: "application/json" } }
+    );
+
+    if (!response.ok) return null;
+    const data = await response.json();
+    const features = Array.isArray(data?.features) ? data.features : [];
+
+    const results = features.map(feature => ({
+      lat: feature?.geometry?.coordinates?.[1],
+      lon: feature?.geometry?.coordinates?.[0],
+      name: feature?.properties?.name,
+      display_name: [
+        feature?.properties?.name,
+        feature?.properties?.street,
+        feature?.properties?.district,
+        feature?.properties?.city,
+        feature?.properties?.state,
+      ].filter(Boolean).join(", "),
+      type: feature?.properties?.osm_value,
+      address: feature?.properties || {},
+    }));
+
+    return chooseStrongStoreResult(results, raw);
+  } catch (error) {
+    console.error("FETCH PHOTON STORE SEARCH ERROR:", error);
+    return null;
+  }
+}
+
+async function geocodeAddress(address) {
+  const query = String(address || "").trim();
+  if (!query) throw new Error("Address is missing for geocoding");
+
+  const raw = query.replace(/\s+/g, " ").trim();
+  const candidates = [
+    raw,
+    `${raw}, Thirumala, Thiruvananthapuram, Kerala, India`,
+    `${raw}, Thiruvananthapuram, Kerala, India`,
+    `${raw}, Kerala, India`,
+  ];
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(
+        `${NOMINATIM_URL}?format=jsonv2&limit=3&countrycodes=in&q=${encodeURIComponent(candidate)}`,
+        {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": FETCH_DISTANCE_USER_AGENT,
+          },
+        }
+      );
+      if (!response.ok) throw new Error(`Nominatim ${response.status}`);
+      const data = await response.json();
+      const result = Array.isArray(data) && data.length ? data[0] : null;
       if (result?.lat && result?.lon) {
         return {
           latitude: Number(result.lat),
           longitude: Number(result.lon),
           displayName: result.display_name || candidate,
+          source: "nominatim_address",
         };
       }
     } catch (error) {
       lastError = error;
-      console.error("FETCH GEOCODE CANDIDATE ERROR:", candidate, error);
     }
-  }
-
-  // Secondary geocoder for local places/businesses when Nominatim has no hit.
-  try {
-    const photonUrl =
-      `https://photon.komoot.io/api/?limit=3&q=${encodeURIComponent(candidates[1] || raw)}`;
-
-    const response = await fetch(photonUrl, {
-      headers: { Accept: "application/json" },
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      const feature = Array.isArray(data?.features) && data.features.length
-        ? data.features[0]
-        : null;
-      const coordinates = feature?.geometry?.coordinates;
-
-      if (
-        Array.isArray(coordinates) &&
-        coordinates.length >= 2 &&
-        Number.isFinite(Number(coordinates[0])) &&
-        Number.isFinite(Number(coordinates[1]))
-      ) {
-        return {
-          latitude: Number(coordinates[1]),
-          longitude: Number(coordinates[0]),
-          displayName: feature?.properties?.name || raw,
-        };
-      }
-    }
-  } catch (error) {
-    lastError = error;
-    console.error("FETCH PHOTON GEOCODE ERROR:", error);
   }
 
   throw lastError || new Error(`Unable to geocode address: ${raw}`);
 }
 
 async function getCoordinatesForStore(store) {
-  if (
-    store?.latitude != null &&
-    store?.longitude != null &&
-    Number.isFinite(Number(store.latitude)) &&
-    Number.isFinite(Number(store.longitude))
-  ) {
-    return {
-      latitude: Number(store.latitude),
-      longitude: Number(store.longitude),
-    };
-  }
-
   const name = String(store?.name || "").trim();
   const address = String(store?.address || "").trim();
-  const candidates = [
-    name ? `${name}, Thirumala, Thiruvananthapuram, Kerala, India` : "",
-    name ? `${name}, Thiruvananthapuram, Kerala, India` : "",
-    address,
-    [name, address].filter(Boolean).join(", "),
-  ].filter(Boolean);
+  if (!name) throw new Error("Store name is missing");
 
-  let lastError = null;
-
-  for (const candidate of candidates) {
-    try {
-      const coordinates = await geocodeAddress(candidate);
-
-      if (store?.id) {
-        await updateStoreLocation(
-          store.id,
-          coordinates.latitude,
-          coordinates.longitude
-        );
-      }
-
-      return coordinates;
-    } catch (error) {
-      lastError = error;
-      console.error(
-        "FETCH STORE GEOCODE CANDIDATE FAILED:",
-        candidate,
-        error
+  // Store names must be resolved by name before their coordinates are trusted.
+  // This prevents an old/wrong cached coordinate from silently charging the
+  // customer from a different business.
+  const resolved = await searchNominatimStore(name);
+  if (resolved) {
+    if (store?.id) {
+      await updateStoreLocation(
+        store.id,
+        resolved.latitude,
+        resolved.longitude
       );
     }
+    return resolved;
   }
 
-  throw lastError || new Error(`Unable to geocode store: ${name || address}`);
+  const photonResolved = await searchPhotonStore(name);
+  if (photonResolved) {
+    if (store?.id) {
+      await updateStoreLocation(
+        store.id,
+        photonResolved.latitude,
+        photonResolved.longitude
+      );
+    }
+    return photonResolved;
+  }
+
+  // Only fall back to cached coordinates when we have no usable external
+  // match. For MVP safety, do NOT silently use them; ask for clarification.
+  throw new Error(
+    `STORE_MATCH_UNCERTAIN: Could not confidently identify "${name}"${address ? ` at ${address}` : ""}.`
+  );
 }
 
 async function calculateRoadDistanceKmFromCoordinates(
@@ -867,11 +987,17 @@ function calculateDeliveryFee(distanceKm) {
     );
   }
 
-  return Math.max(
-    MIN_DELIVERY_FEE,
-    Number(
-      (distance * DELIVERY_RATE_PER_KM).toFixed(2)
-    )
+  // MVP pricing rule:
+  // Up to and including 2.00 km = ₹20 minimum.
+  // Above 2.00 km = ₹10 per km.
+  // Examples: 1.8 km = ₹20, 2.0 km = ₹20,
+  // 3.7 km = ₹37, 11.1 km = ₹111.
+  if (distance <= 2) {
+    return MIN_DELIVERY_FEE;
+  }
+
+  return Number(
+    (distance * DELIVERY_RATE_PER_KM).toFixed(2)
   );
 }
 
@@ -3822,6 +3948,28 @@ function isSimpleRejection(text) {
   return /^(no|n|nope|reject|rejected|no thanks|not now)$/.test(value);
 }
 
+function parseApproximateDistanceKm(text) {
+  const value = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/,/g, ".")
+    .replace(/\s+/g, " ");
+
+  const match = value.match(
+    /^(?:about\s+|approx(?:imately)?\s+|around\s+)?(\d+(?:\.\d+)?)\s*(?:km|kilometers?|kilometres?)?$/i
+  );
+
+  if (!match) return null;
+
+  const distanceKm = Number(match[1]);
+
+  if (!Number.isFinite(distanceKm) || distanceKm <= 0 || distanceKm > 200) {
+    return null;
+  }
+
+  return Number(distanceKm.toFixed(2));
+}
+
 function isPureConversationControl(text) {
   const value = normalizeCustomerText(text)
     .toLowerCase()
@@ -5615,6 +5763,68 @@ async function handleCustomerMessage({
   }
 
   /* -----------------------------------------
+     CUSTOMER APPROXIMATE DISTANCE PRICING
+     Used only when exact store road distance could not be resolved.
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status === "awaiting_confirmation" &&
+    activeOrder.delivery_pricing_status === "customer_estimate_pending"
+  ) {
+    const estimatedDistanceKm =
+      parseApproximateDistanceKm(userMessage);
+
+    if (estimatedDistanceKm != null) {
+      const deliveryFee =
+        calculateDeliveryFee(estimatedDistanceKm);
+
+      const itemTotal =
+        Number(activeOrder.item_total || 0);
+
+      const updatedOrder =
+        await updateOrder(
+          activeOrder.id,
+          {
+            distance_km: estimatedDistanceKm,
+            delivery_fee: deliveryFee,
+            delivery_rate_per_km: DELIVERY_RATE_PER_KM,
+            fetch_fee: FETCH_FEE,
+            total_amount: itemTotal + FETCH_FEE + deliveryFee,
+            delivery_pricing_status: "calculated",
+            delivery_pricing_source: "customer_estimate_mvp",
+            priced_at: new Date().toISOString(),
+            status: "awaiting_confirmation",
+          }
+        );
+
+      if (!updatedOrder) {
+        throw new Error(
+          "Could not save customer distance estimate"
+        );
+      }
+
+      const reply = buildCustomerPriceApprovalMessage(
+        updatedOrder
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Please send the approximate distance in KM, for example: 1.8 km, 3.7 km, or 11.1 km.\n\nPricing: up to 2 km = ₹20; above 2 km = ₹10 per km."
+    );
+
+    return;
+  }
+
+  /* -----------------------------------------
      CUSTOMER PAYMENT TO SHOPPER
   ----------------------------------------- */
 
@@ -6279,9 +6489,21 @@ async function handleCustomerMessage({
               pricingError
             );
 
+            // Do not guess a store location. For the MVP, allow the customer
+            // to provide an approximate store-to-delivery distance instead.
+            const fallbackOrder = await updateOrder(
+              updatedOrder.id,
+              {
+                delivery_pricing_status: "customer_estimate_pending",
+                delivery_pricing_source: null,
+                priced_at: null,
+                status: "awaiting_confirmation",
+              }
+            );
+
             await sendWhatsAppMessage(
               normalizedPhone,
-              "Location saved 📍, but I couldn’t calculate the road distance for this store yet. Please check the store name or include the area/locality."
+              `Location saved 📍\n\nI couldn’t reliably identify the exact store location yet. Please share the approximate delivery distance in KM so I can calculate the delivery fee.\n\nExamples: 1.8 km, 3.7 km, 11.1 km.\n\nPricing: up to 2 km = ₹20; above 2 km = ₹10 per km.`
             );
           }
 
@@ -7549,7 +7771,7 @@ async function handleCustomerMessage({
       await sendWhatsAppMessage(
         normalizedPhone,
 
-        "I saved the update 👍\n\n🚚 Fetch calculates delivery at ₹20 minimum, then ₹10/km based on road distance.\n\nI couldn’t calculate the store-to-delivery distance yet. Please send the WhatsApp location pin again, or send the store name with its area/locality."
+        "I saved the update 👍\n\nI couldn’t calculate the exact road distance for this store. Please share the approximate delivery distance in KM.\n\nPricing: up to 2 km = ₹20; above 2 km = ₹10 per km.\n\nExamples: 1.8 km, 3.7 km, 11.1 km."
       );
     }
 
@@ -7680,9 +7902,14 @@ function buildCustomerPriceApprovalMessage(order) {
       total
     )}\n\n` +
     (String(order.delivery_pricing_source || "") ===
-      "whatsapp_location_osrm_mvp"
-      ? `Delivery fee calculated by Fetch from road distance (₹10/km, ₹20 minimum).\n\n`
-      : `Delivery fee will be calculated by Fetch from the delivery distance once the store is known.\nMinimum is ₹20 per order and may increase based on the KM.\n\n`) +
+      "customer_estimate_mvp"
+      ? `Delivery fee calculated from your approximate distance (up to 2 km = ₹20; above 2 km = ₹10/km).\n\n`
+      : String(order.delivery_pricing_source || "") ===
+        "whatsapp_location_osrm_mvp" ||
+        String(order.delivery_pricing_source || "") ===
+        "osm_osrm_mvp"
+        ? `Delivery fee calculated by Fetch from road distance (up to 2 km = ₹20; above 2 km = ₹10/km).\n\n`
+        : `Delivery fee will be calculated from the delivery distance. Up to 2 km = ₹20; above 2 km = ₹10/km.\n\n`) +
     `Is that okay? Reply YES or NO.`
   );
 }
