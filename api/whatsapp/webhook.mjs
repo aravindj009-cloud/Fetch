@@ -5833,12 +5833,12 @@ async function handleCustomerMessage({
 
   /* -----------------------------------------
      DETERMINISTIC CANCELLATION
-  -----------------------------------------
+     Always handle simple cancellation before AI.
+  ----------------------------------------- */
 
   if (
     isCancellationRequest(userMessage) &&
-    !extractOrderReference(userMessage) &&
-    !/\b(?:my|the|this|that)\s+order\b/i.test(userMessage)
+    !extractOrderReference(userMessage)
   ) {
     await saveMessage({
       customerId:
@@ -7064,30 +7064,22 @@ async function handleCustomerMessage({
     if (!activeOrder) {
       await sendWhatsAppMessage(
         normalizedPhone,
-
         "There isn’t an active order to cancel."
       );
-
       return;
     }
 
-    await updateOrder(
-      activeOrder.id,
-      {
-        status:
-          "cancelled",
-      }
+    await cancelOrderAndReleaseShopper(
+      activeOrder
     );
 
     await sendWhatsAppMessage(
       normalizedPhone,
-
       "Done — I’ve cancelled your order."
     );
 
     return;
   }
-
   /* REJECT */
 
   if (
@@ -8475,6 +8467,15 @@ async function handleShopperMessage({
       return;
     }
 
+    console.log(
+      "FETCH ACCEPT SUCCESS:",
+      JSON.stringify({
+        orderId: claimedOrder.id,
+        jobId: job.id,
+        shopperId: shopper.id,
+      })
+    );
+
     const updatedShopper =
       await updateShopper(
         shopper.id,
@@ -8678,9 +8679,24 @@ async function handleShopperMessage({
 
     if (!acceptedJob) {
       console.error(
-        "FETCH ACCEPT JOB UPDATE FAILED:",
+        "FETCH ACCEPT JOB UPDATE FAILED — rolling back order claim:",
         job.id
       );
+
+      await updateOrder(
+        claimedOrder.id,
+        {
+          status: "finding_shopper",
+          shopper_id: null,
+        }
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Sorry 🙏 I couldn’t finalize that Fetch job. Please try ACCEPT again."
+      );
+
+      return;
     }
 
     const updatedShopper =
