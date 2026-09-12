@@ -3929,7 +3929,7 @@ async function resetCustomerForNewOrder(
     ];
 
     if (cancellableStatuses.includes(activeOrder.status)) {
-      await cancelOrderAndReleaseShopper(activeOrder, customer.id);
+      await cancelOrderAndReleaseShopper(activeOrder);
     } else if (ACTIVE_ORDER_STATUSES.includes(activeOrder.status)) {
       return { ok: false, reason: "active_live_order" };
     }
@@ -4132,9 +4132,22 @@ function looksLikeContaminatedItems(items) {
   return false;
 }
 
-async function cancelOrderAndReleaseShopper(order, customerId = null) {
-  if (!order?.id) return;
+async function cancelOrderAndReleaseShopper(order) {
+  if (!order?.id) {
+    throw new Error("Cannot cancel an order without an order ID");
+  }
 
+  console.log(
+    "FETCH CANCEL START:",
+    JSON.stringify({
+      orderId: order.id,
+      customerId: order.customer_id || null,
+      shopperId: order.shopper_id || null,
+      status: order.status || null,
+    })
+  );
+
+  // Cancel all outstanding/offered/accepted shopper jobs for this order.
   const jobs =
     await supabaseRequest(
       `shopper_jobs?order_id=eq.${encodeURIComponent(
@@ -4142,65 +4155,62 @@ async function cancelOrderAndReleaseShopper(order, customerId = null) {
       )}&status=in.(offered,accepted)&select=*&limit=100`
     );
 
-  const jobList = Array.isArray(jobs)
-    ? jobs
-    : [];
+  const jobList = Array.isArray(jobs) ? jobs : [];
 
   for (const job of jobList) {
-    await updateShopperJob(
-      job.id,
-      {
-        status: "cancelled",
-      }
+    await updateShopperJob(job.id, {
+      status: "cancelled",
+    });
+
+    if (!job.shopper_id) continue;
+
+    const shoppers =
+      await supabaseRequest(
+        `shoppers?id=eq.${encodeURIComponent(
+          job.shopper_id
+        )}&select=*&limit=1`
+      );
+
+    const shopper =
+      Array.isArray(shoppers) && shoppers.length
+        ? shoppers[0]
+        : null;
+
+    if (!shopper) continue;
+
+    const shopperUpdates = {
+      last_seen_at: new Date().toISOString(),
+    };
+
+    if (shopper.current_order_id === order.id) {
+      shopperUpdates.available = true;
+      shopperUpdates.current_order_id = null;
+    }
+
+    await updateShopper(
+      shopper.id,
+      shopperUpdates
     );
 
-    if (job.shopper_id) {
-      const shoppers =
-        await supabaseRequest(
-          `shoppers?id=eq.${encodeURIComponent(
-            job.shopper_id
-          )}&select=*&limit=1`
+    if (job.status === "accepted" && shopper.phone) {
+      try {
+        await sendWhatsAppMessage(
+          shopper.phone,
+          "❌ This Fetch order has been cancelled by the customer. You no longer need to fulfil it."
         );
-
-      const shopper =
-        Array.isArray(shoppers) &&
-        shoppers.length
-          ? shoppers[0]
-          : null;
-
-      if (shopper) {
-        const shopperUpdates = {
-          last_seen_at:
-            new Date().toISOString(),
-        };
-
-        if (
-          shopper.current_order_id ===
-          order.id
-        ) {
-          shopperUpdates.available = true;
-          shopperUpdates.current_order_id = null;
-        }
-
-        await updateShopper(
-          shopper.id,
-          shopperUpdates
+      } catch (error) {
+        console.error(
+          "FETCH CANCEL SHOPPER NOTIFICATION ERROR:",
+          error
         );
-
-        if (
-          job.status === "accepted" &&
-          shopper.phone
-        ) {
-          await sendWhatsAppMessage(
-            shopper.phone,
-            `❌ This Fetch order has been cancelled by the customer. You no longer need to fulfil it.`
-          );
-        }
       }
     }
   }
 
-  await updateOrder(
+  // FIRST: make the order itself non-active.
+  // This is critical because getActiveOrder() has a migration fallback
+  // which searches the orders table when the customer pointer is stale.
+  const cancelledOrder = await updateOrder(
     order.id,
     {
       status: "cancelled",
@@ -4208,39 +4218,60 @@ async function cancelOrderAndReleaseShopper(order, customerId = null) {
     }
   );
 
-  // Critical: clear the authoritative customer pointer directly.
-  // The previous implementation searched by order_id. If the pointer was
-  // stale, missing, or temporarily inconsistent, cancellation could still
-  // report success while NEW ORDER continued to see the old order.
-  try {
-    if (customerId) {
-      await setCustomerCurrentOrder(customerId, null);
-      console.log(
-        "FETCH CANCEL CUSTOMER POINTER CLEARED:",
-        JSON.stringify({ customerId, orderId: order.id })
-      );
-    } else {
-      const customers = await supabaseRequest(
-        `customers?current_order_id=eq.${encodeURIComponent(order.id)}&select=id&limit=100`
+  if (!cancelledOrder) {
+    throw new Error(
+      `Cancellation failed: order ${order.id} was not updated`
+    );
+  }
+
+  // SECOND: clear the customer's authoritative pointer directly.
+  // Do NOT rely only on searching by current_order_id: the pointer may
+  // already be stale or the customer object may contain an older value.
+  const customerId =
+    order.customer_id || null;
+
+  if (customerId) {
+    await setCustomerCurrentOrder(
+      customerId,
+      null
+    );
+
+    console.log(
+      "FETCH CANCEL CUSTOMER POINTER CLEARED:",
+      customerId
+    );
+  } else {
+    // Defensive fallback for older order rows that may not have the
+    // customer_id field in the in-memory object.
+    const customers =
+      await supabaseRequest(
+        `customers?current_order_id=eq.${encodeURIComponent(
+          order.id
+        )}&select=id&limit=100`
       );
 
-      if (Array.isArray(customers)) {
-        for (const customer of customers) {
-          if (customer?.id) {
-            await setCustomerCurrentOrder(customer.id, null);
-          }
+    if (Array.isArray(customers)) {
+      for (const customer of customers) {
+        if (customer?.id) {
+          await setCustomerCurrentOrder(
+            customer.id,
+            null
+          );
         }
       }
     }
-  } catch (error) {
-    console.error(
-      "FETCH CANCEL CUSTOMER POINTER CLEAR ERROR:",
-      error
-    );
-    throw new Error("Cancellation could not clear the customer order pointer");
   }
-}
 
+  console.log(
+    "FETCH CANCEL COMPLETE:",
+    JSON.stringify({
+      orderId: order.id,
+      customerId: customerId,
+    })
+  );
+
+  return cancelledOrder;
+}
 
 
 function isCancelDisambiguationMessage(message) {
