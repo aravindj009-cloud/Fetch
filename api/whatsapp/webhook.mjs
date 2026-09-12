@@ -1611,17 +1611,17 @@ async function offerOrderToShopper(
           shopper.id
         );
 
+      const customerLatitude =
+        Number(order.customer_latitude);
+
+      const customerLongitude =
+        Number(order.customer_longitude);
+
       const hasCustomerCoordinates =
-        Number.isFinite(
-          Number(
-            order.customer_latitude
-          )
-        ) &&
-        Number.isFinite(
-          Number(
-            order.customer_longitude
-          )
-        );
+        Number.isFinite(customerLatitude) &&
+        Number.isFinite(customerLongitude) &&
+        customerLatitude !== 0 &&
+        customerLongitude !== 0;
 
       const storeName =
         String(
@@ -1645,11 +1645,7 @@ async function offerOrderToShopper(
       const locationPinLine =
         hasCustomerCoordinates
           ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-              `${Number(
-                order.customer_latitude
-              )},${Number(
-                order.customer_longitude
-              )}`
+              `${customerLatitude},${customerLongitude}`
             )}\n`
           : "";
 
@@ -4737,6 +4733,49 @@ async function handleCustomerMessage({
       userMessage
     )
   ) {
+    /*
+      NEW ORDER is a true conversation reset.
+
+      A pending order that is still collecting details or
+      finding a shopper must be cancelled before we start
+      another request. This prevents stale orders/offers from
+      being reused or dispatched later.
+
+      Once a shopper has accepted, do NOT silently cancel the
+      live order just because the customer says NEW ORDER.
+    */
+    if (activeOrder) {
+      const canResetPendingOrder =
+        [
+          "collecting_details",
+          "finding_shopper",
+        ].includes(
+          String(activeOrder.status || "").toLowerCase()
+        ) &&
+        !activeOrder.shopper_id;
+
+      if (!canResetPendingOrder) {
+        const reply =
+          "⚠️ You already have an active Fetch order in progress. Please finish or cancel that order before starting a new one.";
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          reply
+        );
+
+        return;
+      }
+
+      await cancelOrderAndReleaseShopper(
+        activeOrder
+      );
+
+      await setCustomerCurrentOrder(
+        customer.id,
+        null
+      );
+    }
+
     await saveMessage({
       customerId:
         customer.id,
@@ -5901,16 +5940,27 @@ async function handleCustomerMessage({
      WHATSAPP LOCATION
   ----------------------------------------- */
 
-  if (
-    location &&
-    Number.isFinite(Number(location.latitude)) &&
-    Number.isFinite(Number(location.longitude))
-  ) {
+  if (location) {
     const latitude =
       Number(location.latitude);
 
     const longitude =
       Number(location.longitude);
+
+    const hasValidCustomerLocation =
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      latitude !== 0 &&
+      longitude !== 0;
+
+    if (!hasValidCustomerLocation) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received the location message, but the location coordinates were invalid. Please use WhatsApp 📎 → Location → Send your current location and try again."
+      );
+
+      return;
+    }
 
     const locationLabel =
       [
