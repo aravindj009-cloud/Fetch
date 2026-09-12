@@ -7532,6 +7532,27 @@ function parseShopperProductPrice(text) {
     : null;
 }
 
+function parseShopperStoreAndPrice(text) {
+  const value = String(text || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  const match = value.match(
+    /^store\s*:\s*(.+?)\s+price\s*:\s*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
+  );
+
+  if (!match) return null;
+
+  const storeName = match[1].trim();
+  const itemTotal = Number(match[2]);
+
+  if (!storeName || !Number.isFinite(itemTotal) || itemTotal < 0) {
+    return null;
+  }
+
+  return { storeName, itemTotal };
+}
+
 function isSuccessfulExistingDispatch(
   dispatch
 ) {
@@ -8734,7 +8755,7 @@ async function handleShopperMessage({
       claimedOrder.delivery_pricing_status === "calculated" &&
       claimedOrder.delivery_pricing_source === "whatsapp_location_osrm_mvp"
         ? "Accepted ✅\n\nYou Fetched this order first. Please check the product price and reply like this:\nPRICE: 35\n\nFetch has already calculated the delivery fee from the customer’s road distance."
-        : "Accepted ✅\n\nYou Fetched this order first. Please find the item at a suitable nearby store, check the product price, and reply like this:\nPRICE: 35\n\nFetch will calculate the delivery fee from the actual store location.";
+        : "Accepted ✅\n\nYou Fetched this order first. Please find the item at a suitable nearby store, then reply like this:\nSTORE: MS Bakers Thirumala PRICE: 35\n\nFetch will calculate the delivery fee automatically from the actual store location. Do not enter the delivery fee.";
 
     await sendWhatsAppMessage(
       normalizedPhone,
@@ -9256,8 +9277,8 @@ async function handleShopperMessage({
 
   /* PRODUCT PRICE + DELIVERY FEE */
 
-  // For orders already priced by Fetch from GPS/OSRM, the shopper only
-  // needs to report the product price. Fetch keeps the calculated delivery fee.
+  // Specific-store orders that already have a customer GPS location:
+  // shopper reports only the product price. Fetch keeps the OSRM delivery fee.
   if (
     order.delivery_pricing_status === "calculated" &&
     order.delivery_pricing_source === "whatsapp_location_osrm_mvp"
@@ -9268,19 +9289,16 @@ async function handleShopperMessage({
       const deliveryFee = Number(order.delivery_fee || 0);
       const total = itemTotal + deliveryFee + FETCH_FEE;
 
-      const updatedOrder = await updateOrder(
-        order.id,
-        {
-          item_total: itemTotal,
-          fetch_fee: FETCH_FEE,
-          delivery_fee: deliveryFee,
-          total_amount: total,
-          delivery_pricing_status: "calculated",
-          delivery_pricing_source: "whatsapp_location_osrm_mvp",
-          priced_at: new Date().toISOString(),
-          status: "awaiting_customer_price_confirmation",
-        }
-      );
+      const updatedOrder = await updateOrder(order.id, {
+        item_total: itemTotal,
+        fetch_fee: FETCH_FEE,
+        delivery_fee: deliveryFee,
+        total_amount: total,
+        delivery_pricing_status: "calculated",
+        delivery_pricing_source: "whatsapp_location_osrm_mvp",
+        priced_at: new Date().toISOString(),
+        status: "awaiting_customer_price_confirmation",
+      });
 
       if (!updatedOrder) {
         await sendWhatsAppMessage(
@@ -9311,48 +9329,117 @@ async function handleShopperMessage({
     }
   }
 
-  const shopperPrice =
-    parseShopperPriceAndDelivery(
-      rawText
-    );
+  // Flexible-store orders: the shopper must report the actual store and
+  // product price. Fetch then calculates the road distance and delivery fee.
+  const isFlexibleStoreOrder =
+    !order.store_name ||
+    /^any available local store$/i.test(String(order.store_name).trim()) ||
+    /^pending(?: nearby)? store$/i.test(String(order.store_name).trim());
 
-  if (
-    shopperPrice
-  ) {
-    const total =
-      shopperPrice.itemTotal +
-      shopperPrice.deliveryFee +
-      FETCH_FEE;
+  if (isFlexibleStoreOrder) {
+    const storeAndPrice = parseShopperStoreAndPrice(rawText);
 
-    const updatedOrder =
-      await updateOrder(
-        order.id,
-        {
-          item_total:
-            shopperPrice.itemTotal,
+    if (storeAndPrice) {
+      const latitude = Number(order.customer_latitude);
+      const longitude = Number(order.customer_longitude);
+      const hasValidCustomerLocation =
+        Number.isFinite(latitude) &&
+        Number.isFinite(longitude) &&
+        latitude !== 0 &&
+        longitude !== 0;
 
-          fetch_fee:
-            FETCH_FEE,
+      if (!hasValidCustomerLocation) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I need the customer’s valid WhatsApp location before I can calculate the delivery fee."
+        );
+        return;
+      }
 
-          delivery_fee:
-            shopperPrice.deliveryFee,
-
-          total_amount:
-            total,
-
-          delivery_pricing_status:
-            "calculated",
-
-          delivery_pricing_source:
-            "shopper_entered",
-
-          priced_at:
-            new Date().toISOString(),
-
-          status:
-            "awaiting_customer_price_confirmation",
+      try {
+        const store = await getOrCreateStoreForPricing(storeAndPrice.storeName);
+        if (!store) {
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            "I couldn’t identify that store. Please use: STORE: Store Name PRICE: 35"
+          );
+          return;
         }
+
+        const distanceKm = await calculateRoadDistanceKmFromCoordinates(
+          store,
+          latitude,
+          longitude
+        );
+        const deliveryFee = calculateDeliveryFee(distanceKm);
+        const total = storeAndPrice.itemTotal + deliveryFee + FETCH_FEE;
+
+        const updatedOrder = await updateOrder(order.id, {
+          store_id: store.id || null,
+          store_name: storeAndPrice.storeName,
+          item_total: storeAndPrice.itemTotal,
+          fetch_fee: FETCH_FEE,
+          delivery_rate_per_km: DELIVERY_RATE_PER_KM,
+          distance_km: distanceKm,
+          delivery_fee: deliveryFee,
+          total_amount: total,
+          delivery_pricing_status: "calculated",
+          delivery_pricing_source: "shopper_store_osrm_mvp",
+          priced_at: new Date().toISOString(),
+          status: "awaiting_customer_price_confirmation",
+        });
+
+        if (!updatedOrder) {
+          throw new Error("Could not save flexible-store pricing");
+        }
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Price saved ✅\n\n🏪 Store: ${storeAndPrice.storeName}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(storeAndPrice.itemTotal)}\n🚚 Delivery fee (Fetch-calculated): ₹${formatRupees(deliveryFee)}\n💰 Total: ₹${formatRupees(total)}\n\nI’ve sent it to the customer for approval.`
+        );
+
+        await notifyCustomerForOrder(
+          order.id,
+          buildCustomerPriceApprovalMessage(updatedOrder)
+        );
+        return;
+      } catch (error) {
+        console.error("FETCH FLEXIBLE STORE PRICING ERROR:", error);
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I couldn’t calculate the delivery fee for that store. Please check the store name and reply: STORE: Store Name PRICE: 35"
+        );
+        return;
+      }
+    }
+
+    if (/^price\b/i.test(rawText) || /^store\b/i.test(rawText)) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "For a nearby-store order, please send both values in one message:\nSTORE: MS Bakers Thirumala PRICE: 35\n\nFetch will calculate the delivery fee automatically. Do not enter the delivery fee."
       );
+      return;
+    }
+  }
+
+  // Backward-compatible parser for any legacy specific-store state that
+  // genuinely expects both values. It is intentionally no longer used for
+  // flexible-store orders or Fetch-calculated distance orders.
+  const shopperPrice = parseShopperPriceAndDelivery(rawText);
+
+  if (shopperPrice) {
+    const total = shopperPrice.itemTotal + shopperPrice.deliveryFee + FETCH_FEE;
+
+    const updatedOrder = await updateOrder(order.id, {
+      item_total: shopperPrice.itemTotal,
+      fetch_fee: FETCH_FEE,
+      delivery_fee: shopperPrice.deliveryFee,
+      total_amount: total,
+      delivery_pricing_status: "calculated",
+      delivery_pricing_source: "shopper_entered",
+      priced_at: new Date().toISOString(),
+      status: "awaiting_customer_price_confirmation",
+    });
 
     if (!updatedOrder) {
       await sendWhatsAppMessage(
@@ -9364,37 +9451,23 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      `Price saved ✅\n\nProduct price: ₹${formatRupees(
-        shopperPrice.itemTotal
-      )}\nDelivery fee: ₹${formatRupees(
-        shopperPrice.deliveryFee
-      )}\nTotal: ₹${formatRupees(
-        total
-      )}\n\nI’ve sent it to the customer for approval.`
+      `Price saved ✅\n\nProduct price: ₹${formatRupees(shopperPrice.itemTotal)}\nDelivery fee: ₹${formatRupees(shopperPrice.deliveryFee)}\nTotal: ₹${formatRupees(total)}\n\nI’ve sent it to the customer for approval.`
     );
 
     await notifyCustomerForOrder(
       order.id,
-      buildCustomerPriceApprovalMessage(
-        updatedOrder
-      )
+      buildCustomerPriceApprovalMessage(updatedOrder)
     );
-
     return;
   }
 
-  if (
-    /^price\b/i.test(
-      rawText
-    )
-  ) {
+  if (/^price\b/i.test(rawText)) {
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Please include both values like this:\nPRICE: 35 DELIVERY FEE: 20\n\nDelivery fee is calculated by Fetch from the delivery distance. Minimum is ₹20 per order and may increase based on the KM."
+      "Please send the product price like this: PRICE: 35"
     );
     return;
   }
-
 
   /* SHOPPING */
 
