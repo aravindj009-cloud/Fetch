@@ -588,7 +588,7 @@ async function getOrCreateStoreForPricing(storeName) {
   const name = pieces.length >= 2 ? pieces[0] : requested;
   const address = pieces.length >= 2
     ? pieces.slice(1).join(", ")
-    : `${requested}, Thiruvananthapuram, Kerala, India`;
+    : `${requested}, Thirumala, Thiruvananthapuram, Kerala, India`;
 
   try {
     const data = await supabaseRequest("stores", {
@@ -642,44 +642,97 @@ async function geocodeAddress(address) {
     throw new Error("Address is missing for geocoding");
   }
 
-  const url =
-    `${NOMINATIM_URL}?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(query)}`;
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": FETCH_DISTANCE_USER_AGENT,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Nominatim ${response.status}`
-    );
-  }
-
-  const data = await response.json();
-  const result = Array.isArray(data) && data.length
-    ? data[0]
-    : null;
-
-  if (!result?.lat || !result?.lon) {
-    throw new Error(
-      `Unable to geocode address: ${query}`
-    );
-  }
-
-  return {
-    latitude: Number(result.lat),
-    longitude: Number(result.lon),
-    displayName: result.display_name || query,
+  const raw = query.replace(/\s+/g, " ").trim();
+  const candidates = [];
+  const addCandidate = (value) => {
+    const clean = String(value || "").replace(/\s+/g, " ").trim();
+    if (clean && !candidates.includes(clean)) candidates.push(clean);
   };
+
+  // Small/local businesses are often not indexed under their exact name.
+  // Try the supplied address first, then progressively broader local queries.
+  addCandidate(raw);
+  addCandidate(`${raw}, Thirumala, Thiruvananthapuram, Kerala, India`);
+  addCandidate(`${raw}, Thiruvananthapuram, Kerala, India`);
+  addCandidate(`${raw}, Kerala, India`);
+
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      const url =
+        `${NOMINATIM_URL}?format=jsonv2&limit=3&countrycodes=in&q=${encodeURIComponent(candidate)}`;
+
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": FETCH_DISTANCE_USER_AGENT,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Nominatim ${response.status}`);
+      }
+
+      const data = await response.json();
+      const result = Array.isArray(data) && data.length ? data[0] : null;
+
+      if (result?.lat && result?.lon) {
+        return {
+          latitude: Number(result.lat),
+          longitude: Number(result.lon),
+          displayName: result.display_name || candidate,
+        };
+      }
+    } catch (error) {
+      lastError = error;
+      console.error("FETCH GEOCODE CANDIDATE ERROR:", candidate, error);
+    }
+  }
+
+  // Secondary geocoder for local places/businesses when Nominatim has no hit.
+  try {
+    const photonUrl =
+      `https://photon.komoot.io/api/?limit=3&q=${encodeURIComponent(candidates[1] || raw)}`;
+
+    const response = await fetch(photonUrl, {
+      headers: { Accept: "application/json" },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const feature = Array.isArray(data?.features) && data.features.length
+        ? data.features[0]
+        : null;
+      const coordinates = feature?.geometry?.coordinates;
+
+      if (
+        Array.isArray(coordinates) &&
+        coordinates.length >= 2 &&
+        Number.isFinite(Number(coordinates[0])) &&
+        Number.isFinite(Number(coordinates[1]))
+      ) {
+        return {
+          latitude: Number(coordinates[1]),
+          longitude: Number(coordinates[0]),
+          displayName: feature?.properties?.name || raw,
+        };
+      }
+    }
+  } catch (error) {
+    lastError = error;
+    console.error("FETCH PHOTON GEOCODE ERROR:", error);
+  }
+
+  throw lastError || new Error(`Unable to geocode address: ${raw}`);
 }
 
 async function getCoordinatesForStore(store) {
   if (
     store?.latitude != null &&
-    store?.longitude != null
+    store?.longitude != null &&
+    Number.isFinite(Number(store.latitude)) &&
+    Number.isFinite(Number(store.longitude))
   ) {
     return {
       latitude: Number(store.latitude),
@@ -687,19 +740,41 @@ async function getCoordinatesForStore(store) {
     };
   }
 
-  const coordinates = await geocodeAddress(
-    store?.address
-  );
+  const name = String(store?.name || "").trim();
+  const address = String(store?.address || "").trim();
+  const candidates = [
+    name ? `${name}, Thirumala, Thiruvananthapuram, Kerala, India` : "",
+    name ? `${name}, Thiruvananthapuram, Kerala, India` : "",
+    address,
+    [name, address].filter(Boolean).join(", "),
+  ].filter(Boolean);
 
-  if (store?.id) {
-    await updateStoreLocation(
-      store.id,
-      coordinates.latitude,
-      coordinates.longitude
-    );
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      const coordinates = await geocodeAddress(candidate);
+
+      if (store?.id) {
+        await updateStoreLocation(
+          store.id,
+          coordinates.latitude,
+          coordinates.longitude
+        );
+      }
+
+      return coordinates;
+    } catch (error) {
+      lastError = error;
+      console.error(
+        "FETCH STORE GEOCODE CANDIDATE FAILED:",
+        candidate,
+        error
+      );
+    }
   }
 
-  return coordinates;
+  throw lastError || new Error(`Unable to geocode store: ${name || address}`);
 }
 
 async function calculateRoadDistanceKmFromCoordinates(
@@ -5729,7 +5804,7 @@ async function handleCustomerMessage({
       ) {
         await sendWhatsAppMessage(
           normalizedPhone,
-          "The shopper will provide the delivery fee. Minimum is ₹20 per order and it may increase based on the KM."
+          "The delivery fee is still being calculated by Fetch from the road distance. Please wait for the pricing message before confirming."
         );
         return;
       }
@@ -5970,7 +6045,7 @@ async function handleCustomerMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Location saved 📍. The shopper decides the delivery fee, and I’ll use the fee they provided."
+      "Location saved 📍. Fetch will calculate the delivery fee from the road distance once the store is known."
     );
 
     return;
@@ -7457,7 +7532,7 @@ async function handleCustomerMessage({
       await sendWhatsAppMessage(
         normalizedPhone,
 
-        "Updated 👍\n\n🚚 Delivery charges: Minimum ₹20. After that, ₹10 per km based on the delivery distance.\n\nI couldn’t calculate the exact road distance right now, so please wait for my pricing message before confirming."
+        "I saved the update 👍\n\n🚚 Fetch calculates delivery at ₹20 minimum, then ₹10/km based on road distance.\n\nI couldn’t calculate the store-to-delivery distance yet. Please send the WhatsApp location pin again, or send the store name with its area/locality."
       );
     }
 
@@ -7631,7 +7706,7 @@ async function ensureStoreForOrder(order) {
   const address =
     pieces.length >= 2
       ? pieces.slice(1).join(", ")
-      : raw;
+      : `${raw}, Thirumala, Thiruvananthapuram, Kerala, India`;
 
   try {
     const data =
@@ -9422,41 +9497,14 @@ async function handleShopperMessage({
     }
   }
 
-  // Backward-compatible parser for any legacy specific-store state that
-  // genuinely expects both values. It is intentionally no longer used for
-  // flexible-store orders or Fetch-calculated distance orders.
-  const shopperPrice = parseShopperPriceAndDelivery(rawText);
+  // Never allow a shopper-entered delivery fee to override Fetch pricing.
+  // Legacy PRICE + DELIVERY FEE messages are rejected safely.
+  const legacyShopperPrice = parseShopperPriceAndDelivery(rawText);
 
-  if (shopperPrice) {
-    const total = shopperPrice.itemTotal + shopperPrice.deliveryFee + FETCH_FEE;
-
-    const updatedOrder = await updateOrder(order.id, {
-      item_total: shopperPrice.itemTotal,
-      fetch_fee: FETCH_FEE,
-      delivery_fee: shopperPrice.deliveryFee,
-      total_amount: total,
-      delivery_pricing_status: "calculated",
-      delivery_pricing_source: "shopper_entered",
-      priced_at: new Date().toISOString(),
-      status: "awaiting_customer_price_confirmation",
-    });
-
-    if (!updatedOrder) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "I couldn’t save the price. Please use: PRICE: 35 DELIVERY FEE: 20"
-      );
-      return;
-    }
-
+  if (legacyShopperPrice) {
     await sendWhatsAppMessage(
       normalizedPhone,
-      `Price saved ✅\n\nProduct price: ₹${formatRupees(shopperPrice.itemTotal)}\nDelivery fee: ₹${formatRupees(shopperPrice.deliveryFee)}\nTotal: ₹${formatRupees(total)}\n\nI’ve sent it to the customer for approval.`
-    );
-
-    await notifyCustomerForOrder(
-      order.id,
-      buildCustomerPriceApprovalMessage(updatedOrder)
+      "Please send only the product price like this: PRICE: 35\n\nFetch calculates the delivery fee automatically from the road distance."
     );
     return;
   }
