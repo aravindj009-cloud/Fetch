@@ -1981,8 +1981,8 @@ async function offerOrderToShopper(
 
       const shopperInstruction =
         isFlexibleStore
-          ? "Please find the requested item at a suitable nearby shop and report the product price. Fetch will calculate the delivery fee after the actual store is known."
-          : "Please check the product price at the requested store. Fetch has already calculated the delivery fee from the customer’s delivery location.";
+          ? "Please find the requested item at a suitable nearby source and report the product price. Fetch will calculate the delivery charge after the actual source is known."
+          : "Please check the requested item at the requested store and report the product price. Fetch will calculate the delivery charge after the actual source location is known.";
 
       const message =
         `🛍️ *New Fetch Job*\n\n` +
@@ -1990,8 +1990,7 @@ async function offerOrderToShopper(
         `🛒 Items: ${order.items}\n` +
         destinationLine +
         locationPinLine +
-        `\n${shopperInstruction}\n` +
-        `Delivery fee: minimum ₹20 per order and may increase based on the KM.\n\n` +
+        `\n${shopperInstruction}\n\n` +
         `Reply *ACCEPT* to take this job.\n` +
         `Reply *DECLINE* to skip it.\n\n` +
         `⚡ The first shopper to ACCEPT gets this order.`;
@@ -5380,37 +5379,37 @@ async function handleCustomerMessage({
       if (!deliveryAddress) {
         await sendWhatsAppMessage(
           normalizedPhone,
-          `Got it 👍\n\n🛒 Items: ${cleanItems}\n🏪 Store: ${requestedStore}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+          `Got it 👍\n\n🛒 ${cleanItems}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
         );
         return;
       }
 
-      try {
-        const ensuredStore =
-          await ensureStoreForOrder(newOrder);
-
-        if (!ensuredStore) {
-          throw new Error("Could not resolve requested store");
-        }
-
-        const pricedOrder =
-          await applyDeliveryPricing(newOrder);
-
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          buildPricingConfirmationMessage(pricedOrder)
-        );
-      } catch (pricingError) {
-        console.error(
-          "FETCH NEW ORDER PRICING ERROR:",
-          pricingError
+      const findingShopper =
+        await updateOrder(
+          newOrder.id,
+          {
+            status: "finding_shopper",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
+          }
         );
 
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          "I have your order and delivery address, but I couldn’t calculate the road distance yet. Please check the store/address and try again."
+      const dispatch =
+        await offerOrderToShopper(
+          findingShopper || newOrder
         );
-      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        dispatch.success
+          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
+          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+      );
 
       return;
     }
@@ -5514,7 +5513,7 @@ async function handleCustomerMessage({
     if (!address) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+        `Got it 👍\n\n🛒 ${items}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
       );
       return;
     }
@@ -5524,59 +5523,35 @@ async function handleCustomerMessage({
       address
     );
 
-    const isFlexibleStore =
-      /^any available local store$/i.test(
-        String(storeName).trim()
+    // The customer never needs to choose or price the fulfillment source.
+    // Fetch dispatches the request first; the shopper reports the actual
+    // source and price, then Fetch calculates delivery automatically.
+    const findingShopper =
+      await updateOrder(
+        order.id,
+        {
+          status: "finding_shopper",
+          delivery_pricing_status: "pending",
+          delivery_pricing_source: null,
+          distance_km: null,
+          delivery_fee: 0,
+          item_total: 0,
+          total_amount: 0,
+          priced_at: null,
+        }
       );
 
-    if (isFlexibleStore) {
-      const findingShopper =
-        await updateOrder(
-          order.id,
-          { status: "finding_shopper" }
-        );
-
-      const dispatch =
-        await offerOrderToShopper(
-          findingShopper || order
-        );
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        dispatch.success
-          ? `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to an available shopper. They’ll find a suitable store first, and Fetch will calculate the delivery fee from the actual store location.`
-          : `Got it 👍 I have your order for ${items}, but there isn’t an available shopper right now. Your order is saved.`
+    const dispatch =
+      await offerOrderToShopper(
+        findingShopper || order
       );
 
-      return;
-    }
-
-    try {
-      const ensuredStore =
-        await ensureStoreForOrder(order);
-
-      if (!ensuredStore) {
-        throw new Error("Could not resolve requested store");
-      }
-
-      const pricedOrder =
-        await applyDeliveryPricing(order);
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        buildPricingConfirmationMessage(pricedOrder)
-      );
-    } catch (pricingError) {
-      console.error(
-        "FETCH NEW ORDER PRICING ERROR:",
-        pricingError
-      );
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "I have your order and delivery address, but I couldn’t calculate the road distance yet. Please check the store/address and try again."
-      );
-    }
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      dispatch.success
+        ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nI’ve sent your request to an available Fetch shopper. I’ll send you the final price once it’s ready.`
+        : `Got it 👍 I have your request for ${items}. I’m looking for an available Fetch shopper now.`
+    );
 
     return;
   }
@@ -5835,68 +5810,6 @@ async function handleCustomerMessage({
 
       return;
     }
-  }
-
-  /* -----------------------------------------
-     CUSTOMER APPROXIMATE DISTANCE PRICING
-     Used only when exact store road distance could not be resolved.
-  ----------------------------------------- */
-
-  if (
-    activeOrder &&
-    activeOrder.status === "awaiting_confirmation" &&
-    activeOrder.delivery_pricing_status === "customer_estimate_pending"
-  ) {
-    const estimatedDistanceKm =
-      parseApproximateDistanceKm(userMessage);
-
-    if (estimatedDistanceKm != null) {
-      const deliveryFee =
-        calculateDeliveryFee(estimatedDistanceKm);
-
-      const itemTotal =
-        Number(activeOrder.item_total || 0);
-
-      const updatedOrder =
-        await updateOrder(
-          activeOrder.id,
-          {
-            distance_km: estimatedDistanceKm,
-            delivery_fee: deliveryFee,
-            delivery_rate_per_km: DELIVERY_RATE_PER_KM,
-            fetch_fee: FETCH_FEE,
-            total_amount: itemTotal + FETCH_FEE + deliveryFee,
-            delivery_pricing_status: "calculated",
-            delivery_pricing_source: "customer_estimate_mvp",
-            priced_at: new Date().toISOString(),
-            status: "awaiting_confirmation",
-          }
-        );
-
-      if (!updatedOrder) {
-        throw new Error(
-          "Could not save customer distance estimate"
-        );
-      }
-
-      const reply = buildCustomerPriceApprovalMessage(
-        updatedOrder
-      );
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        reply
-      );
-
-      return;
-    }
-
-    await sendWhatsAppMessage(
-      normalizedPhone,
-      "Please send the approximate distance in KM, for example: 1.8 km, 3.7 km, or 11.1 km.\n\nPricing: up to 2 km = ₹20; above 2 km = ₹10 per km."
-    );
-
-    return;
   }
 
   /* -----------------------------------------
@@ -6482,9 +6395,8 @@ async function handleCustomerMessage({
     };
 
     /*
-      Location is for delivery coordination.
-      The shopper still decides the delivery fee in the MVP.
-      Do NOT reset the shopper's product price or delivery fee.
+      Customer location is stored for delivery. Pricing is calculated only
+      after the shopper reports the actual fulfillment source and price.
     */
 
     const updatedOrder =
@@ -6503,110 +6415,43 @@ async function handleCustomerMessage({
     }
 
     /*
-      If the order was still collecting details, the customer's
-      location completes the order details and we can dispatch it.
+      The customer only supplies the request and delivery location.
+      Fetch owns the fulfillment decision. The shopper chooses the actual
+      source, reports the product price, and shares the source location.
+      Only then does Fetch calculate the delivery fee.
     */
     if (
-      updatedOrder.status ===
-        "collecting_details"
+      updatedOrder.status === "collecting_details" &&
+      String(updatedOrder.items || "").trim()
     ) {
-      const hasItems =
-        Boolean(
-          String(
-            updatedOrder.items || ""
-          ).trim()
-        );
-
-      const hasStore =
-        Boolean(
-          String(
-            updatedOrder.store_name || ""
-          ).trim()
-        );
-
-      if (
-        hasItems &&
-        hasStore
-      ) {
-        const isFlexibleStore =
-          !updatedOrder.store_name ||
-          /^any available local store$/i.test(
-            String(updatedOrder.store_name).trim()
-          );
-
-        // For a specifically requested store, Fetch calculates the road distance
-        // and delivery fee before any shopper is dispatched.
-        if (!isFlexibleStore) {
-          try {
-            await getOrCreateStoreForPricing(
-              updatedOrder.store_name
-            );
-
-            const pricedOrder =
-              await applyDeliveryPricingFromCoordinates(
-                updatedOrder,
-                latitude,
-                longitude
-              );
-
-            const reply =
-              buildCustomerPriceApprovalMessage(
-                pricedOrder
-              );
-
-            await sendWhatsAppMessage(
-              normalizedPhone,
-              `Location saved 📍\n\n${reply}`
-            );
-          } catch (pricingError) {
-            console.error(
-              "FETCH LOCATION PRICING ERROR:",
-              pricingError
-            );
-
-            // Do not guess a store location. For the MVP, allow the customer
-            // to provide an approximate store-to-delivery distance instead.
-            const fallbackOrder = await updateOrder(
-              updatedOrder.id,
-              {
-                delivery_pricing_status: "customer_estimate_pending",
-                delivery_pricing_source: null,
-                priced_at: null,
-                status: "awaiting_confirmation",
-              }
-            );
-
-            await sendWhatsAppMessage(
-              normalizedPhone,
-              `Location saved 📍\n\nI couldn’t reliably identify the exact store location yet. Please share the approximate delivery distance in KM so I can calculate the delivery fee.\n\nExamples: 1.8 km, 3.7 km, 11.1 km.\n\nPricing: up to 2 km = ₹20; above 2 km = ₹10 per km.`
-            );
+      const findingShopper =
+        await updateOrder(
+          updatedOrder.id,
+          {
+            status: "finding_shopper",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
           }
-
-          return;
-        }
-
-        // For an open-ended nearby-store request, the shopper must first
-        // choose the actual store. Distance pricing happens after that.
-        const findingShopper =
-          await updateOrder(
-            updatedOrder.id,
-            { status: "finding_shopper" }
-          );
-
-        const dispatch =
-          await offerOrderToShopper(
-            findingShopper || updatedOrder
-          );
-
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          dispatch.success
-            ? "Location saved 📍\n\nI’ve sent your order to an available shopper. They’ll find the item at a suitable nearby store, then Fetch will calculate the delivery fee from the actual store location."
-            : "Location saved 📍. Your order is ready, but there isn’t an available shopper right now."
         );
 
-        return;
-      }
+      const dispatch =
+        await offerOrderToShopper(
+          findingShopper || updatedOrder
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        dispatch.success
+          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
+          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+      );
+
+      return;
     }
 
     /*
@@ -7790,65 +7635,32 @@ async function handleCustomerMessage({
       );
     }
 
-    try {
-      // Register/resolve the requested store first. If the customer already
-      // shared GPS, price from the actual store coordinates to the customer;
-      // otherwise fall back to address-based geocoding.
-      await ensureStoreForOrder(changedOrder);
-
-      const hasCustomerCoordinates =
-        Number.isFinite(Number(changedOrder.customer_latitude)) &&
-        Number.isFinite(Number(changedOrder.customer_longitude)) &&
-        Number(changedOrder.customer_latitude) !== 0 &&
-        Number(changedOrder.customer_longitude) !== 0;
-
-      const pricedOrder =
-        hasCustomerCoordinates
-          ? await applyDeliveryPricingFromCoordinates(
-              changedOrder,
-              Number(changedOrder.customer_latitude),
-              Number(changedOrder.customer_longitude)
-            )
-          : await applyDeliveryPricing(changedOrder);
-
-      const reply =
-        buildPricingConfirmationMessage(
-          pricedOrder
-        );
-
-      await saveMessage({
-        customerId:
-          customer.id,
-
-        orderId:
-          pricedOrder.id,
-
-        phone:
-          normalizedPhone,
-
-        role:
-          "assistant",
-
-        message:
-          reply,
-      });
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        reply
-      );
-    } catch (pricingError) {
-      console.error(
-        "FETCH DELIVERY REPRICING ERROR:",
-        pricingError
+    const findingShopper =
+      await updateOrder(
+        changedOrder.id,
+        {
+          status: "finding_shopper",
+          delivery_pricing_status: "pending",
+          delivery_pricing_source: null,
+          distance_km: null,
+          delivery_fee: 0,
+          item_total: 0,
+          total_amount: 0,
+          priced_at: null,
+        }
       );
 
-      await sendWhatsAppMessage(
-        normalizedPhone,
-
-        "I saved the update 👍\n\nI couldn’t calculate the exact road distance for this store. Please share the approximate delivery distance in KM.\n\nPricing: up to 2 km = ₹20; above 2 km = ₹10 per km.\n\nExamples: 1.8 km, 3.7 km, 11.1 km."
+    const dispatch =
+      await offerOrderToShopper(
+        findingShopper || changedOrder
       );
-    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      dispatch.success
+        ? "Updated 👍 I’m finding a shopper for the revised request. I’ll send you the final price once it’s ready."
+        : "Updated 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+    );
 
     return;
   }
@@ -7857,7 +7669,7 @@ async function handleCustomerMessage({
     normalizedPhone,
 
     decision.reply ||
-      "Hi! I’m Fetch. Tell me what you’d like me to buy, which store, and where to deliver it."
+      "Hi! I’m Fetch. Tell me what you’d like me to fetch. I’ll handle the rest."
   );
 }
 
@@ -7963,41 +7775,16 @@ function isSuccessfulExistingDispatch(
 }
 
 function buildCustomerPriceApprovalMessage(order) {
-  const itemTotal =
-    Number(order.item_total || 0);
-
-  const deliveryFee =
-    Number(order.delivery_fee || 0);
-
-  const total =
-    itemTotal +
-    deliveryFee +
-    Number(order.fetch_fee || 0);
+  const itemTotal = Number(order.item_total || 0);
+  const deliveryFee = Number(order.delivery_fee || 0);
+  const total = itemTotal + deliveryFee + Number(order.fetch_fee || 0);
 
   return (
-    `🧾 Product price: ₹${formatRupees(
-      itemTotal
-    )}\n` +
-    `🚚 Delivery fee: ₹${formatRupees(
-      deliveryFee
-    )}\n` +
-    `💼 Fetch fee: ₹0\n` +
-    `💰 Total: ₹${formatRupees(
-      total
-    )}\n\n` +
-    (String(order.delivery_pricing_source || "") ===
-      "customer_estimate_mvp"
-      ? `Delivery fee calculated from your approximate distance (up to 2 km = ₹20; above 2 km = ₹10/km).\n\n`
-      : String(order.delivery_pricing_source || "") ===
-        "whatsapp_location_osrm_mvp" ||
-        String(order.delivery_pricing_source || "") ===
-        "osm_osrm_mvp"
-        ? `Delivery fee calculated by Fetch from road distance (up to 2 km = ₹20; above 2 km = ₹10/km).\n\n`
-        : String(order.delivery_pricing_source || "") ===
-          "shopper_store_osrm_mvp"
-          ? `Delivery fee calculated by Fetch from the actual store-to-customer road distance (up to 2 km = ₹20; above 2 km = ₹10/km).\n\n`
-          : `Delivery fee will be calculated from the delivery distance. Up to 2 km = ₹20; above 2 km = ₹10/km.\n\n`) +
-    `Is that okay? Reply YES or NO.`
+    `🧾 *Your Fetch total*\n\n` +
+    `🛒 Product: ₹${formatRupees(itemTotal)}\n` +
+    `🚚 Delivery: ₹${formatRupees(deliveryFee)}\n` +
+    `💰 *Total: ₹${formatRupees(total)}*\n\n` +
+    `Is that okay? Reply *YES* or *NO*.`
   );
 }
 
@@ -9016,7 +8803,7 @@ async function handleShopperMessage({
       console.error("FETCH SHOPPER STORE LOCATION PRICING ERROR:", error);
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I received the store location, but I couldn’t calculate the road distance right now. Please send the store's WhatsApp location again. 📍"
+        "I received the store location, but couldn’t calculate the delivery charge. Please send the store’s WhatsApp location again. 📍"
       );
       return;
     }
@@ -9303,7 +9090,7 @@ async function handleShopperMessage({
     );
 
     const acceptanceMessage =
-      "Accepted ✅\n\nYou Fetched this order first.\n\n1️⃣ Find the item at a suitable nearby store.\n2️⃣ Reply with the actual store and product price:\nSTORE: MS Bakers Thirumala PRICE: 35\n\n3️⃣ Then share the store’s WhatsApp location 📍\n\nFetch will calculate the road distance and delivery fee automatically. Do not enter the delivery fee.";
+      "Accepted ✅\n\nYou Fetched this order first.\n\nFind the requested item at the most suitable source. Then send:\nSTORE: [store name] PRICE: [product total]\n\nAfter that, share the store’s WhatsApp location 📍\n\nFetch will calculate the delivery charge automatically.";
 
     await sendWhatsAppMessage(
       normalizedPhone,
@@ -9852,7 +9639,7 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      `Store and price received ✅\n\n🏪 Store: ${storeAndPrice.storeName}\n🛒 Product price: ₹${formatRupees(storeAndPrice.itemTotal)}\n\n📍 Now please share the store's WhatsApp location.\n\nFetch will calculate the delivery distance and delivery fee automatically. Do not enter the delivery fee.`
+      `Saved ✅\n\n📍 Please share the store’s WhatsApp location.\n\nFetch will calculate the delivery charge automatically.`
     );
     return;
   }
@@ -9863,7 +9650,7 @@ async function handleShopperMessage({
   ) {
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Please send the store and product price together, for example:\nSTORE: MS Bakers Thirumala PRICE: 35\n\nThen share the store's WhatsApp location. Fetch will calculate the delivery fee automatically."
+      "Please send both together, like this:\nSTORE: MS Bakers Thirumala PRICE: 35\n\nThen share the store’s WhatsApp location 📍"
     );
     return;
   }
