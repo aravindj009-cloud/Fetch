@@ -973,6 +973,50 @@ async function calculateRoadDistanceKmFromCoordinates(
   );
 }
 
+async function calculateRoadDistanceKmBetweenCoordinates(
+  sourceLatitude,
+  sourceLongitude,
+  destinationLatitude,
+  destinationLongitude
+) {
+  const sourceLat = Number(sourceLatitude);
+  const sourceLon = Number(sourceLongitude);
+  const destinationLat = Number(destinationLatitude);
+  const destinationLon = Number(destinationLongitude);
+
+  if (
+    !Number.isFinite(sourceLat) ||
+    !Number.isFinite(sourceLon) ||
+    !Number.isFinite(destinationLat) ||
+    !Number.isFinite(destinationLon)
+  ) {
+    throw new Error("Invalid source or destination coordinates");
+  }
+
+  const coordinates =
+    `${sourceLon},${sourceLat};${destinationLon},${destinationLat}`;
+
+  const response = await fetch(
+    `${OSRM_URL}/${coordinates}?overview=false&steps=false`,
+    {
+      headers: { Accept: "application/json" },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`OSRM ${response.status}`);
+  }
+
+  const data = await response.json();
+  const meters = data?.routes?.[0]?.distance;
+
+  if (typeof meters !== "number" || !Number.isFinite(meters)) {
+    throw new Error("Road distance could not be calculated");
+  }
+
+  return Number((meters / 1000).toFixed(DISTANCE_DECIMAL_PLACES));
+}
+
 async function calculateRoadDistanceKm(
   store,
   deliveryAddress
@@ -4133,21 +4177,8 @@ function looksLikeContaminatedItems(items) {
 }
 
 async function cancelOrderAndReleaseShopper(order) {
-  if (!order?.id) {
-    throw new Error("Cannot cancel an order without an order ID");
-  }
+  if (!order?.id) return;
 
-  console.log(
-    "FETCH CANCEL START:",
-    JSON.stringify({
-      orderId: order.id,
-      customerId: order.customer_id || null,
-      shopperId: order.shopper_id || null,
-      status: order.status || null,
-    })
-  );
-
-  // Cancel all outstanding/offered/accepted shopper jobs for this order.
   const jobs =
     await supabaseRequest(
       `shopper_jobs?order_id=eq.${encodeURIComponent(
@@ -4155,62 +4186,65 @@ async function cancelOrderAndReleaseShopper(order) {
       )}&status=in.(offered,accepted)&select=*&limit=100`
     );
 
-  const jobList = Array.isArray(jobs) ? jobs : [];
+  const jobList = Array.isArray(jobs)
+    ? jobs
+    : [];
 
   for (const job of jobList) {
-    await updateShopperJob(job.id, {
-      status: "cancelled",
-    });
-
-    if (!job.shopper_id) continue;
-
-    const shoppers =
-      await supabaseRequest(
-        `shoppers?id=eq.${encodeURIComponent(
-          job.shopper_id
-        )}&select=*&limit=1`
-      );
-
-    const shopper =
-      Array.isArray(shoppers) && shoppers.length
-        ? shoppers[0]
-        : null;
-
-    if (!shopper) continue;
-
-    const shopperUpdates = {
-      last_seen_at: new Date().toISOString(),
-    };
-
-    if (shopper.current_order_id === order.id) {
-      shopperUpdates.available = true;
-      shopperUpdates.current_order_id = null;
-    }
-
-    await updateShopper(
-      shopper.id,
-      shopperUpdates
+    await updateShopperJob(
+      job.id,
+      {
+        status: "cancelled",
+      }
     );
 
-    if (job.status === "accepted" && shopper.phone) {
-      try {
-        await sendWhatsAppMessage(
-          shopper.phone,
-          "❌ This Fetch order has been cancelled by the customer. You no longer need to fulfil it."
+    if (job.shopper_id) {
+      const shoppers =
+        await supabaseRequest(
+          `shoppers?id=eq.${encodeURIComponent(
+            job.shopper_id
+          )}&select=*&limit=1`
         );
-      } catch (error) {
-        console.error(
-          "FETCH CANCEL SHOPPER NOTIFICATION ERROR:",
-          error
+
+      const shopper =
+        Array.isArray(shoppers) &&
+        shoppers.length
+          ? shoppers[0]
+          : null;
+
+      if (shopper) {
+        const shopperUpdates = {
+          last_seen_at:
+            new Date().toISOString(),
+        };
+
+        if (
+          shopper.current_order_id ===
+          order.id
+        ) {
+          shopperUpdates.available = true;
+          shopperUpdates.current_order_id = null;
+        }
+
+        await updateShopper(
+          shopper.id,
+          shopperUpdates
         );
+
+        if (
+          job.status === "accepted" &&
+          shopper.phone
+        ) {
+          await sendWhatsAppMessage(
+            shopper.phone,
+            `❌ This Fetch order has been cancelled by the customer. You no longer need to fulfil it.`
+          );
+        }
       }
     }
   }
 
-  // FIRST: make the order itself non-active.
-  // This is critical because getActiveOrder() has a migration fallback
-  // which searches the orders table when the customer pointer is stale.
-  const cancelledOrder = await updateOrder(
+  await updateOrder(
     order.id,
     {
       status: "cancelled",
@@ -4218,60 +4252,29 @@ async function cancelOrderAndReleaseShopper(order) {
     }
   );
 
-  if (!cancelledOrder) {
-    throw new Error(
-      `Cancellation failed: order ${order.id} was not updated`
+  // Critical: cancelling the order must also clear the customer's
+  // authoritative current_order_id. Otherwise the next "NEW ORDER"
+  // still sees the cancelled order as active.
+  try {
+    const customers = await supabaseRequest(
+      `customers?current_order_id=eq.${encodeURIComponent(order.id)}&select=id&limit=100`
     );
-  }
-
-  // SECOND: clear the customer's authoritative pointer directly.
-  // Do NOT rely only on searching by current_order_id: the pointer may
-  // already be stale or the customer object may contain an older value.
-  const customerId =
-    order.customer_id || null;
-
-  if (customerId) {
-    await setCustomerCurrentOrder(
-      customerId,
-      null
-    );
-
-    console.log(
-      "FETCH CANCEL CUSTOMER POINTER CLEARED:",
-      customerId
-    );
-  } else {
-    // Defensive fallback for older order rows that may not have the
-    // customer_id field in the in-memory object.
-    const customers =
-      await supabaseRequest(
-        `customers?current_order_id=eq.${encodeURIComponent(
-          order.id
-        )}&select=id&limit=100`
-      );
 
     if (Array.isArray(customers)) {
       for (const customer of customers) {
         if (customer?.id) {
-          await setCustomerCurrentOrder(
-            customer.id,
-            null
-          );
+          await setCustomerCurrentOrder(customer.id, null);
         }
       }
     }
+  } catch (error) {
+    console.error(
+      "FETCH CANCEL CUSTOMER POINTER CLEAR ERROR:",
+      error
+    );
   }
-
-  console.log(
-    "FETCH CANCEL COMPLETE:",
-    JSON.stringify({
-      orderId: order.id,
-      customerId: customerId,
-    })
-  );
-
-  return cancelledOrder;
 }
+
 
 
 function isCancelDisambiguationMessage(message) {
@@ -8813,6 +8816,7 @@ async function handleShopperOnboardingMessage({
 async function handleShopperMessage({
   phone,
   text,
+  location = null,
 }) {
   const normalizedPhone =
     normalizePhone(phone);
@@ -8873,6 +8877,150 @@ async function handleShopperMessage({
         new Date().toISOString(),
     }
   );
+
+  /* SHOPPER STORE LOCATION
+   *
+   * A shopper location is interpreted as the physical store location only
+   * when the shopper has an accepted active order. This avoids confusing a
+   * shopper's location with the customer's delivery location.
+   */
+  if (location) {
+    const storeLatitude = Number(location.latitude);
+    const storeLongitude = Number(location.longitude);
+    const hasValidStoreLocation =
+      Number.isFinite(storeLatitude) &&
+      Number.isFinite(storeLongitude) &&
+      storeLatitude !== 0 &&
+      storeLongitude !== 0;
+
+    if (!hasValidStoreLocation) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received the location, but the coordinates are invalid. Please use WhatsApp → Location → Send your current location and try again. 📍"
+      );
+      return;
+    }
+
+    if (!shopper.current_order_id) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location 📍, but you do not have an accepted Fetch order right now."
+      );
+      return;
+    }
+
+    const locationOrder = await getOrderById(shopper.current_order_id);
+
+    if (!locationOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find your accepted Fetch order. Please contact Fetch before continuing."
+      );
+      return;
+    }
+
+    if (
+      locationOrder.status !== "shopper_assigned" &&
+      locationOrder.status !== "shopping"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Please send the store location after the order is accepted and before shopping starts. 📍"
+      );
+      return;
+    }
+
+    const storeName = String(locationOrder.store_name || "").trim();
+    const itemTotal = Number(locationOrder.item_total);
+
+    if (!storeName || !Number.isFinite(itemTotal) || itemTotal < 0) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Please send the store name and actual product price first, for example: STORE: MS Bakers Thirumala PRICE: 35"
+      );
+      return;
+    }
+
+    const customerLatitude = Number(locationOrder.customer_latitude);
+    const customerLongitude = Number(locationOrder.customer_longitude);
+    const hasValidCustomerLocation =
+      Number.isFinite(customerLatitude) &&
+      Number.isFinite(customerLongitude) &&
+      customerLatitude !== 0 &&
+      customerLongitude !== 0;
+
+    if (!hasValidCustomerLocation) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "The customer's delivery location is missing. Please ask the customer to share their WhatsApp location before continuing."
+      );
+      return;
+    }
+
+    try {
+      const distanceKm = await calculateRoadDistanceKmBetweenCoordinates(
+        storeLatitude,
+        storeLongitude,
+        customerLatitude,
+        customerLongitude
+      );
+
+      if (!Number.isFinite(distanceKm) || distanceKm > 100) {
+        throw new Error(`STORE_DISTANCE_UNTRUSTED: ${distanceKm} km`);
+      }
+
+      const deliveryFee = calculateDeliveryFee(distanceKm);
+      const total = itemTotal + deliveryFee + FETCH_FEE;
+
+      const store = await getOrCreateStoreForPricing(storeName);
+
+      if (store?.id) {
+        await updateStoreLocation(
+          store.id,
+          storeLatitude,
+          storeLongitude
+        );
+      }
+
+      const updatedOrder = await updateOrder(locationOrder.id, {
+        store_id: store?.id || locationOrder.store_id || null,
+        store_name: storeName,
+        item_total: itemTotal,
+        fetch_fee: FETCH_FEE,
+        delivery_rate_per_km: DELIVERY_RATE_PER_KM,
+        distance_km: distanceKm,
+        delivery_fee: deliveryFee,
+        total_amount: total,
+        delivery_pricing_status: "calculated",
+        delivery_pricing_source: "shopper_whatsapp_location_osrm_mvp",
+        priced_at: new Date().toISOString(),
+        status: "awaiting_customer_price_confirmation",
+      });
+
+      if (!updatedOrder) {
+        throw new Error("Could not save store-location pricing");
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Store location received 📍\n\n🏪 Store: ${storeName}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(itemTotal)}\n🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n💰 Customer total: ₹${formatRupees(total)}\n\nI’ve sent the final amount to the customer for approval. Do not enter a delivery fee yourself.`
+      );
+
+      await notifyCustomerForOrder(
+        updatedOrder.id,
+        buildCustomerPriceApprovalMessage(updatedOrder)
+      );
+
+      return;
+    } catch (error) {
+      console.error("FETCH SHOPPER STORE LOCATION PRICING ERROR:", error);
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received the store location, but I couldn’t calculate the road distance right now. Please send the store's WhatsApp location again. 📍"
+      );
+      return;
+    }
+  }
 
   /* AVAILABLE / READY */
 
@@ -9155,10 +9303,7 @@ async function handleShopperMessage({
     );
 
     const acceptanceMessage =
-      claimedOrder.delivery_pricing_status === "calculated" &&
-      claimedOrder.delivery_pricing_source === "whatsapp_location_osrm_mvp"
-        ? "Accepted ✅\n\nYou Fetched this order first. Please check the product price and reply like this:\nPRICE: 35\n\nFetch has already calculated the delivery fee from the customer’s road distance."
-        : "Accepted ✅\n\nYou Fetched this order first. Please find the item at a suitable nearby store, then reply like this:\nSTORE: MS Bakers Thirumala PRICE: 35\n\nFetch will calculate the delivery fee automatically from the actual store location. Do not enter the delivery fee.";
+      "Accepted ✅\n\nYou Fetched this order first.\n\n1️⃣ Find the item at a suitable nearby store.\n2️⃣ Reply with the actual store and product price:\nSTORE: MS Bakers Thirumala PRICE: 35\n\n3️⃣ Then share the store’s WhatsApp location 📍\n\nFetch will calculate the road distance and delivery fee automatically. Do not enter the delivery fee.";
 
     await sendWhatsAppMessage(
       normalizedPhone,
@@ -9678,91 +9823,49 @@ async function handleShopperMessage({
     return;
   }
 
-  /* SHOPPER STORE + PRICE — CHECK FIRST
+  /* SHOPPER STORE + PRICE
    *
-   * A shopper may naturally report the actual store and product price
-   * even when the customer originally typed a store name. Do not use
-   * order.store_name alone to decide the workflow: an unverified store
-   * name is not proof that Fetch has a trusted store location.
+   * The shopper is physically at the store, so the store name and product
+   * price are accepted first. Location is collected separately because the
+   * shopper's WhatsApp location is the source of truth for the actual store.
    */
   const storeAndPrice = parseShopperStoreAndPrice(rawText);
 
   if (storeAndPrice) {
-    const latitude = Number(order.customer_latitude);
-    const longitude = Number(order.customer_longitude);
-    const hasValidCustomerLocation =
-      Number.isFinite(latitude) &&
-      Number.isFinite(longitude) &&
-      latitude !== 0 &&
-      longitude !== 0;
+    const updatedOrder = await updateOrder(order.id, {
+      store_name: storeAndPrice.storeName,
+      item_total: storeAndPrice.itemTotal,
+      fetch_fee: FETCH_FEE,
+      delivery_pricing_status: "store_location_pending",
+      delivery_pricing_source: null,
+      priced_at: null,
+      status: "shopper_assigned",
+    });
 
-    if (!hasValidCustomerLocation) {
+    if (!updatedOrder) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I need the customer’s valid WhatsApp location before I can calculate the delivery fee."
+        "I couldn’t save the store and price. Please try again using: STORE: MS Bakers Thirumala PRICE: 35"
       );
       return;
     }
 
-    try {
-      const store = await getOrCreateStoreForPricing(storeAndPrice.storeName);
-      if (!store) {
-        throw new Error("STORE_NOT_FOUND");
-      }
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `Store and price received ✅\n\n🏪 Store: ${storeAndPrice.storeName}\n🛒 Product price: ₹${formatRupees(storeAndPrice.itemTotal)}\n\n📍 Now please share the store's WhatsApp location.\n\nFetch will calculate the delivery distance and delivery fee automatically. Do not enter the delivery fee.`
+    );
+    return;
+  }
 
-      const distanceKm = await calculateRoadDistanceKmFromCoordinates(
-        store,
-        latitude,
-        longitude
-      );
-
-      // Safety guard: a local Fetch order must not produce a nonsensical
-      // city-to-city distance because a geocoder selected an unrelated store.
-      // Never charge a customer from an untrusted distance.
-      if (!Number.isFinite(distanceKm) || distanceKm > 100) {
-        throw new Error(`STORE_DISTANCE_UNTRUSTED: ${distanceKm} km`);
-      }
-
-      const deliveryFee = calculateDeliveryFee(distanceKm);
-      const total = storeAndPrice.itemTotal + deliveryFee + FETCH_FEE;
-
-      const updatedOrder = await updateOrder(order.id, {
-        store_id: store.id || null,
-        store_name: storeAndPrice.storeName,
-        item_total: storeAndPrice.itemTotal,
-        fetch_fee: FETCH_FEE,
-        delivery_rate_per_km: DELIVERY_RATE_PER_KM,
-        distance_km: distanceKm,
-        delivery_fee: deliveryFee,
-        total_amount: total,
-        delivery_pricing_status: "calculated",
-        delivery_pricing_source: "shopper_store_osrm_mvp",
-        priced_at: new Date().toISOString(),
-        status: "awaiting_customer_price_confirmation",
-      });
-
-      if (!updatedOrder) {
-        throw new Error("Could not save shopper store pricing");
-      }
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Price saved ✅\n\n🏪 Store: ${storeAndPrice.storeName}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(storeAndPrice.itemTotal)}\n🚚 Delivery fee (Fetch-calculated): ₹${formatRupees(deliveryFee)}\n💰 Total: ₹${formatRupees(total)}\n\nI’ve sent it to the customer for approval.`
-      );
-
-      await notifyCustomerForOrder(
-        order.id,
-        buildCustomerPriceApprovalMessage(updatedOrder)
-      );
-      return;
-    } catch (error) {
-      console.error("FETCH SHOPPER STORE + PRICE ERROR:", error);
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "I couldn’t confidently identify that exact store location. Please reply with the actual store/branch name and price, for example: Store Zam Zam Palayam Price:499"
-      );
-      return;
-    }
+  if (
+    /^price\b/i.test(rawText) ||
+    /^store\b/i.test(rawText)
+  ) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Please send the store and product price together, for example:\nSTORE: MS Bakers Thirumala PRICE: 35\n\nThen share the store's WhatsApp location. Fetch will calculate the delivery fee automatically."
+    );
+    return;
   }
 
   /* PRODUCT PRICE + DELIVERY FEE */
@@ -9814,104 +9917,6 @@ async function handleShopperMessage({
       await sendWhatsAppMessage(
         normalizedPhone,
         "Please send only the product price like this: PRICE: 35\n\nFetch has already calculated the delivery fee from the road distance."
-      );
-      return;
-    }
-  }
-
-  // Flexible-store orders: the shopper must report the actual store and
-  // product price. Fetch then calculates the road distance and delivery fee.
-  const isFlexibleStoreOrder =
-    !order.store_name ||
-    /^any available local store$/i.test(String(order.store_name).trim()) ||
-    /^pending(?: nearby)? store$/i.test(String(order.store_name).trim());
-
-  if (isFlexibleStoreOrder) {
-    const storeAndPrice = parseShopperStoreAndPrice(rawText);
-
-    if (storeAndPrice) {
-      const latitude = Number(order.customer_latitude);
-      const longitude = Number(order.customer_longitude);
-      const hasValidCustomerLocation =
-        Number.isFinite(latitude) &&
-        Number.isFinite(longitude) &&
-        latitude !== 0 &&
-        longitude !== 0;
-
-      if (!hasValidCustomerLocation) {
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          "I need the customer’s valid WhatsApp location before I can calculate the delivery fee."
-        );
-        return;
-      }
-
-      try {
-        const store = await getOrCreateStoreForPricing(storeAndPrice.storeName);
-        if (!store) {
-          await sendWhatsAppMessage(
-            normalizedPhone,
-            "I couldn’t identify that store. Please use: STORE: Store Name PRICE: 35"
-          );
-          return;
-        }
-
-        const distanceKm = await calculateRoadDistanceKmFromCoordinates(
-          store,
-          latitude,
-          longitude
-        );
-
-        if (!Number.isFinite(distanceKm) || distanceKm > 100) {
-          throw new Error(`STORE_DISTANCE_UNTRUSTED: ${distanceKm} km`);
-        }
-
-        const deliveryFee = calculateDeliveryFee(distanceKm);
-        const total = storeAndPrice.itemTotal + deliveryFee + FETCH_FEE;
-
-        const updatedOrder = await updateOrder(order.id, {
-          store_id: store.id || null,
-          store_name: storeAndPrice.storeName,
-          item_total: storeAndPrice.itemTotal,
-          fetch_fee: FETCH_FEE,
-          delivery_rate_per_km: DELIVERY_RATE_PER_KM,
-          distance_km: distanceKm,
-          delivery_fee: deliveryFee,
-          total_amount: total,
-          delivery_pricing_status: "calculated",
-          delivery_pricing_source: "shopper_store_osrm_mvp",
-          priced_at: new Date().toISOString(),
-          status: "awaiting_customer_price_confirmation",
-        });
-
-        if (!updatedOrder) {
-          throw new Error("Could not save flexible-store pricing");
-        }
-
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          `Price saved ✅\n\n🏪 Store: ${storeAndPrice.storeName}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(storeAndPrice.itemTotal)}\n🚚 Delivery fee (Fetch-calculated): ₹${formatRupees(deliveryFee)}\n💰 Total: ₹${formatRupees(total)}\n\nI’ve sent it to the customer for approval.`
-        );
-
-        await notifyCustomerForOrder(
-          order.id,
-          buildCustomerPriceApprovalMessage(updatedOrder)
-        );
-        return;
-      } catch (error) {
-        console.error("FETCH FLEXIBLE STORE PRICING ERROR:", error);
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          "I couldn’t confidently identify that exact store location. Please reply with the actual store/branch name and price, for example: Store Zam Zam Palayam Price:499"
-        );
-        return;
-      }
-    }
-
-    if (/^price\b/i.test(rawText) || /^store\b/i.test(rawText)) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "For a nearby-store order, please send both values in one message:\nSTORE: MS Bakers Thirumala PRICE: 35\n\nFetch will calculate the delivery fee automatically. Do not enter the delivery fee."
       );
       return;
     }
@@ -10514,6 +10519,7 @@ export default async function handler(
       await handleShopperMessage({
         phone: from,
         text: text || "LOCATION",
+        location,
       });
     } else if (isShopperJoinIntent(text || "")) {
       const pendingShopper =
