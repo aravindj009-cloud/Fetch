@@ -10477,40 +10477,28 @@ export default async function handler(
       =======================================================
       CRITICAL FETCH ROUTING
 
-      We ONLY check whether the number already exists
-      in the shoppers table.
+      A shopper record alone does NOT make a number a shopper.
 
-      If YES:
-          shopper flow
+      Only an APPROVED + ACTIVE shopper enters the shopper flow.
+      Rejected/inactive shopper records fall through to CUSTOMER.
 
-      If NO:
-          customer flow
+      This allows a former shopper to use the same WhatsApp
+      number as a normal Fetch customer without deleting their
+      historical shopper record.
 
       There is NO automatic shopper creation here.
-
-      Therefore:
-
-      START from unknown number
-          -> CUSTOMER
-
-      SUBSTITUTE from unknown number
-          -> CUSTOMER
-
-      ACCEPT from unknown number
-          -> CUSTOMER
-
-      SHOPPING from unknown number
-          -> CUSTOMER
-
-      Only a number manually registered in shoppers
-      can ever act as a shopper.
       =======================================================
     */
 
     const shopper =
       await getShopperByPhone(from);
 
-    if (shopper) {
+    const shopperIsActive =
+      Boolean(shopper) &&
+      String(shopper.approval_status || "pending").toLowerCase() === "approved" &&
+      String(shopper.onboarding_step || "inactive").toLowerCase() === "active";
+
+    if (shopperIsActive) {
       await handleShopperMessage({
         phone: from,
         text: text || "LOCATION",
