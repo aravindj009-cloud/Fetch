@@ -4185,6 +4185,25 @@ function looksLikeContaminatedItems(items) {
   return false;
 }
 
+async function cancelOpenOffersForRedispatch(orderId) {
+  if (!orderId) return;
+
+  const openOffers = await supabaseRequest(
+    `shopper_jobs?order_id=eq.${encodeURIComponent(orderId)}&status=eq.offered&select=id&limit=100`
+  );
+
+  if (!Array.isArray(openOffers) || !openOffers.length) return;
+
+  for (const offer of openOffers) {
+    if (!offer?.id) continue;
+    try {
+      await updateShopperJob(offer.id, { status: "cancelled" });
+    } catch (error) {
+      console.error("FETCH REDISPATCH OFFER CLEANUP ERROR:", offer.id, error);
+    }
+  }
+}
+
 async function releaseShopperAndRedispatch(order, shopper, job, reason = "shopper_unavailable") {
   if (!order?.id || !shopper?.id) {
     return { success: false, reason: "missing_order_or_shopper" };
@@ -4253,6 +4272,11 @@ async function releaseShopperAndRedispatch(order, shopper, job, reason = "shoppe
         excludedShopperId: shopper.id,
       })
     );
+
+    // A previous dispatch may have left an OFFERED row for another shopper.
+    // That stale offer must be closed before redispatch; otherwise the
+    // dispatcher sees that shopper as already participating and skips them.
+    await cancelOpenOffersForRedispatch(released[0].id);
 
     replacement = await offerOrderToShopper(
       released[0],
