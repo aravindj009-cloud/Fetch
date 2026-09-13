@@ -1914,15 +1914,22 @@ async function offerOrderToShopper(
   let firstJob = null;
 
   for (const shopper of shoppers) {
-    const shopperAlreadyTried =
+    // A shopper may have historical rows for this order. Do NOT treat every
+    // historical row as a permanent block. Only an active offer/acceptance
+    // means the shopper is currently participating in this order. Declined
+    // and cancelled rows are already excluded above. This is important when
+    // an order is released and must be re-dispatched to the next shopper.
+    const shopperHasActiveJob =
       Array.isArray(existingJobs) &&
       existingJobs.some(
         (job) =>
-          job?.shopper_id ===
-          shopper.id
+          job?.shopper_id === shopper.id &&
+          ["offered", "accepted"].includes(
+            String(job.status || "").toLowerCase()
+          )
       );
 
-    if (shopperAlreadyTried) {
+    if (shopperHasActiveJob) {
       continue;
     }
 
@@ -4236,17 +4243,47 @@ async function releaseShopperAndRedispatch(order, shopper, job, reason = "shoppe
     }
   }
 
-  const replacement = await offerOrderToShopper(
-    released[0],
-    [shopper.id]
-  );
+  let replacement = null;
+
+  try {
+    console.log(
+      "FETCH REDISPATCH START:",
+      JSON.stringify({
+        orderId: released[0].id,
+        excludedShopperId: shopper.id,
+      })
+    );
+
+    replacement = await offerOrderToShopper(
+      released[0],
+      [shopper.id]
+    );
+
+    console.log(
+      "FETCH REDISPATCH RESULT:",
+      JSON.stringify({
+        orderId: released[0].id,
+        success: Boolean(replacement?.success),
+        offeredCount: Number(replacement?.offeredCount || 0),
+        reason: replacement?.reason || null,
+        shopperId: replacement?.shopper?.id || null,
+      })
+    );
+  } catch (error) {
+    console.error("FETCH REDISPATCH DISPATCH ERROR:", error);
+    replacement = {
+      success: false,
+      reason: "dispatch_exception",
+      offeredCount: 0,
+    };
+  }
 
   try {
     await notifyCustomerForOrder(
       released[0].id,
       replacement?.success
-        ? "⚠️ Your Fetch shopper couldn’t continue, so I’m finding another shopper for you now."
-        : "⚠️ Your Fetch shopper couldn’t continue. I’m looking for another available shopper now."
+        ? "⚠️ Your Fetch shopper couldn’t continue, so I’ve sent the order to another available shopper."
+        : "⚠️ Your Fetch shopper couldn’t continue. I’m still looking for another available shopper."
     );
   } catch (error) {
     console.error("FETCH REDISPATCH CUSTOMER NOTIFICATION ERROR:", error);
