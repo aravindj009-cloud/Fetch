@@ -1834,8 +1834,7 @@ async function offerOrderToShopper(
       Offer to every currently eligible shopper.
 
     Retry after a decline:
-      Offer only to shoppers who have not already declined/
-      cancelled the order.
+      Offer only to shoppers who have explicitly declined the order.
 
     First ACCEPT wins. The ACCEPT path atomically claims the
     order, then cancels all other outstanding offers.
@@ -1848,15 +1847,13 @@ async function offerOrderToShopper(
       )}&select=shopper_id,status&limit=100`
     );
 
-  const previouslyTriedShopperIds =
+  const previouslyDeclinedShopperIds =
     Array.isArray(existingJobs)
       ? existingJobs
           .filter(
             (job) =>
               job?.shopper_id &&
-              ["declined", "cancelled"].includes(
-                String(job.status || "").toLowerCase()
-              )
+              String(job.status || "").toLowerCase() === "declined"
           )
           .map((job) => job.shopper_id)
       : [];
@@ -1865,7 +1862,7 @@ async function offerOrderToShopper(
     ...new Set(
       [
         ...excludedIds,
-        ...previouslyTriedShopperIds,
+        ...previouslyDeclinedShopperIds,
       ].filter(Boolean)
     ),
   ];
