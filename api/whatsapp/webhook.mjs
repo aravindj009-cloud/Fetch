@@ -53,6 +53,9 @@ const MIN_DELIVERY_FEE = 20;
 const DELIVERY_RATE_PER_KM = 10;
 const DISTANCE_DECIMAL_PLACES = 2;
 
+// Automatic shopper recovery: an accepted shopper must show activity within 7 minutes.
+const STALE_ACCEPTED_SHOPPER_MINUTES = 7;
+
 // Free MVP distance routing. This can be replaced by Google Routes later.
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
@@ -4173,6 +4176,96 @@ function looksLikeContaminatedItems(items) {
   }
 
   return false;
+}
+
+async function releaseShopperAndRedispatch(order, shopper, job, reason = "shopper_unavailable") {
+  if (!order?.id || !shopper?.id) {
+    return { success: false, reason: "missing_order_or_shopper" };
+  }
+
+  const paymentStatus = String(order.payment_status || "unpaid").toLowerCase();
+  const safeStatuses = new Set([
+    "shopper_assigned",
+    "awaiting_customer_price_confirmation",
+    "payment_pending",
+  ]);
+
+  // Direct UPI payment means Fetch must not silently move a paid order to another shopper.
+  if (!safeStatuses.has(String(order.status || "").toLowerCase()) || paymentStatus === "paid") {
+    return { success: false, reason: "order_not_safe_to_reassign" };
+  }
+
+  if (job?.id) {
+    await updateShopperJob(job.id, { status: "cancelled" });
+  }
+
+  const released = await supabaseRequest(
+    `orders?id=eq.${encodeURIComponent(order.id)}&status=eq.${encodeURIComponent(order.status)}&shopper_id=eq.${encodeURIComponent(shopper.id)}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        status: "finding_shopper",
+        shopper_id: null,
+      }),
+    }
+  );
+
+  if (!Array.isArray(released) || !released.length) {
+    return { success: false, reason: "order_release_failed" };
+  }
+
+  await updateShopper(shopper.id, {
+    available: true,
+    current_order_id: null,
+    last_seen_at: new Date().toISOString(),
+  });
+
+  const shopperMessage =
+    reason === "inactive"
+      ? "⏱️ This Fetch job was released because there was no activity for 7 minutes. You’re available for the next Fetch job."
+      : reason === "item_unavailable"
+        ? "❌ This Fetch job was released because the requested item is unavailable. You’re available for the next Fetch job."
+        : "❌ This Fetch job was released. You’re available for the next Fetch job.";
+
+  if (shopper.phone) {
+    try {
+      await sendWhatsAppMessage(shopper.phone, shopperMessage);
+    } catch (error) {
+      console.error("FETCH REDISPATCH SHOPPER NOTIFICATION ERROR:", error);
+    }
+  }
+
+  const replacement = await offerOrderToShopper(
+    released[0],
+    [shopper.id]
+  );
+
+  try {
+    await notifyCustomerForOrder(
+      released[0].id,
+      replacement?.success
+        ? "⚠️ Your Fetch shopper couldn’t continue, so I’m finding another shopper for you now."
+        : "⚠️ Your Fetch shopper couldn’t continue. I’m looking for another available shopper now."
+    );
+  } catch (error) {
+    console.error("FETCH REDISPATCH CUSTOMER NOTIFICATION ERROR:", error);
+  }
+
+  return {
+    success: true,
+    replacementSent: Boolean(replacement?.success),
+  };
+}
+
+function isShopperCancellationRequest(text) {
+  const value = String(text || "").trim();
+  return /^(?:CANCEL|CANCEL JOB|I\s+(?:WANT|NEED)\s+TO\s+CANCEL|I\s+CANNOT\s+DO\s+THIS|CAN'T\s+DO\s+THIS)$/i.test(value);
+}
+
+function isShopperCannotFulfillRequest(text) {
+  const value = String(text || "").trim();
+  return /^(?:ITEM\s+UNAVAILABLE|ITEM\s+NOT\s+AVAILABLE|PRODUCT\s+UNAVAILABLE|CANNOT\s+FULFILL|CAN'T\s+FULFILL|NOT\s+AVAILABLE|OUT\s+OF\s+STOCK)$/i.test(value);
 }
 
 async function cancelOrderAndReleaseShopper(order) {
@@ -8807,6 +8900,63 @@ async function handleShopperMessage({
       );
       return;
     }
+  }
+
+  /* AUTOMATIC REASSIGNMENT — SHOPPER CANCEL / UNAVAILABLE */
+
+  if (isShopperCancellationRequest(rawText) || isShopperCannotFulfillRequest(rawText)) {
+    if (!shopper.current_order_id) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You don’t have an active Fetch order to release."
+      );
+      return;
+    }
+
+    const activeShopperOrder = await getOrderById(shopper.current_order_id);
+    const activeShopperJob = await getAcceptedShopperJob(shopper.id);
+
+    if (!activeShopperOrder) {
+      await updateShopper(shopper.id, {
+        available: true,
+        current_order_id: null,
+        last_seen_at: new Date().toISOString(),
+      });
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find that order, so you’re available again for the next Fetch job."
+      );
+      return;
+    }
+
+    const reason = isShopperCannotFulfillRequest(rawText)
+      ? "item_unavailable"
+      : "cancelled";
+
+    const result = await releaseShopperAndRedispatch(
+      activeShopperOrder,
+      shopper,
+      activeShopperJob,
+      reason
+    );
+
+    if (!result.success) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        activeShopperOrder.payment_status === "paid"
+          ? "This order has already been paid directly to you. Please contact Fetch support before cancelling or stopping fulfilment."
+          : "This order can’t be automatically reassigned at this stage. Please contact Fetch support."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      result.replacementSent
+        ? "Done ✅ I’ve released this order and sent it to the next available shopper."
+        : "Done ✅ I’ve released this order. I’m looking for the next available shopper."
+    );
+    return;
   }
 
   /* AVAILABLE / READY */
