@@ -1,3 +1,12 @@
+import {
+  atcSafe,
+  atcSyncShopperResource,
+  atcSelectResourceForOrder,
+  atcRecordAssignment,
+  atcUpdateAssignmentStatus,
+  atcRecordEvent,
+} from "../../lib/atc.mjs";
+
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://skfxzagxlxputwpwxwbe.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY;
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -56,10 +65,22 @@ async function getAvailableShoppers(excludedIds = []) {
 async function offerOrderToAvailableShoppers(order, excludedIds = []) {
   if (!order?.id) return { offeredCount: 0, shoppers: [] };
 
-  const shoppers = await getAvailableShoppers(excludedIds);
-  console.log("FETCH RECOVERY AVAILABLE SHOPPERS:", JSON.stringify(
-    shoppers.map(s => ({ id: s.id, phone: s.phone, available: s.available, current_order_id: s.current_order_id }))
-  ));
+  let shoppers = await getAvailableShoppers(excludedIds);
+  if (!shoppers.length) return { offeredCount: 0, shoppers: [] };
+
+  const atcMatch = await atcSafe(
+    () => atcSelectResourceForOrder({
+      order,
+      excludedShopperIds: excludedIds,
+    }),
+    "recovery_resource_matching"
+  );
+
+  if (atcMatch?.shopperId) {
+    shoppers = shoppers.filter(
+      (shopper) => String(shopper.id) === String(atcMatch.shopperId)
+    );
+  }
 
   let offeredCount = 0;
   const offeredShoppers = [];
@@ -67,12 +88,20 @@ async function offerOrderToAvailableShoppers(order, excludedIds = []) {
   for (const shopper of shoppers) {
     try {
       const job = await createShopperJob(order.id, shopper.id);
-      if (!job?.id) {
-        console.error("FETCH RECOVERY JOB CREATE RETURNED NO JOB:", shopper.id);
-        continue;
-      }
+      if (!job?.id) continue;
 
-      const message =
+      await atcSafe(
+        () => atcRecordAssignment({
+          orderId: order.id,
+          shopperId: shopper.id,
+          status: "offered",
+          jobId: job.id,
+        }),
+        "recovery_assignment_offered"
+      );
+
+      await sendWhatsAppMessage(
+        shopper.phone,
         `🛍️ *New Fetch Job*\n\n` +
         `🛒 Items: ${order.items || "Requested items"}\n` +
         (order.delivery_address
@@ -81,13 +110,27 @@ async function offerOrderToAvailableShoppers(order, excludedIds = []) {
         `\nPlease find the requested item at a suitable source and report the product price.\n\n` +
         `Reply *ACCEPT* to take this job.\n` +
         `Reply *DECLINE* to skip it.\n\n` +
-        `⚡ The first shopper to ACCEPT gets this order.`;
+        `⚡ The first shopper to ACCEPT gets this order.`
+      );
 
-      await sendWhatsAppMessage(shopper.phone, message);
       offeredCount += 1;
       offeredShoppers.push(shopper.id);
 
-      console.log("FETCH RECOVERY JOB OFFERED:", JSON.stringify({ orderId: order.id, shopperId: shopper.id, jobId: job.id }));
+      await atcSafe(
+        () => atcRecordEvent({
+          orderId: order.id,
+          eventType: "resource_offered",
+          actorType: "atc",
+          actorId: shopper.id,
+          metadata: {
+            job_id: job.id,
+            recovery: true,
+            match_reason: atcMatch?.reason || "recovery_fallback",
+            distance_km: atcMatch?.distanceKm ?? null,
+          },
+        }),
+        "recovery_resource_offered_event"
+      );
     } catch (error) {
       console.error(
         "FETCH RECOVERY OFFER FAILED:",
@@ -131,7 +174,34 @@ async function recoverStaleAcceptedOrders() {
       if (!Array.isArray(released) || !released.length) { skipped++; continue; }
 
       await updateShopperJob(job.id, { status: "cancelled" });
-      await updateShopper(shopper.id, { available: true, current_order_id: null, last_seen_at: new Date().toISOString() });
+      const releasedShopper = await updateShopper(shopper.id, { available: true, current_order_id: null, last_seen_at: new Date().toISOString() });
+
+      await atcSafe(
+        () => atcSyncShopperResource(releasedShopper || { ...shopper, available: true, current_order_id: null }),
+        "cron_released_shopper_resource_sync"
+      );
+
+      await atcSafe(
+        () => atcUpdateAssignmentStatus({
+          orderId: order.id,
+          shopperId: shopper.id,
+          jobId: job.id,
+          status: "expired",
+        }),
+        "cron_assignment_expired"
+      );
+
+      await atcSafe(
+        () => atcRecordEvent({
+          orderId: order.id,
+          eventType: "resource_expired",
+          actorType: "system",
+          actorId: shopper.id,
+          metadata: { job_id: job.id, reason: "inactive", recovery: "redispatch" },
+        }),
+        "cron_resource_expired_event"
+      );
+
       if (shopper.phone) await sendWhatsAppMessage(shopper.phone, "⏱️ This Fetch job was released because there was no activity for 7 minutes. You’re available for the next Fetch job.");
 
       let dispatchResult = { offeredCount: 0, shoppers: [] };
@@ -147,6 +217,20 @@ async function recoverStaleAcceptedOrders() {
         offeredCount: dispatchResult.offeredCount,
         offeredShoppers: dispatchResult.shoppers,
       }));
+
+      await atcSafe(
+        () => atcRecordEvent({
+          orderId: order.id,
+          eventType: dispatchResult.offeredCount > 0 ? "resource_redispatched" : "resource_redispatch_pending",
+          actorType: "atc",
+          metadata: {
+            failed_shopper_id: shopper.id,
+            replacement_shopper_ids: dispatchResult.shoppers || [],
+            recovery: "stale_shopper",
+          },
+        }),
+        "cron_redispatch_result_event"
+      );
 
       // Customer notification is independent from shopper dispatch.
       // A failed shopper offer must never suppress the customer update.
