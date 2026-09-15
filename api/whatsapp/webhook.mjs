@@ -1,12 +1,3 @@
-import {
-  atcSafe,
-  atcCreateTaskForOrder,
-  atcSyncTaskFromOrder,
-  atcSyncShopperResource,
-  atcRecordAssignment,
-  atcRecordEvent,
-} from "../../lib/atc.mjs";
-
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL ||
   "https://skfxzagxlxputwpwxwbe.supabase.co";
@@ -75,6 +66,20 @@ const FETCH_DISTANCE_USER_AGENT = "Fetch MVP/1.0";
 // locally instead of making WhatsApp feel broken.
 const OPENAI_MAX_RETRIES = 1;
 const OPENAI_RETRY_DELAY_MS = 1500;
+
+/* =========================================================
+   ATC V1 SHADOW LAYER
+   Additive only — never allowed to break the existing MVP.
+   ========================================================= */
+
+import {
+  atcSafe,
+  atcCreateTaskForOrder,
+  atcSyncTaskFromOrder,
+  atcSyncShopperResource,
+  atcRecordAssignment,
+  atcRecordEvent,
+} from "../../lib/atc.mjs";
 
 function sleep(ms) {
   return new Promise((resolve) =>
@@ -548,14 +553,12 @@ async function updateShopper(
       }
     );
 
-  const updatedShopper =
-    Array.isArray(data) &&
+  const updatedShopper = Array.isArray(data) &&
     data.length
-      ? data[0]
-      : null;
+    ? data[0]
+    : null;
 
-  // ATC V1 shadow: keep the resource state synchronized.
-  if (updatedShopper?.id) {
+  if (updatedShopper) {
     await atcSafe(
       () => atcSyncShopperResource(updatedShopper),
       "shopper_resource_sync"
@@ -1578,24 +1581,19 @@ async function createOrder({
     );
   }
 
-  // ATC V1 shadow: create a generic task without changing the MVP flow.
   if (createdOrder?.id) {
     await atcSafe(
       () => atcCreateTaskForOrder(createdOrder),
-      "task_created"
+      "task_create"
     );
 
     await atcSafe(
-      () =>
-        atcRecordEvent({
-          orderId: createdOrder.id,
-          eventType: "task_created",
-          toStatus: createdOrder.status || null,
-          metadata: {
-            task_type: "purchase_and_deliver",
-            source: "whatsapp_order",
-          },
-        }),
+      () => atcRecordEvent({
+        orderId: createdOrder.id,
+        eventType: "task_created",
+        toStatus: createdOrder.status || null,
+        metadata: { source: "fetch_order_created" },
+      }),
       "task_created_event"
     );
   }
@@ -1626,31 +1624,26 @@ async function updateOrder(
       }
     );
 
-  const updatedOrder =
-    Array.isArray(data) &&
+  const updatedOrder = Array.isArray(data) &&
     data.length
-      ? data[0]
-      : null;
+    ? data[0]
+    : null;
 
-  // ATC V1 shadow: mirror order state changes.
-  if (updatedOrder?.id) {
+  if (updatedOrder) {
     await atcSafe(
       () => atcSyncTaskFromOrder(updatedOrder),
       "task_sync"
     );
 
-    if (updates?.status) {
+    if (Object.prototype.hasOwnProperty.call(updates, "status")) {
       await atcSafe(
-        () =>
-          atcRecordEvent({
-            orderId: updatedOrder.id,
-            eventType: "order_status_changed",
-            toStatus: updatedOrder.status || null,
-            metadata: {
-              source: "existing_order_state_machine",
-            },
-          }),
-        "order_status_changed"
+        () => atcRecordEvent({
+          orderId: updatedOrder.id,
+          eventType: "order_status_changed",
+          toStatus: updatedOrder.status || null,
+          metadata: { source: "fetch_order_update" },
+        }),
+        "order_status_event"
       );
     }
   }
@@ -1827,58 +1820,49 @@ async function createShopperJob(
       }
     );
 
-  const createdJob =
-    Array.isArray(data)
-      ? data[0]
-      : data;
+  const createdJob = Array.isArray(data)
+    ? data[0]
+    : data;
 
-  // ATC V1 shadow: register the human shopper as a resource
-  // and record this shopper offer as an assignment.
   if (createdJob?.id) {
-    const shopperRows =
-      await supabaseRequest(
-        `shoppers?id=eq.${encodeURIComponent(
-          shopperId
-        )}&select=*&limit=1`
-      );
+    const shopperRows = await atcSafe(
+      () => supabaseRequest(
+        `shoppers?id=eq.${encodeURIComponent(shopperId)}&select=*&limit=1`
+      ),
+      "shopper_lookup_for_assignment"
+    );
 
-    const shopper =
-      Array.isArray(shopperRows) &&
-      shopperRows.length
-        ? shopperRows[0]
-        : null;
+    const shopper = Array.isArray(shopperRows) && shopperRows.length
+      ? shopperRows[0]
+      : null;
 
     if (shopper) {
       await atcSafe(
         () => atcSyncShopperResource(shopper),
-        "resource_offered_sync"
+        "shopper_resource_upsert"
       );
-    }
 
-    await atcSafe(
-      () =>
-        atcRecordAssignment({
+      await atcSafe(
+        () => atcRecordAssignment({
           orderId,
           shopperId,
           status: "offered",
           jobId: createdJob.id,
         }),
-      "resource_offered_assignment"
-    );
+        "resource_assignment"
+      );
 
-    await atcSafe(
-      () =>
-        atcRecordEvent({
+      await atcSafe(
+        () => atcRecordEvent({
           orderId,
           eventType: "resource_offered",
           actorType: "system",
           actorId: shopperId,
-          metadata: {
-            shopper_job_id: createdJob.id,
-          },
+          metadata: { job_id: createdJob.id },
         }),
-      "resource_offered_event"
-    );
+        "resource_offered_event"
+      );
+    }
   }
 
   return createdJob;
@@ -1907,31 +1891,24 @@ async function updateShopperJob(
       }
     );
 
-  const updatedJob =
-    Array.isArray(data) &&
+  const updatedJob = Array.isArray(data) &&
     data.length
-      ? data[0]
-      : null;
+    ? data[0]
+    : null;
 
-  // ATC V1 shadow: mirror shopper assignment state changes.
-  if (
-    updatedJob?.id &&
-    updatedJob?.order_id &&
-    updatedJob?.shopper_id
-  ) {
+  if (updatedJob?.order_id) {
     await atcSafe(
-      () =>
-        atcRecordEvent({
-          orderId: updatedJob.order_id,
-          eventType: "shopper_job_status_changed",
-          actorType: "shopper",
-          actorId: updatedJob.shopper_id,
-          metadata: {
-            shopper_job_id: updatedJob.id,
-            status: updatedJob.status || null,
-          },
-        }),
-      "shopper_job_status_changed"
+      () => atcRecordEvent({
+        orderId: updatedJob.order_id,
+        eventType: "shopper_job_status_changed",
+        actorType: "shopper",
+        actorId: updatedJob.shopper_id || null,
+        metadata: {
+          job_id: updatedJob.id,
+          job_status: updatedJob.status || null,
+        },
+      }),
+      "shopper_job_event"
     );
   }
 
@@ -9179,15 +9156,6 @@ async function handleShopperMessage({
       return;
     }
 
-    console.log(
-      "FETCH ACCEPT SUCCESS:",
-      JSON.stringify({
-        orderId: claimedOrder.id,
-        jobId: job.id,
-        shopperId: shopper.id,
-      })
-    );
-
     const updatedShopper =
       await updateShopper(
         shopper.id,
@@ -9410,6 +9378,17 @@ async function handleShopperMessage({
 
       return;
     }
+
+    await atcSafe(
+      () => atcRecordEvent({
+        orderId: claimedOrder.id,
+        eventType: "resource_accepted",
+        actorType: "shopper",
+        actorId: shopper.id,
+        metadata: { job_id: job.id },
+      }),
+      "resource_accepted_event"
+    );
 
     const updatedShopper =
       await updateShopper(
