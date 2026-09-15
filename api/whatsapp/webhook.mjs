@@ -79,6 +79,7 @@ import {
   atcSyncShopperResource,
   atcRecordAssignment,
   atcRecordEvent,
+  atcSelectResourceForOrder,
 } from "../../lib/atc.mjs";
 
 function sleep(ms) {
@@ -2085,6 +2086,43 @@ async function offerOrderToShopper(
     await getAvailableShoppers(
       combinedExcluded
     );
+
+  /*
+    ATC V1 ACTIVE MATCHING
+
+    ATC now makes the first resource-selection decision.
+    The existing shopper-job system remains the execution engine.
+
+    If ATC cannot make a decision (for example, because the resource
+    has not been synced yet), we safely fall back to the existing MVP
+    dispatch behaviour so WhatsApp ordering is never blocked.
+  */
+  if (!preferredShopperId && shoppers.length > 0) {
+    const atcMatch = await atcSafe(
+      () => atcSelectResourceForOrder({
+        order,
+        excludedShopperIds: combinedExcluded,
+      }),
+      "resource_matching"
+    );
+
+    if (atcMatch?.shopperId) {
+      console.log(
+        "FETCH ATC MATCH SELECTED RESOURCE:",
+        JSON.stringify({
+          orderId: order.id,
+          shopperId: atcMatch.shopperId,
+          reason: atcMatch.reason || "atc_match",
+          distanceKm: atcMatch.distanceKm ?? null,
+        })
+      );
+
+      shoppers = shoppers.filter(
+        (shopper) =>
+          String(shopper.id) === String(atcMatch.shopperId)
+      );
+    }
+  }
 
   if (preferredShopperId) {
     shoppers = shoppers.filter(
