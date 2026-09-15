@@ -80,6 +80,7 @@ import {
   atcRecordAssignment,
   atcRecordEvent,
   atcSelectResourceForOrder,
+  atcUpdateShopperLocation,
 } from "../../lib/atc.mjs";
 
 function sleep(ms) {
@@ -9150,6 +9151,59 @@ async function handleShopperMessage({
     }
   );
 
+  /* SHOPPER PERSONAL LOCATION
+   *
+   * When a shopper has no active order, a WhatsApp location pin is the
+   * shopper's current operating location. ATC stores it on the resource
+   * record and uses it for nearest-shopper matching.
+   */
+  if (location && !shopper.current_order_id) {
+    const shopperLatitude = Number(location.latitude);
+    const shopperLongitude = Number(location.longitude);
+
+    const hasValidShopperLocation =
+      Number.isFinite(shopperLatitude) &&
+      Number.isFinite(shopperLongitude) &&
+      shopperLatitude >= -90 &&
+      shopperLatitude <= 90 &&
+      shopperLongitude >= -180 &&
+      shopperLongitude <= 180 &&
+      !(shopperLatitude === 0 && shopperLongitude === 0);
+
+    if (!hasValidShopperLocation) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received the location, but the coordinates are invalid. Please use WhatsApp → Location → Send your current location and try again. 📍"
+      );
+      return;
+    }
+
+    const syncedResource = await atcSafe(
+      () =>
+        atcUpdateShopperLocation({
+          shopper,
+          latitude: shopperLatitude,
+          longitude: shopperLongitude,
+          source: "whatsapp_location",
+        }),
+      "shopper_location_sync"
+    );
+
+    if (!syncedResource) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location, but couldn’t save it for shopper matching. Please send your location again. 📍"
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Shopper location saved 📍\n\nATC will use this location to match you with nearby Fetch orders."
+    );
+    return;
+  }
+
   /* SHOPPER STORE LOCATION
    *
    * A shopper location is interpreted as the physical store location only
@@ -9388,6 +9442,11 @@ async function handleShopperMessage({
       return;
     }
 
+    await atcSafe(
+      () => atcSyncShopperResource(updatedShopper),
+      "shopper_available_resource_sync"
+    );
+
     const queuedDispatch =
       await dispatchNextQueuedOrder(
         shopper.id
@@ -9406,7 +9465,7 @@ async function handleShopperMessage({
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      "You’re available ✅ I’ll send you the next Fetch job when one is available."
+      "You’re available ✅ I’ll send you the next Fetch job when one is available.\n\nIf this is your first time going online, send your current WhatsApp location 📍 so ATC can match you by proximity."
     );
 
     return;
