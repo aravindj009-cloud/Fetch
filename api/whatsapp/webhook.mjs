@@ -2397,6 +2397,16 @@ async function cancelOtherOffersAfterAcceptance(
       }
     );
 
+    await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId,
+        shopperId: offer.shopper_id,
+        jobId: offer.id,
+        status: "cancelled",
+      }),
+      "losing_assignment_cancelled"
+    );
+
     if (!offer.shopper_id) {
       continue;
     }
@@ -4492,11 +4502,41 @@ async function releaseShopperAndRedispatch(order, shopper, job, reason = "shoppe
     return { success: false, reason: "order_release_failed" };
   }
 
-  await updateShopper(shopper.id, {
+  const releasedShopper = await updateShopper(shopper.id, {
     available: true,
     current_order_id: null,
     last_seen_at: new Date().toISOString(),
   });
+
+  await atcSafe(
+    () => atcSyncShopperResource(releasedShopper || { ...shopper, available: true, current_order_id: null }),
+    "shopper_released_resource_sync"
+  );
+
+  await atcSafe(
+    () => atcUpdateAssignmentStatus({
+      orderId: order.id,
+      shopperId: shopper.id,
+      jobId: job?.id || null,
+      status: reason === "inactive" ? "expired" : "cancelled",
+    }),
+    "assignment_failure_recovery_status"
+  );
+
+  await atcSafe(
+    () => atcRecordEvent({
+      orderId: order.id,
+      eventType: reason === "inactive" ? "resource_expired" : "resource_released",
+      actorType: "system",
+      actorId: shopper.id,
+      metadata: {
+        job_id: job?.id || null,
+        reason,
+        recovery: "redispatch",
+      },
+    }),
+    "assignment_failure_recovery_event"
+  );
 
   const shopperMessage =
     reason === "inactive"
@@ -4552,6 +4592,21 @@ async function releaseShopperAndRedispatch(order, shopper, job, reason = "shoppe
       offeredCount: 0,
     };
   }
+
+  await atcSafe(
+    () => atcRecordEvent({
+      orderId: released[0].id,
+      eventType: replacement?.success ? "resource_redispatched" : "resource_redispatch_pending",
+      actorType: "atc",
+      metadata: {
+        failed_shopper_id: shopper.id,
+        replacement_shopper_id: replacement?.shopper?.id || null,
+        offered_count: Number(replacement?.offeredCount || 0),
+        reason,
+      },
+    }),
+    "redispatch_result_event"
+  );
 
   try {
     await notifyCustomerForOrder(
@@ -9693,6 +9748,11 @@ async function handleShopperMessage({
         shopper.id
       );
     }
+
+    await atcSafe(
+      () => atcSyncShopperResource(updatedShopper || { ...shopper, available: false, current_order_id: claimedOrder.id }),
+      "shopper_accepted_resource_sync"
+    );
 
     /*
       Immediately cancel every losing offer and notify the
