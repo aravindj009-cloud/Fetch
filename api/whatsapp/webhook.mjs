@@ -904,6 +904,98 @@ async function geocodeAddress(address) {
   throw lastError || new Error(`Unable to geocode address: ${raw}`);
 }
 
+/*
+  Resolve a text delivery address before dispatching.
+  Fetch must never send a shopper an order that has no usable
+  customer coordinates. A WhatsApp location pin still takes priority.
+*/
+async function ensureOrderDeliveryCoordinates(order, address) {
+  if (!order?.id) return null;
+
+  const existingLatitude = Number(order.customer_latitude);
+  const existingLongitude = Number(order.customer_longitude);
+
+  if (
+    Number.isFinite(existingLatitude) &&
+    Number.isFinite(existingLongitude) &&
+    existingLatitude !== 0 &&
+    existingLongitude !== 0
+  ) {
+    return order;
+  }
+
+  const deliveryAddress =
+    String(address || order.delivery_address || "").trim();
+
+  if (!deliveryAddress) {
+    return null;
+  }
+
+  try {
+    const resolved = await geocodeAddress(deliveryAddress);
+
+    const latitude = Number(resolved?.latitude);
+    const longitude = Number(resolved?.longitude);
+
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude === 0 ||
+      longitude === 0
+    ) {
+      throw new Error("DELIVERY_ADDRESS_COORDINATES_INVALID");
+    }
+
+    const updated =
+      await updateOrder(
+        order.id,
+        {
+          delivery_address:
+            deliveryAddress,
+          customer_latitude:
+            latitude,
+          customer_longitude:
+            longitude,
+          customer_location_shared_at:
+            new Date().toISOString(),
+          customer_location_source:
+            resolved?.source ||
+            "nominatim_address",
+        }
+      );
+
+    if (!updated) {
+      throw new Error(
+        "DELIVERY_ADDRESS_COORDINATES_SAVE_FAILED"
+      );
+    }
+
+    console.log(
+      "FETCH DELIVERY LOCATION RESOLVED:",
+      JSON.stringify({
+        orderId:
+          order.id,
+        address:
+          deliveryAddress,
+        latitude,
+        longitude,
+        source:
+          resolved?.source ||
+          "nominatim_address",
+      })
+    );
+
+    return updated;
+  } catch (error) {
+    console.error(
+      "FETCH DELIVERY ADDRESS GEOCODING ERROR:",
+      deliveryAddress,
+      error
+    );
+    return null;
+  }
+}
+
 async function getCoordinatesForStore(store) {
   const name = String(store?.name || "").trim();
   const address = String(store?.address || "").trim();
@@ -5657,6 +5749,32 @@ async function handleCustomerMessage({
         return;
       }
 
+      await updateCustomerAddress(
+        customer.id,
+        deliveryAddress
+      );
+
+      const resolvedDeliveryOrder =
+        await ensureOrderDeliveryCoordinates(
+          newOrder,
+          deliveryAddress
+        );
+
+      if (!resolvedDeliveryOrder) {
+        await updateOrder(
+          newOrder.id,
+          {
+            status: "collecting_details",
+          }
+        );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Got it 👍\n\n🛒 ${cleanItems}\n📍 I have the delivery address, but I couldn’t map it accurately enough. Please send your WhatsApp Location pin so I can continue.`
+        );
+        return;
+      }
+
       const findingShopper =
         await updateOrder(
           newOrder.id,
@@ -5674,7 +5792,7 @@ async function handleCustomerMessage({
 
       const dispatch =
         await offerOrderToShopper(
-          findingShopper || newOrder
+          findingShopper || resolvedDeliveryOrder
         );
 
       await sendWhatsAppMessage(
@@ -5796,6 +5914,27 @@ async function handleCustomerMessage({
       address
     );
 
+    const resolvedDeliveryOrder =
+      await ensureOrderDeliveryCoordinates(
+        order,
+        address
+      );
+
+    if (!resolvedDeliveryOrder) {
+      await updateOrder(
+        order.id,
+        {
+          status: "collecting_details",
+        }
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n📍 I have the delivery address, but I couldn’t map it accurately enough. Please send your WhatsApp Location pin so I can continue.`
+      );
+      return;
+    }
+
     // The customer never needs to choose or price the fulfillment source.
     // Fetch dispatches the request first; the shopper reports the actual
     // source and price, then Fetch calculates delivery automatically.
@@ -5816,7 +5955,7 @@ async function handleCustomerMessage({
 
     const dispatch =
       await offerOrderToShopper(
-        findingShopper || order
+        findingShopper || resolvedDeliveryOrder
       );
 
     await sendWhatsAppMessage(
@@ -7908,6 +8047,41 @@ async function handleCustomerMessage({
       );
     }
 
+    if (
+      String(changedOrder.delivery_address || "").trim() &&
+      !(
+        Number.isFinite(
+          Number(changedOrder.customer_latitude)
+        ) &&
+        Number.isFinite(
+          Number(changedOrder.customer_longitude)
+        ) &&
+        Number(changedOrder.customer_latitude) !== 0 &&
+        Number(changedOrder.customer_longitude) !== 0
+      )
+    ) {
+      const resolvedChangedOrder =
+        await ensureOrderDeliveryCoordinates(
+          changedOrder,
+          changedOrder.delivery_address
+        );
+
+      if (!resolvedChangedOrder) {
+        await updateOrder(
+          changedOrder.id,
+          {
+            status: "collecting_details",
+          }
+        );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "Updated 👍 I have the delivery address, but I couldn’t map it accurately enough. Please send your WhatsApp Location pin so I can continue."
+        );
+        return;
+      }
+    }
+
     const findingShopper =
       await updateOrder(
         changedOrder.id,
@@ -8018,7 +8192,7 @@ function parseShopperStoreAndPrice(text) {
   // STORE: Zam Zam, PRICE 499
   // Store: Zam Zam Price 499
   const match = value.match(
-    /^store\s*:?[\s]+(.+?)\s+price\s*:?[\s]*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
+    /^store\s*:?\s*(.+?)\s+price\s*:?\s*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
   );
 
   if (!match) return null;
