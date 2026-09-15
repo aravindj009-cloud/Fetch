@@ -78,6 +78,7 @@ import {
   atcSyncTaskFromOrder,
   atcSyncShopperResource,
   atcRecordAssignment,
+  atcUpdateAssignmentStatus,
   atcRecordEvent,
   atcSelectResourceForOrder,
   atcUpdateShopperLocation,
@@ -9651,6 +9652,16 @@ async function handleShopperMessage({
     }
 
     await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId: claimedOrder.id,
+        shopperId: shopper.id,
+        jobId: job.id,
+        status: "accepted",
+      }),
+      "assignment_accepted"
+    );
+
+    await atcSafe(
       () => atcRecordEvent({
         orderId: claimedOrder.id,
         eventType: "resource_accepted",
@@ -9739,6 +9750,27 @@ async function handleShopperMessage({
         status:
           "declined",
       }
+    );
+
+    await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId: job.order_id,
+        shopperId: shopper.id,
+        jobId: job.id,
+        status: "declined",
+      }),
+      "assignment_declined"
+    );
+
+    await atcSafe(
+      () => atcRecordEvent({
+        orderId: job.order_id,
+        eventType: "resource_declined",
+        actorType: "shopper",
+        actorId: shopper.id,
+        metadata: { job_id: job.id },
+      }),
+      "resource_declined_event"
     );
 
     await sendWhatsAppMessage(
@@ -10359,6 +10391,27 @@ async function handleShopperMessage({
       }
     );
 
+    await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId: order.id,
+        shopperId: shopper.id,
+        jobId: job.id,
+        status: "started",
+      }),
+      "assignment_started"
+    );
+
+    await atcSafe(
+      () => atcRecordEvent({
+        orderId: order.id,
+        eventType: "task_started",
+        actorType: "shopper",
+        actorId: shopper.id,
+        metadata: { job_id: job.id },
+      }),
+      "task_started_event"
+    );
+
     await sendWhatsAppMessage(
       normalizedPhone,
 
@@ -10499,6 +10552,27 @@ async function handleShopperMessage({
         completed_at:
           completedAt,
       }
+    );
+
+    await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId: order.id,
+        shopperId: shopper.id,
+        jobId: job.id,
+        status: "completed",
+      }),
+      "assignment_completed"
+    );
+
+    await atcSafe(
+      () => atcRecordEvent({
+        orderId: order.id,
+        eventType: "task_completed",
+        actorType: "shopper",
+        actorId: shopper.id,
+        metadata: { job_id: job.id },
+      }),
+      "task_completed_event"
     );
 
     await updateShopper(
