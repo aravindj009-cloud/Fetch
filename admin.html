@@ -692,62 +692,8 @@
     .atc-empty { padding:24px; color:var(--muted); text-align:center; }
     @media (max-width:900px) { .atc-grid { grid-template-columns:repeat(2,minmax(140px,1fr)); } }
   </style>
-</head>
 
-<body>
-
-  <div id="authScreen" class="auth-screen show">
-    <div class="auth-card">
-      <div class="auth-logo">🛍️</div>
-      <h1>Fetch Admin</h1>
-      <p>Sign in to open the Fetch Admin Control Room.</p>
-
-      <form id="loginForm">
-        <label for="loginEmail">Email</label>
-        <input
-          id="loginEmail"
-          class="auth-input"
-          type="email"
-          autocomplete="username"
-          placeholder="admin@example.com"
-          required
-        />
-
-        <label for="loginPassword">Password</label>
-        <input
-          id="loginPassword"
-          class="auth-input"
-          type="password"
-          autocomplete="current-password"
-          placeholder="Your password"
-          required
-        />
-
-        <button
-          id="loginButton"
-          class="auth-button"
-          type="submit"
-        >
-          Sign in
-        </button>
-
-        <div id="authError" class="auth-error"></div>
-
-        <div class="auth-help">
-          Use the admin user you created in Supabase Authentication → Users.
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div id="appShell">
-ype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fetch Admin Control Room</title>
-  <style>
+<style>
     :root {
       --bg: #f4f6f8;
       --card: #ffffff;
@@ -1425,9 +1371,99 @@ ype html>
     }
 
   </style>
-</head>
 
+<style>
+  /* ATC table alignment fix: do not inherit the global sticky table header. */
+  .atc-table {
+    width: 100%;
+    min-width: 1050px;
+    table-layout: fixed;
+    border-collapse: collapse;
+  }
+  .atc-table thead,
+  .atc-table tbody {
+    width: 100%;
+  }
+  .atc-table th,
+  .atc-table td {
+    position: static !important;
+    top: auto !important;
+    z-index: auto !important;
+    box-sizing: border-box;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  .atc-table th:nth-child(1), .atc-table td:nth-child(1) { width: 15%; }
+  .atc-table th:nth-child(2), .atc-table td:nth-child(2) { width: 25%; }
+  .atc-table th:nth-child(3), .atc-table td:nth-child(3) { width: 13%; }
+  .atc-table th:nth-child(4), .atc-table td:nth-child(4) { width: 13%; }
+  .atc-table th:nth-child(5), .atc-table td:nth-child(5) { width: 13%; }
+  .atc-table th:nth-child(6), .atc-table td:nth-child(6) { width: 11%; }
+  .atc-table th:nth-child(7), .atc-table td:nth-child(7) { width: 10%; }
+  .atc-table th {
+    background: #f9fafb;
+    white-space: nowrap;
+  }
+  .atc-table td .status {
+    max-width: 100%;
+  }
+  .atc-event {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+</style>
+</head>
 <body>
+
+
+  <div id="authScreen" class="auth-screen show">
+    <div class="auth-card">
+      <div class="auth-logo">🛍️</div>
+      <h1>Fetch Admin</h1>
+      <p>Sign in to open the Fetch Admin Control Room.</p>
+
+      <form id="loginForm">
+        <label for="loginEmail">Email</label>
+        <input
+          id="loginEmail"
+          class="auth-input"
+          type="email"
+          autocomplete="username"
+          placeholder="admin@example.com"
+          required
+        />
+
+        <label for="loginPassword">Password</label>
+        <input
+          id="loginPassword"
+          class="auth-input"
+          type="password"
+          autocomplete="current-password"
+          placeholder="Your password"
+          required
+        />
+
+        <button
+          id="loginButton"
+          class="auth-button"
+          type="submit"
+        >
+          Sign in
+        </button>
+
+        <div id="authError" class="auth-error"></div>
+
+        <div class="auth-help">
+          Use the admin user you created in Supabase Authentication → Users.
+        </div>
+      </form>
+    </div>
+  </div>
+
+  
+  <div id="appShell">
+
   <header>
     <div>
       <h1>🛍️ Fetch Admin Control Room</h1>
@@ -3406,5 +3442,7 @@ ype html>
       10000
     );
   </script>
+
+  </div>
 </body>
 </html>
