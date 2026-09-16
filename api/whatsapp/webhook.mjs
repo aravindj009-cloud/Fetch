@@ -5120,7 +5120,7 @@ function buildOrderModificationMessage(
   return (
     `Updated 👍 I’ve ${verb}.\n\n` +
     `🛒 Items: ${order.items}\n` +
-    `🏪 Store: ${order.store_name}\n` +
+    `${order.store_name ? `🏪 Source: ${order.store_name}\n` : ""}` +
     `📍 Deliver to: ${order.delivery_address || "location to be confirmed"}`
   );
 }
@@ -8452,9 +8452,13 @@ function buildCustomerReceiptMessage(order) {
         ? "💳 Payment: Paid"
         : "💳 Payment: Payment details recorded";
 
+  const sourceLine = order?.store_name
+    ? `🏪 Source: ${order.store_name}`
+    : `📍 Source: Shopper-selected location`;
+
   return (
     `🎉 Order delivered!\n\n` +
-    `🏪 Store: ${order?.store_name || "Store"}\n` +
+    `${sourceLine}\n` +
     `🛒 Items: ${order?.items || "Your items"}\n\n` +
     `🧾 Product price: ₹${formatRupees(productPrice)}\n` +
     `🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n` +
@@ -9470,13 +9474,15 @@ async function handleShopperMessage({
       return;
     }
 
+    // Store name is optional. The shopper's WhatsApp location is the
+    // source-of-truth fulfillment location used for distance pricing.
     const storeName = String(locationOrder.store_name || "").trim();
     const itemTotal = Number(locationOrder.item_total);
 
-    if (!storeName || !Number.isFinite(itemTotal) || itemTotal < 0) {
+    if (!Number.isFinite(itemTotal) || itemTotal < 0) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "Please send the store name and actual product price first, for example: STORE: MS Bakers Thirumala PRICE: 35"
+        "Please send the actual product price first, for example: PRICE: 35"
       );
       return;
     }
@@ -9512,19 +9518,25 @@ async function handleShopperMessage({
       const deliveryFee = calculateDeliveryFee(distanceKm);
       const total = itemTotal + deliveryFee + FETCH_FEE;
 
-      const store = await getOrCreateStoreForPricing(storeName);
+      // Store records are optional. If the customer originally specified a
+      // store, keep that existing store metadata; otherwise price the order
+      // from the shopper-shared source location without requiring a name.
+      let store = null;
+      if (storeName) {
+        store = await getOrCreateStoreForPricing(storeName);
 
-      if (store?.id) {
-        await updateStoreLocation(
-          store.id,
-          storeLatitude,
-          storeLongitude
-        );
+        if (store?.id) {
+          await updateStoreLocation(
+            store.id,
+            storeLatitude,
+            storeLongitude
+          );
+        }
       }
 
       const updatedOrder = await updateOrder(locationOrder.id, {
         store_id: store?.id || locationOrder.store_id || null,
-        store_name: storeName,
+        store_name: storeName || locationOrder.store_name || null,
         item_total: itemTotal,
         fetch_fee: FETCH_FEE,
         delivery_rate_per_km: DELIVERY_RATE_PER_KM,
@@ -9541,9 +9553,13 @@ async function handleShopperMessage({
         throw new Error("Could not save store-location pricing");
       }
 
+      const sourceLabel = storeName
+        ? `🏪 Source: ${storeName}`
+        : `📍 Source: Shopper-shared location`;
+
       await sendWhatsAppMessage(
         normalizedPhone,
-        `Store location received 📍\n\n🏪 Store: ${storeName}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(itemTotal)}\n🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n💰 Customer total: ₹${formatRupees(total)}\n\nI’ve sent the final amount to the customer for approval. Do not enter a delivery fee yourself.`
+        `Source location received 📍\n\n${sourceLabel}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(itemTotal)}\n🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n💰 Customer total: ₹${formatRupees(total)}\n\nI’ve sent the final amount to the customer for approval. Do not enter a delivery fee yourself.`
       );
 
       await notifyCustomerForOrder(
@@ -9922,7 +9938,7 @@ async function handleShopperMessage({
     );
 
     const acceptanceMessage =
-      "Accepted ✅\n\nYou Fetched this order first.\n\nFind the requested item at the most suitable source. Then send:\nSTORE: [store name] PRICE: [product total]\n\nAfter that, share the store’s WhatsApp location 📍\n\nFetch will calculate the delivery charge automatically.";
+      "Accepted ✅\n\nYou Fetched this order first.\n\nFind the requested item at the most suitable source. Then send:\nPRICE: [product total]\n\nAfter that, share the source/store’s WhatsApp location 📍\n\nFetch will calculate the delivery charge automatically.";
 
     await sendWhatsAppMessage(
       normalizedPhone,
@@ -10463,12 +10479,43 @@ async function handleShopperMessage({
     return;
   }
 
-  /* SHOPPER STORE + PRICE
+  /* SHOPPER PRODUCT PRICE
    *
-   * The shopper is physically at the store, so the store name and product
-   * price are accepted first. Location is collected separately because the
-   * shopper's WhatsApp location is the source of truth for the actual store.
+   * Store name is not required. The shopper only reports the actual product
+   * price, then shares the source/store location. Fetch owns the delivery
+   * pricing calculation from the two coordinates.
+   *
+   * Legacy STORE + PRICE input is still accepted for backward compatibility,
+   * but it is no longer required or requested.
    */
+  const itemOnlyPrice = parseShopperProductPrice(rawText);
+
+  if (itemOnlyPrice != null) {
+    const updatedOrder = await updateOrder(order.id, {
+      item_total: itemOnlyPrice,
+      fetch_fee: FETCH_FEE,
+      delivery_pricing_status: "store_location_pending",
+      delivery_pricing_source: null,
+      priced_at: null,
+      status: "shopper_assigned",
+    });
+
+    if (!updatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save the product price. Please try again using: PRICE: 35"
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `Price saved ✅\n\n🛒 Product price: ₹${formatRupees(itemOnlyPrice)}\n\n📍 Now share the source/store’s WhatsApp location.\n\nFetch will calculate the delivery charge automatically.`
+    );
+    return;
+  }
+
+  // Backward compatibility for shoppers using the previous STORE + PRICE format.
   const storeAndPrice = parseShopperStoreAndPrice(rawText);
 
   if (storeAndPrice) {
@@ -10485,32 +10532,29 @@ async function handleShopperMessage({
     if (!updatedOrder) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I couldn’t save the store and price. Please try again using: STORE: MS Bakers Thirumala PRICE: 35"
+        "I couldn’t save the product price. Please use: PRICE: 35"
       );
       return;
     }
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      `Saved ✅\n\n📍 Please share the store’s WhatsApp location.\n\nFetch will calculate the delivery charge automatically.`
+      `Price saved ✅\n\n📍 Now share the source/store’s WhatsApp location.\n\nFetch will calculate the delivery charge automatically.`
     );
     return;
   }
 
-  if (
-    /^price\b/i.test(rawText) ||
-    /^store\b/i.test(rawText)
-  ) {
+  if (/^price\b/i.test(rawText)) {
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Please send both together, like this:\nSTORE: MS Bakers Thirumala PRICE: 35\n\nThen share the store’s WhatsApp location 📍"
+      "Please send only the product price like this: PRICE: 35\n\nThen share the source/store’s WhatsApp location 📍"
     );
     return;
   }
 
   /* PRODUCT PRICE + DELIVERY FEE */
 
-  // Specific-store orders that already have a customer GPS location:
+  // Orders with a previously calculated delivery fee:
   // shopper reports only the product price. Fetch keeps the OSRM delivery fee.
   if (
     order.delivery_pricing_status === "calculated" &&
