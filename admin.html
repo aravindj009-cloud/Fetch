@@ -1413,6 +1413,16 @@
     word-break: break-word;
   }
 </style>
+<style>
+/* V1.6 TABLE ALIGNMENT FIX
+   The dashboard header is sticky; table headers must remain in normal flow.
+   This prevents Live Orders rows from sliding underneath the column headers.
+*/
+.table-wrap { overflow-x: auto; overflow-y: visible; }
+.table-wrap table { position: relative; }
+.table-wrap th { position: static !important; top: auto !important; z-index: auto !important; }
+.atc-table th, .atc-table td { white-space: normal; }
+</style>
 </head>
 <body>
 
