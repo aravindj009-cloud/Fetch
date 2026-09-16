@@ -8856,6 +8856,111 @@ async function getQueuedOrders(
     : [];
 }
 
+async function resendOpenShopperOffer(
+  shopper,
+  job
+) {
+  if (!shopper?.phone || !job?.id || !job?.order_id) {
+    return false;
+  }
+
+  const order =
+    await getOrderById(
+      job.order_id
+    );
+
+  if (!order) {
+    await updateShopperJob(
+      job.id,
+      {
+        status:
+          "cancelled",
+      }
+    );
+
+    return false;
+  }
+
+  const hasCustomerCoordinates =
+    Number.isFinite(
+      Number(
+        order.customer_latitude
+      )
+    ) &&
+    Number.isFinite(
+      Number(
+        order.customer_longitude
+      )
+    );
+
+  const storeName =
+    String(
+      order.store_name || ""
+    ).trim();
+
+  const isFlexibleStore =
+    !storeName ||
+    /^any available local store$/i.test(
+      storeName
+    ) ||
+    /^pending(?: nearby)? store$/i.test(
+      storeName
+    );
+
+  const destinationLine =
+    order.delivery_address
+      ? `📍 Deliver to: ${order.delivery_address}\n`
+      : "📍 Delivery location: customer will share location\n";
+
+  const locationPinLine =
+    hasCustomerCoordinates
+      ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+          `${Number(
+            order.customer_latitude
+          )},${Number(
+            order.customer_longitude
+          )}`
+        )}\n`
+      : "";
+
+  const storeInstruction =
+    isFlexibleStore
+      ? "🏪 Store: Any suitable nearby/local store\n"
+      : `🏪 Store: ${storeName}\n`;
+
+  const shopperInstruction =
+    isFlexibleStore
+      ? "Please find the requested item at a suitable nearby source and report the product price. Fetch will calculate the delivery charge after the actual source is known."
+      : "Please check the requested item at the requested store and report the product price. Fetch will calculate the delivery charge after the actual source location is known.";
+
+  const message =
+    `🛍️ *New Fetch Job*\n\n` +
+    storeInstruction +
+    `🛒 Items: ${order.items}\n` +
+    destinationLine +
+    locationPinLine +
+    `\n${shopperInstruction}\n\n` +
+    `Reply *ACCEPT* to take this job.\n` +
+    `Reply *DECLINE* to skip it.\n\n` +
+    `⚡ The first shopper to ACCEPT gets this order.`;
+
+  await sendWhatsAppMessage(
+    shopper.phone,
+    message
+  );
+
+  console.log(
+    "FETCH EXISTING SHOPPER OFFER RESENT:",
+    JSON.stringify({
+      shopperId: shopper.id,
+      jobId: job.id,
+      orderId: order.id,
+    })
+  );
+
+  return true;
+}
+
 async function dispatchNextQueuedOrder(
   shopperId
 ) {
@@ -8909,6 +9014,60 @@ async function dispatchNextQueuedOrder(
     };
   }
 
+  /*
+    V1.1 OFFER DELIVERY RECOVERY
+
+    If this exact shopper already has an OFFERED job, resend that same
+    job instead of skipping it. This avoids duplicate shopper_jobs rows
+    and lets AVAILABLE act as a safe recovery mechanism if the original
+    WhatsApp notification was missed or not visible.
+  */
+  const shopperOpenOffers =
+    await supabaseRequest(
+      `shopper_jobs?shopper_id=eq.${encodeURIComponent(
+        shopper.id
+      )}&status=eq.offered&select=*&order=offered_at.desc&limit=1`
+    );
+
+  if (
+    Array.isArray(
+      shopperOpenOffers
+    ) &&
+    shopperOpenOffers.length
+  ) {
+    const existingJob =
+      shopperOpenOffers[0];
+
+    try {
+      const resent =
+        await resendOpenShopperOffer(
+          shopper,
+          existingJob
+        );
+
+      if (resent) {
+        return {
+          success:
+            true,
+          reason:
+            "existing_offer_resent",
+          order:
+            await getOrderById(
+              existingJob.order_id
+            ),
+          shopper,
+          job:
+            existingJob,
+        };
+      }
+    } catch (error) {
+      console.error(
+        "FETCH EXISTING OFFER RESEND ERROR:",
+        error
+      );
+    }
+  }
+
   const queuedOrders =
     await getQueuedOrders(
       20
@@ -8916,7 +9075,7 @@ async function dispatchNextQueuedOrder(
 
   for (
     const queuedOrder of
-      queuedOrders
+    queuedOrders
   ) {
     try {
       const existingOffers =
@@ -8976,7 +9135,6 @@ async function dispatchNextQueuedOrder(
       null,
   };
 }
-
 
 /* =========================================================
    SHOPPER ONBOARDING
