@@ -3,794 +3,3408 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fetch Control Tower</title>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <title>Fetch Admin Control Room</title>
   <style>
-    :root{
-      --bg:#f7f7f5;
-      --surface:#fff;
-      --ink:#111;
-      --muted:#777;
-      --line:#e9e9e6;
-      --soft:#f1f1ee;
-      --green:#159447;
-      --amber:#b86b00;
-      --red:#c62828;
-      --blue:#2563eb;
-      --shadow:0 12px 40px rgba(0,0,0,.055);
-      --radius:20px;
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --blue: #2563eb;
+      --purple: #7c3aed;
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
     }
-    *{box-sizing:border-box}
-    html{scroll-behavior:smooth}
-    body{
-      margin:0;
-      background:var(--bg);
-      color:var(--ink);
-      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      letter-spacing:-.015em;
-    }
-    button,input{font:inherit}
-    button{cursor:pointer}
-    .hidden{display:none!important}
 
-    /* AUTH */
-    #authScreen{
-      min-height:100vh;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding:24px;
-      background:#f7f7f5;
-    }
-    .auth-card{
-      width:min(420px,100%);
-      background:#fff;
-      border:1px solid var(--line);
-      border-radius:28px;
-      padding:34px;
-      box-shadow:0 24px 80px rgba(0,0,0,.08);
-    }
-    .brand-mark{
-      width:46px;height:46px;border-radius:14px;
-      display:grid;place-items:center;
-      background:#111;color:#fff;
-      font-size:23px;margin-bottom:24px;
-    }
-    .auth-card h1{margin:0;font-size:29px;letter-spacing:-.045em}
-    .auth-card p{color:var(--muted);font-size:13px;line-height:1.5;margin:9px 0 26px}
-    label{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:17px 0 7px;color:#666}
-    .input{
-      width:100%;border:1px solid var(--line);border-radius:13px;
-      padding:13px 14px;background:#fafafa;outline:none;
-    }
-    .input:focus{background:#fff;border-color:#aaa;box-shadow:0 0 0 4px rgba(0,0,0,.045)}
-    .primary{
-      width:100%;border:0;border-radius:13px;background:#111;color:#fff;
-      padding:13px 15px;font-weight:800;margin-top:20px;
-    }
-    .auth-error{
-      display:none;margin-top:14px;padding:11px 13px;border-radius:12px;
-      background:#fff0f0;color:#a51f1f;font-size:12px;
-    }
-    .auth-error.show{display:block}
+    * { box-sizing: border-box; }
 
-    /* APP */
-    #appShell{display:none}
-    #appShell.show{display:block}
-    header{
-      position:sticky;top:0;z-index:50;
-      background:rgba(247,247,245,.9);backdrop-filter:blur(18px);
-      border-bottom:1px solid rgba(233,233,230,.8);
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
     }
-    .header-inner{
-      max-width:1500px;margin:auto;padding:17px 28px;
-      display:flex;align-items:center;justify-content:space-between;gap:20px;
-    }
-    .brand-title{display:flex;align-items:center;gap:11px}
-    .brand-square{
-      width:34px;height:34px;border-radius:10px;background:#111;color:#fff;
-      display:grid;place-items:center;font-size:17px;
-    }
-    .brand-title h1{font-size:16px;margin:0;font-weight:850;letter-spacing:-.03em}
-    .brand-title p{margin:2px 0 0;color:var(--muted);font-size:10px}
-    .header-actions{display:flex;align-items:center;gap:9px}
-    .live{
-      display:flex;align-items:center;gap:6px;font-size:10px;font-weight:800;
-      color:var(--green);text-transform:uppercase;letter-spacing:.08em;margin-right:7px;
-    }
-    .live-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12)}
-    .ghost,.logout{
-      border:1px solid var(--line);background:#fff;color:#222;border-radius:11px;
-      padding:9px 12px;font-size:11px;font-weight:800;
-    }
-    .logout{background:#111;color:#fff;border-color:#111}
 
-    main{max-width:1500px;margin:auto;padding:32px 28px 70px}
-    .hero{
-      display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:22px;
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 22px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
     }
-    .eyebrow{font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.12em}
-    .hero h2{font-size:31px;letter-spacing:-.055em;margin:5px 0 5px}
-    .hero p{margin:0;color:var(--muted);font-size:13px}
-    .session{font-size:11px;color:var(--muted);text-align:right}
 
-    .metrics{
-      display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:11px;margin-bottom:18px
+    header h1 {
+      margin: 0;
+      font-size: 24px;
     }
-    .metric{
-      background:var(--surface);border:1px solid var(--line);border-radius:18px;
-      padding:18px;box-shadow:var(--shadow)
-    }
-    .metric-label{font-size:10px;text-transform:uppercase;letter-spacing:.09em;font-weight:800;color:var(--muted)}
-    .metric-value{font-size:27px;font-weight:900;letter-spacing:-.055em;margin-top:10px}
-    .metric-note{font-size:10px;color:#999;margin-top:4px}
 
-    .attention{
-      background:#111;color:#fff;border-radius:22px;padding:19px 20px;margin-bottom:18px;
-      display:grid;grid-template-columns:1.3fr repeat(3,1fr);gap:12px;align-items:center;
+    header p {
+      margin: 5px 0 0;
+      color: #cbd5e1;
+      font-size: 13px;
     }
-    .attention-intro .eyebrow{color:#aaa}
-    .attention-intro h3{margin:4px 0 0;font-size:17px}
-    .alert-mini{
-      background:rgba(255,255,255,.075);border:1px solid rgba(255,255,255,.08);
-      border-radius:14px;padding:13px;cursor:pointer;
-    }
-    .alert-mini:hover{background:rgba(255,255,255,.12)}
-    .alert-mini .a-label{font-size:10px;color:#aaa;font-weight:700}
-    .alert-mini .a-num{font-size:23px;font-weight:900;margin-top:5px}
-    .alert-mini .a-sub{font-size:9px;color:#888;margin-top:2px}
 
-    .section{
-      background:var(--surface);border:1px solid var(--line);border-radius:22px;
-      box-shadow:var(--shadow);overflow:hidden;margin-top:18px;
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 700;
     }
-    .section-head{
-      padding:19px 20px;border-bottom:1px solid var(--line);
-      display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    }
-    .section-head h3{margin:0;font-size:15px;letter-spacing:-.025em}
-    .section-head p{margin:4px 0 0;color:var(--muted);font-size:10px}
-    .toolbar{
-      display:flex;align-items:center;gap:7px;flex-wrap:wrap;
-      padding:12px 18px;border-bottom:1px solid var(--line);background:#fbfbfa;
-    }
-    .search{
-      min-width:240px;flex:1;max-width:460px;border:1px solid var(--line);
-      background:#fff;border-radius:10px;padding:9px 11px;font-size:11px;outline:none;
-    }
-    .filter{
-      border:1px solid var(--line);background:#fff;color:#555;border-radius:9px;
-      padding:8px 10px;font-size:10px;font-weight:800
-    }
-    .filter.active{background:#111;color:#fff;border-color:#111}
-    .table-wrap{overflow:auto}
-    table{width:100%;border-collapse:collapse;min-width:1000px}
-    th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #f0f0ed;vertical-align:top}
-    th{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:#999;background:#fbfbfa}
-    td{font-size:11px}
-    tbody tr{transition:background .12s}
-    tbody tr:hover{background:#fafaf8}
-    .clickable{cursor:pointer}
-    .order-id{font-weight:900}
-    .sub{font-size:9px;color:#999;margin-top:4px;line-height:1.35}
-    .status{
-      display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:5px 8px;
-      font-size:9px;font-weight:900;white-space:nowrap
-    }
-    .green{background:#e9f8ee;color:#11733a}.amber{background:#fff5df;color:#945900}
-    .red{background:#ffeded;color:#a51f1f}.blue{background:#eaf1ff;color:#2057b8}
-    .purple{background:#f1ecff;color:#6840a8}.gray{background:#f0f0ee;color:#555}
-    .attention-row{box-shadow:inset 3px 0 0 var(--amber);background:#fffcf4}
-    .attention-row.urgent{box-shadow:inset 3px 0 0 var(--red);background:#fff8f8}
-    .attention-badge{
-      display:inline-block;margin-top:5px;border-radius:999px;padding:3px 6px;
-      font-size:8px;font-weight:900;background:#fff0c9;color:#895100
-    }
-    .attention-badge.urgent{background:#ffe0e0;color:#9d2020}
-    .money{font-weight:900}
-    .empty,.error{padding:38px 20px;text-align:center;color:var(--muted);font-size:12px}
-    .error{color:var(--red);text-align:left}
 
-    .shopper-grid,.application-grid{
-      display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px;padding:16px
+    .refresh {
+      background: #fff;
+      color: #111827;
     }
-    .shopper,.application{
-      border:1px solid var(--line);border-radius:16px;padding:15px;background:#fff
-    }
-    .shopper-top{display:flex;justify-content:space-between;gap:10px}
-    .shopper-name,.application-name{font-weight:850;font-size:13px}
-    .shopper-phone,.application-meta{font-size:10px;color:var(--muted);margin-top:4px;line-height:1.55}
-    .availability{font-size:9px;font-weight:900}
-    .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
-    .online{background:#22c55e}.offline{background:#c9cdc9}
-    .application-actions{display:flex;gap:7px;margin-top:13px}
-    .approve,.reject{
-      border:0;border-radius:9px;padding:8px 11px;font-size:10px;font-weight:900
-    }
-    .approve{background:#111;color:#fff}.reject{background:#f2f2ef;color:#333}
 
-    /* DRAWER */
-    .drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:90;display:none}
-    .drawer-backdrop.open{display:block}
-    .drawer{
-      position:absolute;right:0;top:0;height:100%;width:min(650px,100%);
-      background:#fff;box-shadow:-20px 0 70px rgba(0,0,0,.18);overflow:auto
+    main {
+      padding: 24px 28px 40px;
+      max-width: 1700px;
+      margin: 0 auto;
     }
-    .drawer-head{
-      position:sticky;top:0;z-index:2;background:#111;color:#fff;padding:19px 20px;
-      display:flex;justify-content:space-between;gap:15px
-    }
-    .drawer-head h3{margin:0;font-size:18px}
-    .drawer-head p{margin:4px 0 0;color:#aaa;font-size:10px}
-    .close{
-      width:34px;height:34px;border:0;border-radius:10px;background:#242424;color:#fff;font-size:18px
-    }
-    .drawer-body{padding:20px}
-    .detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}
-    .detail{border:1px solid var(--line);border-radius:13px;padding:12px;background:#fafaf8}
-    .detail-label{font-size:9px;color:#999;text-transform:uppercase;letter-spacing:.08em;font-weight:800}
-    .detail-value{font-size:11px;font-weight:850;margin-top:5px;line-height:1.4;overflow-wrap:anywhere}
-    .drawer-section{margin-top:24px}
-    .drawer-section h4{margin:0 0 11px;font-size:13px}
-    .timeline{position:relative;padding-left:25px}
-    .timeline:before{content:"";position:absolute;left:6px;top:4px;bottom:4px;width:2px;background:#e7e7e4}
-    .timeline-item{position:relative;padding-bottom:17px}
-    .timeline-dot{
-      position:absolute;left:-25px;top:0;width:16px;height:16px;border-radius:50%;
-      background:#fff;border:3px solid #c7c7c2
-    }
-    .timeline-item.done .timeline-dot{border-color:#1ca451;background:#e8f8ee}
-    .timeline-item.current .timeline-dot{border-color:#c67a00;background:#fff2cf}
-    .timeline-title{font-size:11px;font-weight:850}
-    .timeline-meta{font-size:9px;color:#999;margin-top:3px}
-    .timeline-extra{font-size:10px;color:#555;margin-top:4px;line-height:1.45}
-    .mini-table{min-width:0!important}
-    .message{border:1px solid var(--line);border-radius:11px;padding:10px;margin-bottom:7px}
-    .message-role{font-size:8px;text-transform:uppercase;color:#999;font-weight:900}
-    .message-body{font-size:10px;line-height:1.45;margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere}
 
-    @media(max-width:1200px){
-      .metrics{grid-template-columns:repeat(3,1fr)}
-      .attention{grid-template-columns:1fr 1fr}
+    .notice {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+      color: #9a3412;
+      font-size: 13px;
     }
-    @media(max-width:800px){
-      .header-inner,main{padding-left:16px;padding-right:16px}
-      .hero{align-items:flex-start;flex-direction:column}
-      .session{text-align:left}
-      .metrics{grid-template-columns:repeat(2,1fr)}
-      .attention{grid-template-columns:1fr}
-      .shopper-grid,.application-grid{grid-template-columns:1fr}
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(140px, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
     }
-    @media(max-width:500px){
-      .metrics{grid-template-columns:1fr 1fr;gap:8px}
-      .metric{padding:14px}
-      .metric-value{font-size:22px}
-      .hero h2{font-size:26px}
-      .detail-grid{grid-template-columns:1fr}
-      .live{display:none}
+
+    .metric {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: var(--shadow);
     }
+
+    .metric .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .metric .value {
+      font-size: 26px;
+      font-weight: 800;
+    }
+
+    .section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+      overflow: hidden;
+    }
+
+    .section-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafa;
+    }
+
+    .filter {
+      background: #fff;
+      border: 1px solid var(--line);
+      color: #374151;
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .filter.active {
+      background: #111827;
+      color: #fff;
+      border-color: #111827;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1250px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f9fafb;
+      color: #4b5563;
+      font-size: 12px;
+      position: sticky;
+      top: 76px;
+      z-index: 2;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .order-id {
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .subline {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .green { background: #dcfce7; color: #166534; }
+    .red { background: #fee2e2; color: #991b1b; }
+    .amber { background: #fef3c7; color: #92400e; }
+    .blue { background: #dbeafe; color: #1d4ed8; }
+    .purple { background: #ede9fe; color: #6d28d9; }
+    .gray { background: #f3f4f6; color: #374151; }
+
+    .alert-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .alert-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 15px;
+    }
+
+    .alert-title {
+      font-weight: 800;
+      margin-bottom: 7px;
+    }
+
+    .alert-number {
+      font-size: 28px;
+      font-weight: 900;
+    }
+
+    .shopper-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .shopper {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 15px;
+    }
+
+    .shopper-name {
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .shopper-phone {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .online { background: #22c55e; }
+    .offline { background: #94a3b8; }
+
+    .empty {
+      padding: 26px 18px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .error {
+      color: var(--red);
+      font-size: 13px;
+      padding: 16px 18px;
+    }
+
+    @media (max-width: 1250px) {
+      .metrics { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+      .alert-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 800px) {
+      header { padding: 16px; }
+      main { padding: 16px; }
+      .metrics { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+      .shopper-grid { grid-template-columns: 1fr; }
+    }
+  
+    .clickable-row {
+      cursor: pointer;
+    }
+
+    .clickable-row:hover {
+      background: #f8fafc;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 22px;
+      z-index: 100;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal {
+      width: min(980px, 100%);
+      max-height: 90vh;
+      overflow: auto;
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 30px 80px rgba(15, 23, 42, 0.28);
+    }
+
+    .modal-head {
+      position: sticky;
+      top: 0;
+      background: #111827;
+      color: #fff;
+      padding: 18px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 2;
+    }
+
+    .modal-title {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .modal-subtitle {
+      margin-top: 5px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .modal-close {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 18px;
+      width: 38px;
+      height: 38px;
+      padding: 0;
+    }
+
+    .modal-body {
+      padding: 20px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .detail-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .detail-label {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 5px;
+    }
+
+    .detail-value {
+      font-weight: 800;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .timeline {
+      position: relative;
+      margin: 6px 0 22px;
+      padding-left: 30px;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 9px;
+      top: 4px;
+      bottom: 4px;
+      width: 2px;
+      background: #e5e7eb;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding: 0 0 18px;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: -27px;
+      top: 1px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      border: 3px solid #94a3b8;
+      z-index: 1;
+    }
+
+    .timeline-item.done .timeline-dot {
+      border-color: var(--green);
+      background: #dcfce7;
+    }
+
+    .timeline-item.current .timeline-dot {
+      border-color: var(--amber);
+      background: #fef3c7;
+    }
+
+    .timeline-title {
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .timeline-meta {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+
+    .timeline-extra {
+      margin-top: 6px;
+      color: #374151;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .modal-section {
+      margin-top: 20px;
+    }
+
+    .modal-section h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .mini-table {
+      width: 100%;
+      min-width: 0;
+      border-collapse: collapse;
+    }
+
+    .mini-table th,
+    .mini-table td {
+      padding: 9px 10px;
+      font-size: 12px;
+    }
+
+    .message-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .message-role {
+      font-weight: 800;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .message-body {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 850px) {
+      .detail-grid {
+        grid-template-columns: repeat(2, minmax(140px, 1fr));
+      }
+    }
+
+  
+    .search-box {
+      min-width: 280px;
+      flex: 1;
+      max-width: 520px;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 9px;
+      padding: 9px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .search-box:focus {
+      border-color: #94a3b8;
+      box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.18);
+    }
+
+    .attention-row {
+      border-left: 4px solid var(--amber);
+      background: #fffbeb;
+    }
+
+    .attention-row.urgent {
+      border-left-color: var(--red);
+      background: #fef2f2;
+    }
+
+    .attention-badge {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .attention-badge.urgent {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .alert-card.clickable {
+      cursor: pointer;
+      transition: transform 0.12s ease;
+    }
+
+    .alert-card.clickable:hover {
+      transform: translateY(-2px);
+    }
+
+  
+    .auth-screen {
+      min-height: 100vh;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: #f4f6f8;
+    }
+
+    .auth-screen.show {
+      display: flex;
+    }
+
+    .auth-card {
+      width: min(420px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .auth-logo {
+      font-size: 36px;
+      margin-bottom: 8px;
+    }
+
+    .auth-card h1 {
+      margin: 0;
+      font-size: 25px;
+    }
+
+    .auth-card p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .auth-card label {
+      display: block;
+      margin: 16px 0 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #374151;
+    }
+
+    .auth-input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .auth-input:focus {
+      border-color: #94a3b8;
+      box-shadow: 0 0 0 3px rgba(148,163,184,.18);
+    }
+
+    .auth-button {
+      width: 100%;
+      margin-top: 18px;
+      background: #111827;
+      color: #fff;
+      padding: 12px 16px;
+    }
+
+    .auth-button:disabled {
+      opacity: .6;
+      cursor: wait;
+    }
+
+    .auth-error {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .auth-error.show {
+      display: block;
+    }
+
+    .auth-help {
+      margin-top: 14px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .logout {
+      background: rgba(255,255,255,.12);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.2);
+    }
+
+    .session-user {
+      font-size: 11px;
+      color: #cbd5e1;
+      margin-top: 3px;
+    }
+
+    #appShell {
+      display: none;
+    }
+
+    #appShell.show {
+      display: block;
+    }
+
+
+    .atc-grid { display:grid; grid-template-columns: repeat(4,minmax(180px,1fr)); gap:14px; padding:16px; }
+    .atc-card { border:1px solid var(--line); border-radius:12px; padding:15px; background:#fff; }
+    .atc-card .label { color:var(--muted); font-size:11px; margin-bottom:6px; }
+    .atc-card .value { font-size:24px; font-weight:900; }
+    .atc-table { width:100%; min-width:1050px; border-collapse:collapse; }
+    .atc-table th,.atc-table td { padding:10px 12px; border-bottom:1px solid var(--line); font-size:12px; text-align:left; vertical-align:top; }
+    .atc-event { font-family:monospace; font-size:11px; }
+    .atc-empty { padding:24px; color:var(--muted); text-align:center; }
+    @media (max-width:900px) { .atc-grid { grid-template-columns:repeat(2,minmax(140px,1fr)); } }
   </style>
 </head>
 
 <body>
-  <div id="authScreen">
+
+  <div id="authScreen" class="auth-screen show">
     <div class="auth-card">
-      <div class="brand-mark">🛍️</div>
-      <h1>Fetch Control Tower</h1>
-      <p>Sign in to monitor orders, shoppers, payments and live operations.</p>
+      <div class="auth-logo">🛍️</div>
+      <h1>Fetch Admin</h1>
+      <p>Sign in to open the Fetch Admin Control Room.</p>
+
       <form id="loginForm">
-        <label for="email">Email</label>
-        <input id="email" class="input" type="email" autocomplete="username" required placeholder="Admin email" />
-        <label for="password">Password</label>
-        <input id="password" class="input" type="password" autocomplete="current-password" required placeholder="Password" />
-        <button id="loginButton" class="primary" type="submit">Sign in</button>
+        <label for="loginEmail">Email</label>
+        <input
+          id="loginEmail"
+          class="auth-input"
+          type="email"
+          autocomplete="username"
+          placeholder="admin@example.com"
+          required
+        />
+
+        <label for="loginPassword">Password</label>
+        <input
+          id="loginPassword"
+          class="auth-input"
+          type="password"
+          autocomplete="current-password"
+          placeholder="Your password"
+          required
+        />
+
+        <button
+          id="loginButton"
+          class="auth-button"
+          type="submit"
+        >
+          Sign in
+        </button>
+
         <div id="authError" class="auth-error"></div>
+
+        <div class="auth-help">
+          Use the admin user you created in Supabase Authentication → Users.
+        </div>
       </form>
     </div>
   </div>
 
   <div id="appShell">
-    <header>
-      <div class="header-inner">
-        <div class="brand-title">
-          <div class="brand-square">🛍️</div>
-          <div>
-            <h1>Fetch Control Tower</h1>
-            <p>Operations · payments · shoppers · live orders</p>
-          </div>
-        </div>
-        <div class="header-actions">
-          <div class="live"><span class="live-dot"></span>Live</div>
-          <button class="ghost" onclick="loadDashboard()">Refresh</button>
-          <button class="logout" onclick="logoutAdmin()">Log out</button>
-        </div>
-      </div>
-    </header>
+ype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fetch Admin Control Room</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --blue: #2563eb;
+      --purple: #7c3aed;
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+    }
 
-    <main>
-      <div class="hero">
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 22px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+
+    header p {
+      margin: 5px 0 0;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .refresh {
+      background: #fff;
+      color: #111827;
+    }
+
+    main {
+      padding: 24px 28px 40px;
+      max-width: 1700px;
+      margin: 0 auto;
+    }
+
+    .notice {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+      color: #9a3412;
+      font-size: 13px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(140px, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .metric {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .metric .value {
+      font-size: 26px;
+      font-weight: 800;
+    }
+
+    .section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+      overflow: hidden;
+    }
+
+    .section-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafa;
+    }
+
+    .filter {
+      background: #fff;
+      border: 1px solid var(--line);
+      color: #374151;
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .filter.active {
+      background: #111827;
+      color: #fff;
+      border-color: #111827;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1250px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f9fafb;
+      color: #4b5563;
+      font-size: 12px;
+      position: sticky;
+      top: 76px;
+      z-index: 2;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .order-id {
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .subline {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .green { background: #dcfce7; color: #166534; }
+    .red { background: #fee2e2; color: #991b1b; }
+    .amber { background: #fef3c7; color: #92400e; }
+    .blue { background: #dbeafe; color: #1d4ed8; }
+    .purple { background: #ede9fe; color: #6d28d9; }
+    .gray { background: #f3f4f6; color: #374151; }
+
+    .alert-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .alert-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 15px;
+    }
+
+    .alert-title {
+      font-weight: 800;
+      margin-bottom: 7px;
+    }
+
+    .alert-number {
+      font-size: 28px;
+      font-weight: 900;
+    }
+
+    .shopper-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .shopper {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 15px;
+    }
+
+    .shopper-name {
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .shopper-phone {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .online { background: #22c55e; }
+    .offline { background: #94a3b8; }
+
+    .empty {
+      padding: 26px 18px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .error {
+      color: var(--red);
+      font-size: 13px;
+      padding: 16px 18px;
+    }
+
+    @media (max-width: 1250px) {
+      .metrics { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+      .alert-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 800px) {
+      header { padding: 16px; }
+      main { padding: 16px; }
+      .metrics { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+      .shopper-grid { grid-template-columns: 1fr; }
+    }
+  
+    .clickable-row {
+      cursor: pointer;
+    }
+
+    .clickable-row:hover {
+      background: #f8fafc;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 22px;
+      z-index: 100;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal {
+      width: min(980px, 100%);
+      max-height: 90vh;
+      overflow: auto;
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 30px 80px rgba(15, 23, 42, 0.28);
+    }
+
+    .modal-head {
+      position: sticky;
+      top: 0;
+      background: #111827;
+      color: #fff;
+      padding: 18px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 2;
+    }
+
+    .modal-title {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .modal-subtitle {
+      margin-top: 5px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .modal-close {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 18px;
+      width: 38px;
+      height: 38px;
+      padding: 0;
+    }
+
+    .modal-body {
+      padding: 20px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .detail-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .detail-label {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 5px;
+    }
+
+    .detail-value {
+      font-weight: 800;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .timeline {
+      position: relative;
+      margin: 6px 0 22px;
+      padding-left: 30px;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 9px;
+      top: 4px;
+      bottom: 4px;
+      width: 2px;
+      background: #e5e7eb;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding: 0 0 18px;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: -27px;
+      top: 1px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      border: 3px solid #94a3b8;
+      z-index: 1;
+    }
+
+    .timeline-item.done .timeline-dot {
+      border-color: var(--green);
+      background: #dcfce7;
+    }
+
+    .timeline-item.current .timeline-dot {
+      border-color: var(--amber);
+      background: #fef3c7;
+    }
+
+    .timeline-title {
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .timeline-meta {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+
+    .timeline-extra {
+      margin-top: 6px;
+      color: #374151;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .modal-section {
+      margin-top: 20px;
+    }
+
+    .modal-section h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .mini-table {
+      width: 100%;
+      min-width: 0;
+      border-collapse: collapse;
+    }
+
+    .mini-table th,
+    .mini-table td {
+      padding: 9px 10px;
+      font-size: 12px;
+    }
+
+    .message-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .message-role {
+      font-weight: 800;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .message-body {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 850px) {
+      .detail-grid {
+        grid-template-columns: repeat(2, minmax(140px, 1fr));
+      }
+    }
+
+  
+    .search-box {
+      min-width: 280px;
+      flex: 1;
+      max-width: 520px;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 9px;
+      padding: 9px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .search-box:focus {
+      border-color: #94a3b8;
+      box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.18);
+    }
+
+    .attention-row {
+      border-left: 4px solid var(--amber);
+      background: #fffbeb;
+    }
+
+    .attention-row.urgent {
+      border-left-color: var(--red);
+      background: #fef2f2;
+    }
+
+    .attention-badge {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .attention-badge.urgent {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .alert-card.clickable {
+      cursor: pointer;
+      transition: transform 0.12s ease;
+    }
+
+    .alert-card.clickable:hover {
+      transform: translateY(-2px);
+    }
+
+  
+    .auth-screen {
+      min-height: 100vh;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: #f4f6f8;
+    }
+
+    .auth-screen.show {
+      display: flex;
+    }
+
+    .auth-card {
+      width: min(420px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .auth-logo {
+      font-size: 36px;
+      margin-bottom: 8px;
+    }
+
+    .auth-card h1 {
+      margin: 0;
+      font-size: 25px;
+    }
+
+    .auth-card p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .auth-card label {
+      display: block;
+      margin: 16px 0 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #374151;
+    }
+
+    .auth-input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .auth-input:focus {
+      border-color: #94a3b8;
+      box-shadow: 0 0 0 3px rgba(148,163,184,.18);
+    }
+
+    .auth-button {
+      width: 100%;
+      margin-top: 18px;
+      background: #111827;
+      color: #fff;
+      padding: 12px 16px;
+    }
+
+    .auth-button:disabled {
+      opacity: .6;
+      cursor: wait;
+    }
+
+    .auth-error {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .auth-error.show {
+      display: block;
+    }
+
+    .auth-help {
+      margin-top: 14px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .logout {
+      background: rgba(255,255,255,.12);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.2);
+    }
+
+    .session-user {
+      font-size: 11px;
+      color: #cbd5e1;
+      margin-top: 3px;
+    }
+
+    #appShell {
+      display: none;
+    }
+
+    #appShell.show {
+      display: block;
+    }
+
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <h1>🛍️ Fetch Admin Control Room</h1>
+      <p>Operations · payments · shoppers · live orders</p>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+      <div style="text-align:right;">
+        <div class="session-user" id="sessionUser"></div>
+      </div>
+      <button class="refresh" onclick="loadDashboard()">Refresh now</button>
+      <button class="logout" onclick="logoutAdmin()">Log out</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="notice">
+      <strong>MVP admin prototype:</strong>
+      this dashboard reads Supabase directly with the publishable key.
+      Before public launch, admin access and Supabase RLS must be secured behind authentication/server-side authorization.
+    </div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="label">Orders today</div>
+        <div class="value" id="ordersToday">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">Active now</div>
+        <div class="value" id="activeOrders">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">Available shoppers</div>
+        <div class="value" id="availableShoppers">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">Delivered today</div>
+        <div class="value" id="completedOrders">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">GMV today</div>
+        <div class="value" id="gmvToday">—</div>
+      </div>
+
+      <div class="metric">
+        <div class="label">Pending payment verification</div>
+        <div class="value" id="pendingPayments">—</div>
+      </div>
+    </div>
+
+    <section class="section">
+      <div class="section-head">
         <div>
-          <div class="eyebrow">Operations overview</div>
-          <h2>Good evening.</h2>
-          <p>Everything happening across Fetch, in one place.</p>
+          <h2>⚠️ Operations Alerts</h2>
+          <div class="small">Things that may need your attention</div>
         </div>
-        <div class="session" id="sessionUser"></div>
       </div>
 
-      <div class="metrics">
-        <div class="metric"><div class="metric-label">Orders today</div><div class="metric-value" id="ordersToday">—</div><div class="metric-note">Requests created today</div></div>
-        <div class="metric"><div class="metric-label">Active now</div><div class="metric-value" id="activeOrders">—</div><div class="metric-note">Currently being fulfilled</div></div>
-        <div class="metric"><div class="metric-label">Available shoppers</div><div class="metric-value" id="availableShoppers">—</div><div class="metric-note">Ready for next job</div></div>
-        <div class="metric"><div class="metric-label">Delivered today</div><div class="metric-value" id="completedOrders">—</div><div class="metric-note">Completed successfully</div></div>
-        <div class="metric"><div class="metric-label">GMV today</div><div class="metric-value" id="gmvToday">—</div><div class="metric-note">Customer order value</div></div>
-        <div class="metric"><div class="metric-label">Payment review</div><div class="metric-value" id="pendingPayments">—</div><div class="metric-note">Needs verification</div></div>
+      <div class="alert-grid">
+        <div class="alert-card clickable" onclick="setOrderFilter('waiting')">
+          <div class="alert-title">Orders waiting for shopper</div>
+          <div class="alert-number" id="waitingShopperAlert">—</div>
+        </div>
+
+        <div class="alert-card clickable" onclick="setOrderFilter('payment')">
+          <div class="alert-title">Customer says PAID</div>
+          <div class="alert-number" id="customerPaidAlert">—</div>
+        </div>
+
+        <div class="alert-card">
+          <div class="alert-title">Substitutions pending</div>
+          <div class="alert-number" id="substitutionAlert">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>Live Orders</h2>
+          <div class="small" id="ordersUpdated">Loading…</div>
+        </div>
       </div>
 
-      <section class="attention">
-        <div class="attention-intro">
-          <div class="eyebrow">Needs attention</div>
-          <h3 id="attentionTotal">Review the live queue</h3>
-        </div>
-        <div class="alert-mini" onclick="setOrderFilter('waiting')">
-          <div class="a-label">Waiting for shopper</div>
-          <div class="a-num" id="waitingShopperAlert">—</div>
-          <div class="a-sub">Open dispatch queue</div>
-        </div>
-        <div class="alert-mini" onclick="setOrderFilter('payment')">
-          <div class="a-label">Customer says PAID</div>
-          <div class="a-num" id="customerPaidAlert">—</div>
-          <div class="a-sub">Verify with shopper</div>
-        </div>
-        <div class="alert-mini" onclick="scrollToSection('pendingSection')">
-          <div class="a-label">Pending substitutions</div>
-          <div class="a-num" id="substitutionAlert">—</div>
-          <div class="a-sub">Customer decisions</div>
-        </div>
-      </section>
+      <div class="toolbar">
+        <input
+          id="orderSearch"
+          class="search-box"
+          type="search"
+          placeholder="Search order, item, store, shopper or customer phone…"
+          oninput="setOrderSearch(this.value)"
+        />
+        <button class="filter active" data-filter="active" onclick="setOrderFilter('active')">Active</button>
+        <button class="filter" data-filter="all" onclick="setOrderFilter('all')">All</button>
+        <button class="filter" data-filter="waiting" onclick="setOrderFilter('waiting')">Waiting for shopper</button>
+        <button class="filter" data-filter="payment" onclick="setOrderFilter('payment')">Payment</button>
+        <button class="filter" data-filter="shopping" onclick="setOrderFilter('shopping')">Shopping</button>
+        <button class="filter" data-filter="delivered" onclick="setOrderFilter('delivered')">Delivered</button>
+      </div>
 
-      <section class="section" id="ordersSection">
-        <div class="section-head">
-          <div>
-            <h3>Live orders</h3>
-            <p id="ordersUpdated">Loading…</p>
-          </div>
-        </div>
-        <div class="toolbar">
-          <input class="search" id="orderSearch" oninput="setOrderSearch(this.value)" placeholder="Search order, item, store, shopper or customer" />
-          <button class="filter active" data-filter="active" onclick="setOrderFilter('active')">Active</button>
-          <button class="filter" data-filter="all" onclick="setOrderFilter('all')">All</button>
-          <button class="filter" data-filter="waiting" onclick="setOrderFilter('waiting')">Waiting</button>
-          <button class="filter" data-filter="payment" onclick="setOrderFilter('payment')">Payment</button>
-          <button class="filter" data-filter="shopping" onclick="setOrderFilter('shopping')">Shopping</button>
-          <button class="filter" data-filter="delivered" onclick="setOrderFilter('delivered')">Delivered</button>
-        </div>
-        <div id="ordersArea"></div>
-      </section>
+      <div id="ordersArea"></div>
+    </section>
 
-      <section class="section" id="shoppersSection">
-        <div class="section-head">
-          <div>
-            <h3>Shoppers</h3>
-            <p>Live availability and current assignment</p>
-          </div>
-        </div>
-        <div id="shoppersArea"></div>
-      </section>
 
-      <section class="section" id="pendingSection">
-        <div class="section-head">
-          <div>
-            <h3>Shopper applications</h3>
-            <p>Review new people applying to become Fetch shoppers</p>
-          </div>
-          <span class="status amber" id="pendingShopperCount">0 pending</span>
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>🎛️ ATC Control Tower</h2>
+          <div class="small" id="atcUpdated">Loading ATC…</div>
         </div>
-        <div id="pendingShoppersArea"></div>
-      </section>
+        <button class="refresh" onclick="loadAtcControlTower()">Refresh ATC</button>
+      </div>
+      <div class="atc-grid">
+        <div class="atc-card"><div class="label">Active tasks</div><div class="value" id="atcActiveTasks">—</div></div>
+        <div class="atc-card"><div class="label">Available resources</div><div class="value" id="atcAvailableResources">—</div></div>
+        <div class="atc-card"><div class="label">Open assignments</div><div class="value" id="atcOpenAssignments">—</div></div>
+        <div class="atc-card"><div class="label">Exceptions / recovery</div><div class="value" id="atcExceptions">—</div></div>
+      </div>
+      <div class="table-wrap">
+        <table class="atc-table">
+          <thead><tr><th>Task</th><th>Objective</th><th>Task status</th><th>Resource</th><th>Assignment</th><th>Last event</th><th>Updated</th></tr></thead>
+          <tbody id="atcTasksArea"><tr><td colspan="7" class="atc-empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
 
-      <section class="section">
-        <div class="section-head">
-          <div>
-            <h3>Recent customers</h3>
-            <p>Latest customer records</p>
-          </div>
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>🛍️ Shoppers</h2>
+          <div class="small">Current availability and assignment</div>
         </div>
-        <div id="customersArea"></div>
-      </section>
-    </main>
+      </div>
+      <div id="shoppersArea"></div>
+    </section>
+  </main>
+
+  
+  <div
+    id="orderModalBackdrop"
+    class="modal-backdrop"
+    onclick="closeOrderModal(event)"
+  >
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-head">
+        <div>
+          <h2 class="modal-title" id="modalTitle">Order details</h2>
+          <div class="modal-subtitle" id="modalSubtitle">Loading…</div>
+        </div>
+        <button class="modal-close" onclick="closeOrderModal()">×</button>
+      </div>
+
+      <div class="modal-body" id="modalBody">
+        Loading…
+      </div>
+    </div>
   </div>
 
-  <div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawer(event)">
-    <aside class="drawer">
-      <div class="drawer-head">
-        <div>
-          <h3 id="drawerTitle">Order</h3>
-          <p id="drawerSubtitle">Loading…</p>
-        </div>
-        <button class="close" onclick="closeDrawer()">×</button>
-      </div>
-      <div class="drawer-body" id="drawerBody"></div>
-    </aside>
+
   </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <script>
-    const SUPABASE_URL = "https://skfxzagxlxputwpwxwbe.supabase.co";
-    const SUPABASE_KEY = "sb_publishable_zQueXzNbRTTsdV5xjn398Q_nSB4njep";
-    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const SUPABASE_URL =
+      "https://skfxzagxlxputwpwxwbe.supabase.co";
+
+    const SUPABASE_KEY =
+      "sb_publishable_zQueXzNbRTTsdV5xjn398Q_nSB4njep";
+
+    const supabaseClient =
+      window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_KEY
+      );
+
+    let adminSession = null;
+
+    const headers = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`
+    };
 
     const ACTIVE_STATUSES = new Set([
-      "collecting_details","finding_shopper","shopper_assigned",
-      "awaiting_customer_price_confirmation","payment_pending",
-      "customer_reported_paid","shopping","picked_up","out_for_delivery"
+      "collecting_details",
+      "finding_shopper",
+      "shopper_assigned",
+      "awaiting_customer_price_confirmation",
+      "payment_pending",
+      "customer_reported_paid",
+      "shopping",
+      "picked_up",
+      "out_for_delivery"
     ]);
-    const PAYMENT_STATUSES = new Set(["payment_pending","customer_reported_paid"]);
 
-    let session = null;
+    const WAITING_STATUS = "finding_shopper";
+
+    const PAYMENT_STATUSES = new Set([
+      "payment_pending",
+      "customer_reported_paid"
+    ]);
+
     let allOrders = [];
     let allShoppers = [];
     let allCustomers = [];
-    let pendingShoppers = [];
     let currentFilter = "active";
     let currentSearch = "";
+    let atcData = { tasks: [], resources: [], assignments: [], events: [] };
 
-    function esc(v){
-      return String(v ?? "")
-        .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
-        .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+    function money(value) {
+      const n = Number(value || 0);
+      return `₹${n.toLocaleString("en-IN", {
+        maximumFractionDigits: 2
+      })}`;
     }
-    function shortId(id){return String(id||"").slice(0,6).toUpperCase()}
-    function money(v){
-      const n=Number(v||0);
-      return `₹${n.toLocaleString("en-IN",{maximumFractionDigits:2})}`;
+
+    function esc(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
     }
-    function fmtDate(v){
-      if(!v)return "—";
-      const d=new Date(v);
-      if(Number.isNaN(d.getTime()))return esc(v);
-      return d.toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+
+    function shortId(id) {
+      return String(id || "")
+        .slice(0, 6)
+        .toUpperCase();
     }
-    function isToday(v){
-      if(!v)return false;
-      const d=new Date(v),n=new Date();
-      return d.getFullYear()===n.getFullYear()&&d.getMonth()===n.getMonth()&&d.getDate()===n.getDate();
-    }
-    function statusLabel(s){
-      return ({
-        collecting_details:"Collecting details",finding_shopper:"Finding shopper",
-        shopper_assigned:"Shopper assigned",awaiting_customer_price_confirmation:"Waiting for customer approval",
-        payment_pending:"Payment pending",customer_reported_paid:"Customer says paid",
-        shopping:"Shopping",picked_up:"Picked up",out_for_delivery:"Out for delivery",
-        delivered:"Delivered",completed:"Completed",cancelled:"Cancelled"
-      })[String(s||"").toLowerCase()]||String(s||"Unknown");
-    }
-    function statusClass(s){
-      s=String(s||"").toLowerCase();
-      if(["delivered","completed"].includes(s))return"green";
-      if(["cancelled","rejected"].includes(s))return"red";
-      if(["finding_shopper","payment_pending","awaiting_customer_price_confirmation","customer_reported_paid"].includes(s))return"amber";
-      if(["shopping","picked_up","out_for_delivery","shopper_assigned"].includes(s))return"blue";
-      if(s==="collecting_details")return"purple";
-      return"gray";
-    }
-    function attention(order){
-      const status=String(order?.status||"").toLowerCase();
-      const payment=String(order?.payment_status||"").toLowerCase();
-      if(payment==="customer_reported_paid")return{label:"URGENT · Verify payment",urgent:true};
-      if(status==="payment_pending")return{label:"Attention · Payment pending",urgent:false};
-      if(status==="awaiting_customer_price_confirmation")return{label:"Attention · Customer approval",urgent:false};
-      if(status==="finding_shopper"){
-        const age=Date.now()-new Date(order.created_at||0).getTime();
-        if(Number.isFinite(age)&&age>15*60*1000)return{label:"URGENT · Waiting >15 min",urgent:true};
-        return{label:"Waiting for shopper",urgent:false};
+
+    function fmtDate(value) {
+      if (!value) return "—";
+
+      const d = new Date(value);
+
+      if (Number.isNaN(d.getTime())) {
+        return esc(value);
       }
+
+      return d.toLocaleString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function isToday(value) {
+      if (!value) return false;
+
+      const d = new Date(value);
+      const now = new Date();
+
+      return (
+        d.getFullYear() === now.getFullYear() &&
+        d.getMonth() === now.getMonth() &&
+        d.getDate() === now.getDate()
+      );
+    }
+
+    function statusLabel(status) {
+      const map = {
+        collecting_details: "Collecting details",
+        finding_shopper: "Finding shopper",
+        shopper_assigned: "Shopper assigned",
+        awaiting_customer_price_confirmation:
+          "Waiting for customer approval",
+        payment_pending: "Payment pending",
+        customer_reported_paid:
+          "Customer says paid",
+        shopping: "Shopping",
+        picked_up: "Picked up",
+        out_for_delivery: "Out for delivery",
+        delivered: "Delivered",
+        cancelled: "Cancelled",
+        completed: "Completed"
+      };
+
+      return map[
+        String(status || "").toLowerCase()
+      ] || String(status || "Unknown");
+    }
+
+    function statusClass(status) {
+      const s =
+        String(status || "")
+          .toLowerCase();
+
+      if (
+        ["delivered", "completed"].includes(s)
+      ) {
+        return "green";
+      }
+
+      if (
+        ["cancelled", "rejected"].includes(s)
+      ) {
+        return "red";
+      }
+
+      if (
+        [
+          "finding_shopper",
+          "payment_pending",
+          "awaiting_customer_price_confirmation",
+          "customer_reported_paid"
+        ].includes(s)
+      ) {
+        return "amber";
+      }
+
+      if (
+        [
+          "shopping",
+          "picked_up",
+          "out_for_delivery",
+          "shopper_assigned"
+        ].includes(s)
+      ) {
+        return "blue";
+      }
+
+      if (
+        s === "collecting_details"
+      ) {
+        return "purple";
+      }
+
+      return "gray";
+    }
+
+    async function api(path) {
+      const token =
+        adminSession?.access_token ||
+        SUPABASE_KEY;
+
+      const response =
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/${path}`,
+          {
+            headers: {
+              ...headers,
+              Authorization:
+                `Bearer ${token}`
+            }
+          }
+        );
+
+      if (!response.ok) {
+        const text =
+          await response.text();
+
+        throw new Error(
+          `${response.status}: ${text}`
+        );
+      }
+
+      return response.json();
+    }
+
+    function shopperMap() {
+      return new Map(
+        allShoppers.map(
+          s => [
+            s.id,
+            s
+          ]
+        )
+      );
+    }
+
+    function customerMap() {
+      return new Map(
+        allCustomers.map(
+          c => [
+            c.id,
+            c
+          ]
+        )
+      );
+    }
+
+
+    function orderMatchesSearch(order, search) {
+      const q =
+        String(search || "")
+          .trim()
+          .toLowerCase();
+
+      if (!q) {
+        return true;
+      }
+
+      const shopper =
+        allShoppers.find(
+          s =>
+            s.id ===
+            order.shopper_id
+        );
+
+      const customer =
+        allCustomers.find(
+          c =>
+            c.id ===
+            order.customer_id
+        );
+
+      const haystack = [
+        order.id,
+        shortId(order.id),
+        order.items,
+        order.store_name,
+        order.delivery_address,
+        order.status,
+        order.payment_status,
+        shopper?.name,
+        shopper?.phone,
+        customer?.name,
+        customer?.phone
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(q);
+    }
+
+    function orderAttention(order) {
+      const status =
+        String(order?.status || "")
+          .toLowerCase();
+
+      const payment =
+        String(order?.payment_status || "")
+          .toLowerCase();
+
+      if (
+        payment ===
+        "customer_reported_paid"
+      ) {
+        return {
+          label: "URGENT · Verify payment",
+          urgent: true
+        };
+      }
+
+      if (
+        status ===
+        "payment_pending"
+      ) {
+        return {
+          label: "Attention · Payment pending",
+          urgent: false
+        };
+      }
+
+      if (
+        status ===
+        "awaiting_customer_price_confirmation"
+      ) {
+        return {
+          label: "Attention · Customer approval",
+          urgent: false
+        };
+      }
+
+      if (
+        status ===
+        "finding_shopper"
+      ) {
+        const age =
+          Date.now() -
+          new Date(
+            order.created_at || 0
+          ).getTime();
+
+        if (
+          Number.isFinite(age) &&
+          age > 15 * 60 * 1000
+        ) {
+          return {
+            label: "URGENT · Waiting >15 min",
+            urgent: true
+          };
+        }
+
+        return {
+          label: "Waiting for shopper",
+          urgent: false
+        };
+      }
+
       return null;
     }
-    function orderMatches(order,q){
-      q=String(q||"").trim().toLowerCase();
-      if(!q)return true;
-      const shopper=allShoppers.find(s=>s.id===order.shopper_id);
-      const customer=allCustomers.find(c=>c.id===order.customer_id);
-      return [
-        order.id,shortId(order.id),order.items,order.store_name,order.delivery_address,
-        order.status,order.payment_status,shopper?.name,shopper?.phone,customer?.name,customer?.phone
-      ].filter(Boolean).join(" ").toLowerCase().includes(q);
+
+    function renderOrders() {
+      let orders =
+        [...allOrders];
+
+      orders =
+        orders.filter(
+          order =>
+            orderMatchesSearch(
+              order,
+              currentSearch
+            )
+        );
+
+      if (
+        currentFilter ===
+        "active"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              ACTIVE_STATUSES.has(
+                String(
+                  o.status || ""
+                ).toLowerCase()
+              )
+          );
+      }
+
+      if (
+        currentFilter ===
+        "waiting"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              String(
+                o.status || ""
+              ).toLowerCase() ===
+              WAITING_STATUS
+          );
+      }
+
+      if (
+        currentFilter ===
+        "payment"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              PAYMENT_STATUSES.has(
+                String(
+                  o.status || ""
+                ).toLowerCase()
+              )
+          );
+      }
+
+      if (
+        currentFilter ===
+        "shopping"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              [
+                "shopping",
+                "picked_up",
+                "out_for_delivery"
+              ].includes(
+                String(
+                  o.status || ""
+                ).toLowerCase()
+              )
+          );
+      }
+
+      if (
+        currentFilter ===
+        "delivered"
+      ) {
+        orders =
+          orders.filter(
+            o =>
+              [
+                "delivered",
+                "completed"
+              ].includes(
+                String(
+                  o.status || ""
+                ).toLowerCase()
+              )
+          );
+      }
+
+      if (!orders.length) {
+        document.getElementById(
+          "ordersArea"
+        ).innerHTML =
+          `<div class="empty">No orders in this view.</div>`;
+        return;
+      }
+
+      const shoppers =
+        shopperMap();
+
+      const customers =
+        customerMap();
+
+      const rows =
+        orders.map(
+          o => {
+            const shopper =
+              shoppers.get(
+                o.shopper_id
+              );
+
+            const customer =
+              customers.get(
+                o.customer_id
+              );
+
+            const shopperName =
+              shopper?.name ||
+              "Not assigned";
+
+            const shopperPhone =
+              shopper?.phone ||
+              "";
+
+            const customerPhone =
+              customer?.phone ||
+              "";
+
+            const customerName =
+              customer?.name ||
+              "Customer";
+
+            const payment =
+              String(
+                o.payment_status ||
+                ""
+              ).toLowerCase();
+
+            const attention =
+              orderAttention(o);
+
+            const rowClass =
+              attention
+                ? `clickable-row attention-row${attention.urgent ? " urgent" : ""}`
+                : "clickable-row";
+
+            return `
+              <tr
+                class="${rowClass}"
+                onclick="openOrderModal('${esc(o.id)}')"
+                title="Click to view full order timeline"
+              >
+                <td>
+                  <div class="order-id">
+                    #${esc(shortId(o.id))}
+                  </div>
+                  <div class="subline">
+                    ${fmtDate(o.created_at)}
+                  </div>
+                </td>
+
+                <td>
+                  <strong>
+                    ${esc(o.items || "—")}
+                  </strong>
+                  <div class="subline">
+                    ${esc(customerName)}
+                    ${customerPhone
+                      ? ` · ${esc(customerPhone)}`
+                      : ""}
+                  </div>
+                </td>
+
+                <td>
+                  ${esc(
+                    o.store_name ||
+                    "Any suitable local store"
+                  )}
+                </td>
+
+                <td>
+                  ${esc(
+                    o.delivery_address ||
+                    "—"
+                  )}
+                </td>
+
+                <td>
+                  <strong>
+                    ${esc(shopperName)}
+                  </strong>
+                  ${
+                    shopperPhone
+                      ? `<div class="subline">${esc(shopperPhone)}</div>`
+                      : ""
+                  }
+                </td>
+
+                <td>
+                  <span class="status ${statusClass(o.status)}">
+                    ${esc(statusLabel(o.status))}
+                  </span>
+                  ${
+                    attention
+                      ? `<div><span class="attention-badge${attention.urgent ? " urgent" : ""}">${esc(attention.label)}</span></div>`
+                      : ""
+                  }
+                  ${
+                    payment
+                      ? `<div class="subline">Payment: ${esc(payment)}</div>`
+                      : ""
+                  }
+                </td>
+
+                <td>
+                  <strong>${money(o.total_amount)}</strong>
+                  <div class="subline">
+                    Product ${money(o.item_total)}
+                    <br>
+                    Delivery ${money(o.delivery_fee)}
+                  </div>
+                </td>
+
+                <td>
+                  ${money(
+                    o.shopper_earnings ??
+                    o.shopper_delivery_earnings ??
+                    0
+                  )}
+                </td>
+              </tr>
+            `;
+          }
+        ).join("");
+
+      document.getElementById(
+        "ordersArea"
+      ).innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Customer / Items</th>
+                <th>Store</th>
+                <th>Deliver to</th>
+                <th>Shopper</th>
+                <th>Status</th>
+                <th>Total</th>
+                <th>Shopper earnings</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </div>
+      `;
     }
 
-    async function adminFetch(path, options={}){
-      if(!session?.access_token)throw new Error("Your admin session has expired. Please sign in again.");
-      const response=await fetch(`/api/admin/dashboard${path}`,{
-        ...options,
-        headers:{
-          Authorization:`Bearer ${session.access_token}`,
-          ...(options.headers||{})
+    function renderShoppers() {
+      if (!allShoppers.length) {
+        document.getElementById(
+          "shoppersArea"
+        ).innerHTML =
+          `<div class="empty">No shoppers found.</div>`;
+        return;
+      }
+
+      document.getElementById(
+        "shoppersArea"
+      ).innerHTML = `
+        <div class="shopper-grid">
+          ${
+            allShoppers.map(
+              s => `
+                <div class="shopper">
+                  <div class="shopper-name">
+                    ${esc(
+                      s.name ||
+                      "Unnamed shopper"
+                    )}
+                  </div>
+
+                  <div class="shopper-phone">
+                    ${esc(s.phone || "—")}
+                  </div>
+
+                  <div>
+                    <span class="dot ${
+                      s.available
+                        ? "online"
+                        : "offline"
+                    }"></span>
+                    ${
+                      s.available
+                        ? "Available"
+                        : "Busy"
+                    }
+                  </div>
+
+                  <div class="small" style="margin-top:8px;">
+                    ${
+                      s.current_order_id
+                        ? `Current order: #${esc(shortId(s.current_order_id))}`
+                        : "No current order"
+                    }
+                  </div>
+                </div>
+              `
+            ).join("")
+          }
+        </div>
+      `;
+    }
+
+    function updateMetrics() {
+      const today =
+        allOrders.filter(
+          o =>
+            isToday(
+              o.created_at
+            )
+        );
+
+      const active =
+        allOrders.filter(
+          o =>
+            ACTIVE_STATUSES.has(
+              String(
+                o.status || ""
+              ).toLowerCase()
+            )
+        );
+
+      const delivered =
+        today.filter(
+          o =>
+            ["delivered", "completed"].includes(
+              String(
+                o.status || ""
+              ).toLowerCase()
+            )
+        );
+
+      const pendingPayments =
+        allOrders.filter(
+          o =>
+            PAYMENT_STATUSES.has(
+              String(
+                o.payment_status || ""
+              ).toLowerCase()
+            )
+        );
+
+      const waiting =
+        allOrders.filter(
+          o =>
+            String(
+              o.status || ""
+            ).toLowerCase() ===
+            WAITING_STATUS
+        );
+
+      const customerPaid =
+        allOrders.filter(
+          o =>
+            String(
+              o.payment_status || ""
+            ).toLowerCase() ===
+            "customer_reported_paid"
+        );
+
+      const gmv =
+        today.reduce(
+          (sum, o) =>
+            sum +
+            Number(
+              o.total_amount ||
+              0
+            ),
+          0
+        );
+
+      const available =
+        allShoppers.filter(
+          s =>
+            s.available === true &&
+            !s.current_order_id
+        ).length;
+
+      document.getElementById(
+        "ordersToday"
+      ).textContent =
+        today.length;
+
+      document.getElementById(
+        "activeOrders"
+      ).textContent =
+        active.length;
+
+      document.getElementById(
+        "availableShoppers"
+      ).textContent =
+        available;
+
+      document.getElementById(
+        "completedOrders"
+      ).textContent =
+        delivered.length;
+
+      document.getElementById(
+        "gmvToday"
+      ).textContent =
+        money(gmv);
+
+      document.getElementById(
+        "pendingPayments"
+      ).textContent =
+        pendingPayments.length;
+
+      document.getElementById(
+        "waitingShopperAlert"
+      ).textContent =
+        waiting.length;
+
+      document.getElementById(
+        "customerPaidAlert"
+      ).textContent =
+        customerPaid.length;
+    }
+
+
+    function showLoginScreen() {
+      document
+        .getElementById("authScreen")
+        .classList.add("show");
+
+      document
+        .getElementById("appShell")
+        .classList.remove("show");
+    }
+
+    function showAdminApp(session) {
+      adminSession =
+        session || null;
+
+      document
+        .getElementById("authScreen")
+        .classList.remove("show");
+
+      document
+        .getElementById("appShell")
+        .classList.add("show");
+
+      const email =
+        session?.user?.email ||
+        "";
+
+      document.getElementById(
+        "sessionUser"
+      ).textContent =
+        email
+          ? `Signed in: ${email}`
+          : "";
+    }
+
+    function showAuthError(message) {
+      const box =
+        document.getElementById(
+          "authError"
+        );
+
+      box.textContent =
+        message || "Could not sign in.";
+
+      box.classList.add("show");
+    }
+
+    async function loginAdmin(event) {
+      event.preventDefault();
+
+      const email =
+        document
+          .getElementById(
+            "loginEmail"
+          )
+          .value
+          .trim();
+
+      const password =
+        document
+          .getElementById(
+            "loginPassword"
+          )
+          .value;
+
+      const button =
+        document.getElementById(
+          "loginButton"
+        );
+
+      document
+        .getElementById(
+          "authError"
+        )
+        .classList.remove(
+          "show"
+        );
+
+      button.disabled = true;
+      button.textContent =
+        "Signing in…";
+
+      try {
+        const {
+          data,
+          error
+        } =
+          await supabaseClient.auth.signInWithPassword({
+            email,
+            password
+          });
+
+        if (error) {
+          throw error;
         }
-      });
-      const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);
-      return data;
-    }
 
-    function renderOrders(){
-      let orders=allOrders.filter(o=>orderMatches(o,currentSearch));
-      if(currentFilter==="active")orders=orders.filter(o=>ACTIVE_STATUSES.has(String(o.status||"").toLowerCase()));
-      if(currentFilter==="waiting")orders=orders.filter(o=>String(o.status||"").toLowerCase()==="finding_shopper");
-      if(currentFilter==="payment")orders=orders.filter(o=>PAYMENT_STATUSES.has(String(o.payment_status||"").toLowerCase()));
-      if(currentFilter==="shopping")orders=orders.filter(o=>["shopping","picked_up","out_for_delivery"].includes(String(o.status||"").toLowerCase()));
-      if(currentFilter==="delivered")orders=orders.filter(o=>["delivered","completed"].includes(String(o.status||"").toLowerCase()));
+        showAdminApp(
+          data.session
+        );
 
-      if(!orders.length){
-        document.getElementById("ordersArea").innerHTML='<div class="empty">No orders in this view.</div>';
-        return;
-      }
-
-      const rows=orders.map(o=>{
-        const shopper=allShoppers.find(s=>s.id===o.shopper_id);
-        const customer=allCustomers.find(c=>c.id===o.customer_id);
-        const a=attention(o);
-        return `<tr class="clickable ${a?`attention-row${a.urgent?" urgent":""}`:""}" onclick="openOrder('${esc(o.id)}')">
-          <td><div class="order-id">#${esc(shortId(o.id))}</div><div class="sub">${fmtDate(o.created_at)}</div></td>
-          <td><strong>${esc(o.items||"—")}</strong><div class="sub">${esc(customer?.name||"Customer")}${customer?.phone?` · ${esc(customer.phone)}`:""}</div></td>
-          <td>${esc(o.store_name||"Any suitable local store")}</td>
-          <td>${esc(o.delivery_address||"—")}</td>
-          <td><strong>${esc(shopper?.name||"Not assigned")}</strong>${shopper?.phone?`<div class="sub">${esc(shopper.phone)}</div>`:""}</td>
-          <td><span class="status ${statusClass(o.status)}">${esc(statusLabel(o.status))}</span>${a?`<div><span class="attention-badge${a.urgent?" urgent":""}">${esc(a.label)}</span></div>`:""}</td>
-          <td><span class="money">${money(o.total_amount)}</span><div class="sub">Product ${money(o.item_total)} · Delivery ${money(o.delivery_fee)}</div></td>
-          <td>${money(o.shopper_earnings??o.shopper_delivery_earnings??0)}</td>
-        </tr>`;
-      }).join("");
-
-      document.getElementById("ordersArea").innerHTML=`<div class="table-wrap"><table>
-        <thead><tr><th>Order</th><th>Customer / Items</th><th>Store</th><th>Deliver to</th><th>Shopper</th><th>Status</th><th>Total</th><th>Shopper earnings</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>`;
-    }
-
-    function renderShoppers(){
-      if(!allShoppers.length){
-        document.getElementById("shoppersArea").innerHTML='<div class="empty">No shoppers found.</div>';
-        return;
-      }
-      document.getElementById("shoppersArea").innerHTML=`<div class="shopper-grid">${
-        allShoppers.map(s=>`<div class="shopper">
-          <div class="shopper-top"><div><div class="shopper-name">${esc(s.name||"Unnamed shopper")}</div><div class="shopper-phone">${esc(s.phone||"—")}</div></div>
-          <div class="availability"><span class="dot ${s.available?"online":"offline"}"></span>${s.available?"Available":"Busy"}</div></div>
-          <div class="sub" style="margin-top:13px">${s.current_order_id?`Current order #${esc(shortId(s.current_order_id))}`:"No current order"} · ${esc(s.approval_status||"—")}</div>
-        </div>`).join("")
-      }</div>`;
-    }
-
-    function renderPendingShoppers(){
-      document.getElementById("pendingShopperCount").textContent=`${pendingShoppers.length} pending`;
-      if(!pendingShoppers.length){
-        document.getElementById("pendingShoppersArea").innerHTML='<div class="empty">No pending shopper applications.</div>';
-        return;
-      }
-      document.getElementById("pendingShoppersArea").innerHTML=`<div class="application-grid">${
-        pendingShoppers.map(s=>`<div class="application">
-          <div class="application-name">${esc(s.name||"Name not provided")}</div>
-          <div class="status amber" style="margin-top:9px">Pending approval</div>
-          <div class="application-meta">
-            <div><strong>Phone:</strong> ${esc(s.phone||"—")}</div>
-            <div><strong>UPI:</strong> ${esc(s.upi_id||"Not provided")}</div>
-            <div><strong>Applied:</strong> ${fmtDate(s.created_at)}</div>
-            <div><strong>Onboarding:</strong> ${esc(s.onboarding_step||"—")}</div>
-          </div>
-          <div class="application-actions">
-            <button class="approve" onclick="updateShopperApproval('${esc(s.id)}','approved')">Approve</button>
-            <button class="reject" onclick="updateShopperApproval('${esc(s.id)}','rejected')">Reject</button>
-          </div>
-        </div>`).join("")
-      }</div>`;
-    }
-
-    function renderCustomers(){
-      if(!allCustomers.length){
-        document.getElementById("customersArea").innerHTML='<div class="empty">No customers found.</div>';
-        return;
-      }
-      document.getElementById("customersArea").innerHTML=`<div class="table-wrap"><table style="min-width:700px">
-        <thead><tr><th>Name</th><th>Phone</th><th>Address</th><th>Current order</th><th>Created</th></tr></thead>
-        <tbody>${allCustomers.map(c=>`<tr>
-          <td><strong>${esc(c.name||"—")}</strong></td><td>${esc(c.phone||"—")}</td><td>${esc(c.address||"—")}</td>
-          <td>${c.current_order_id?`#${esc(shortId(c.current_order_id))}`:"—"}</td><td>${fmtDate(c.created_at)}</td>
-        </tr>`).join("")}</tbody>
-      </table></div>`;
-    }
-
-    function updateMetrics(pendingSubstitutions){
-      const today=allOrders.filter(o=>isToday(o.created_at));
-      const active=allOrders.filter(o=>ACTIVE_STATUSES.has(String(o.status||"").toLowerCase()));
-      const delivered=today.filter(o=>["delivered","completed"].includes(String(o.status||"").toLowerCase()));
-      const pending=allOrders.filter(o=>PAYMENT_STATUSES.has(String(o.payment_status||"").toLowerCase()));
-      const waiting=allOrders.filter(o=>String(o.status||"").toLowerCase()==="finding_shopper");
-      const paid=allOrders.filter(o=>String(o.payment_status||"").toLowerCase()==="customer_reported_paid");
-      const available=allShoppers.filter(s=>s.available===true&&!s.current_order_id).length;
-      const gmv=today.reduce((sum,o)=>sum+Number(o.total_amount||0),0);
-
-      document.getElementById("ordersToday").textContent=today.length;
-      document.getElementById("activeOrders").textContent=active.length;
-      document.getElementById("availableShoppers").textContent=available;
-      document.getElementById("completedOrders").textContent=delivered.length;
-      document.getElementById("gmvToday").textContent=money(gmv);
-      document.getElementById("pendingPayments").textContent=pending.length;
-      document.getElementById("waitingShopperAlert").textContent=waiting.length;
-      document.getElementById("customerPaidAlert").textContent=paid.length;
-      document.getElementById("substitutionAlert").textContent=pendingSubstitutions;
-      document.getElementById("attentionTotal").textContent=`${waiting.length+paid.length+pendingSubstitutions} item${waiting.length+paid.length+pendingSubstitutions===1?"":"s"} need attention`;
-    }
-
-    function timelineFor(order,jobs,subs){
-      const s=String(order.status||"").toLowerCase();
-      const items=[{title:"Order created",time:order.created_at,extra:`${order.items||"Items"} · ${order.store_name||"Any suitable local store"}`,state:"done"}];
-      const accepted=jobs.find(j=>String(j.status||"").toLowerCase()==="accepted");
-      const offered=jobs.find(j=>String(j.status||"").toLowerCase()==="offered");
-      if(jobs.length)items.push({title:"Shopper broadcast",time:jobs.slice().sort((a,b)=>new Date(a.offered_at||0)-new Date(b.offered_at||0))[0]?.offered_at,extra:`${jobs.length} shopper job record${jobs.length===1?"":"s"}`,state:"done"});
-      if(accepted){
-        const sh=allShoppers.find(x=>x.id===accepted.shopper_id);
-        items.push({title:"Shopper accepted",time:accepted.accepted_at||accepted.offered_at,extra:sh?.name||"Shopper assigned",state:"done"});
-      }else if(offered||s==="finding_shopper"){
-        items.push({title:"Waiting for shopper",time:offered?.offered_at||order.created_at,extra:"No shopper has accepted yet",state:"current"});
-      }
-      if(order.priced_at||order.item_total||order.delivery_fee||["awaiting_customer_price_confirmation","payment_pending","customer_reported_paid","shopping","picked_up","out_for_delivery","delivered","completed"].includes(s))
-        items.push({title:"Price submitted",time:order.priced_at,extra:`Product ${money(order.item_total)} · Delivery ${money(order.delivery_fee)} · Total ${money(order.total_amount)}`,state:s==="awaiting_customer_price_confirmation"?"current":"done"});
-      if(["payment_pending","customer_reported_paid","shopping","picked_up","out_for_delivery","delivered","completed"].includes(s))
-        items.push({title:"Customer approved price",time:order.priced_at,extra:"Order moved to payment",state:["payment_pending","customer_reported_paid"].includes(s)?"current":"done"});
-      if(["payment_pending","customer_reported_paid","shopping","picked_up","out_for_delivery","delivered","completed"].includes(s))
-        items.push({title:order.payment_status==="paid"?"Payment verified":order.payment_status==="customer_reported_paid"?"Customer says PAID":"Payment pending",time:order.paid_at||null,extra:order.payment_status==="paid"?"Shopper confirmed RECEIVED":"Waiting for shopper verification",state:order.payment_status==="paid"?"done":"current"});
-      const rank={shopping:0,picked_up:1,out_for_delivery:2,delivered:3,completed:3};
-      const progression=[["Shopping started","Shopper started fulfilment"],["Items picked up","Items have been picked up"],["Out for delivery","Shopper is on the way"],["Order delivered","Customer delivery completed"]];
-      const r=Object.prototype.hasOwnProperty.call(rank,s)?rank[s]:-1;
-      progression.forEach((p,i)=>{
-        if(r>=i)items.push({title:p[0],time:null,extra:p[1],state:"done"});
-        else if(r===i-1&&["shopping","picked_up","out_for_delivery"].includes(s))items.push({title:p[0],time:null,extra:"Next expected stage",state:"current"});
-      });
-      if(s==="cancelled")items.push({title:"Order cancelled",time:null,extra:"Order is no longer being fulfilled",state:"current"});
-      if(subs.length)items.push({title:subs.some(x=>String(x.status||"").toLowerCase()==="pending")?"Substitution awaiting customer":"Substitution activity",time:subs[subs.length-1]?.created_at,extra:`${subs.length} substitution request${subs.length===1?"":"s"}`,state:subs.some(x=>String(x.status||"").toLowerCase()==="pending")?"current":"done"});
-      return items;
-    }
-
-    async function openOrder(id){
-      const order=allOrders.find(o=>o.id===id);
-      if(!order)return;
-      document.getElementById("drawerBackdrop").classList.add("open");
-      document.getElementById("drawerTitle").textContent=`Order #${shortId(order.id)}`;
-      document.getElementById("drawerSubtitle").textContent="Loading order details…";
-      document.getElementById("drawerBody").innerHTML='<div class="empty">Loading timeline…</div>';
-      try{
-        const data=await adminFetch(`?orderId=${encodeURIComponent(id)}`);
-        const o=data.order||order;
-        const shopper=allShoppers.find(s=>s.id===o.shopper_id);
-        const customer=allCustomers.find(c=>c.id===o.customer_id);
-        const timeline=timelineFor(o,data.jobs||[],data.substitutions||[]);
-        document.getElementById("drawerSubtitle").textContent=`${statusLabel(o.status)} · ${fmtDate(o.created_at)}`;
-        document.getElementById("drawerBody").innerHTML=`
-          <div class="detail-grid">
-            <div class="detail"><div class="detail-label">Customer</div><div class="detail-value">${esc(customer?.name||"Customer")}<div class="sub">${esc(customer?.phone||"—")}</div></div></div>
-            <div class="detail"><div class="detail-label">Items</div><div class="detail-value">${esc(o.items||"—")}</div></div>
-            <div class="detail"><div class="detail-label">Store</div><div class="detail-value">${esc(o.store_name||"Any suitable local store")}</div></div>
-            <div class="detail"><div class="detail-label">Shopper</div><div class="detail-value">${esc(shopper?.name||"Not assigned")}<div class="sub">${esc(shopper?.phone||"—")}</div></div></div>
-            <div class="detail"><div class="detail-label">Delivery</div><div class="detail-value">${esc(o.delivery_address||"—")}</div></div>
-            <div class="detail"><div class="detail-label">Product</div><div class="detail-value">${money(o.item_total)}</div></div>
-            <div class="detail"><div class="detail-label">Delivery fee</div><div class="detail-value">${money(o.delivery_fee)}</div></div>
-            <div class="detail"><div class="detail-label">Total</div><div class="detail-value">${money(o.total_amount)}</div></div>
-          </div>
-          <div class="drawer-section"><h4>Order timeline</h4><div class="timeline">${timeline.map(x=>`<div class="timeline-item ${x.state}"><span class="timeline-dot"></span><div class="timeline-title">${esc(x.title)}</div><div class="timeline-meta">${fmtDate(x.time)}</div><div class="timeline-extra">${esc(x.extra||"")}</div></div>`).join("")}</div></div>
-          <div class="drawer-section"><h4>Shopper offers</h4>${renderJobs(data.jobs||[])}</div>
-          <div class="drawer-section"><h4>Substitutions</h4>${renderSubs(data.substitutions||[])}</div>
-          <div class="drawer-section"><h4>Conversation</h4>${renderMessages(data.messages||[])}</div>
-        `;
-      }catch(e){
-        document.getElementById("drawerBody").innerHTML=`<div class="error">Could not load order details: ${esc(e.message)}</div>`;
-      }
-    }
-
-    function renderJobs(jobs){
-      if(!jobs.length)return'<div class="empty">No shopper offers recorded.</div>';
-      return`<div class="table-wrap"><table class="mini-table"><thead><tr><th>Shopper</th><th>Status</th><th>Offered</th><th>Accepted</th></tr></thead><tbody>${
-        jobs.map(j=>{const s=allShoppers.find(x=>x.id===j.shopper_id);return`<tr><td>${esc(s?.name||"Unknown")}<div class="sub">${esc(s?.phone||"")}</div></td><td><span class="status ${statusClass(j.status)}">${esc(j.status||"unknown")}</span></td><td>${fmtDate(j.offered_at)}</td><td>${fmtDate(j.accepted_at)}</td></tr>`}).join("")
-      }</tbody></table></div>`;
-    }
-    function renderSubs(subs){
-      if(!subs.length)return'<div class="empty">No substitutions.</div>';
-      return`<div class="table-wrap"><table class="mini-table"><thead><tr><th>Original</th><th>Proposed</th><th>Status</th><th>Created</th></tr></thead><tbody>${
-        subs.map(s=>`<tr><td>${esc(s.original_item)}</td><td>${esc(s.proposed_item)}</td><td>${esc(s.status||"pending")}</td><td>${fmtDate(s.created_at)}</td></tr>`).join("")
-      }</tbody></table></div>`;
-    }
-    function renderMessages(messages){
-      if(!messages.length)return'<div class="empty">No messages stored for this order.</div>';
-      return messages.slice().reverse().map(m=>`<div class="message"><div class="message-role">${esc(m.role||"Unknown")} · ${fmtDate(m.created_at)}</div><div class="message-body">${esc(m.message)}</div></div>`).join("");
-    }
-
-    function closeDrawer(event){
-      if(event&&event.target&&event.target.id!=="drawerBackdrop")return;
-      document.getElementById("drawerBackdrop").classList.remove("open");
-    }
-    document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDrawer()});
-
-    async function updateShopperApproval(shopperId,decision){
-      const shopper=pendingShoppers.find(s=>s.id===shopperId);
-      if(!shopper)return;
-      if(!confirm(`Are you sure you want to ${decision==="approved"?"approve":"reject"} ${shopper.name||shopper.phone||"this shopper"}?`))return;
-      try{
-        await adminFetch("?action=shopper-approval",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({shopperId,decision})
-        });
         await loadDashboard();
-      }catch(e){alert(`Could not update shopper: ${e.message}`)}
-    }
+      } catch (error) {
+        console.error(
+          "FETCH ADMIN LOGIN ERROR:",
+          error
+        );
 
-    function setOrderSearch(v){currentSearch=String(v||"");renderOrders()}
-    function setOrderFilter(filter){
-      currentFilter=filter;
-      document.querySelectorAll(".filter").forEach(b=>b.classList.toggle("active",b.dataset.filter===filter));
-      renderOrders();
-      document.getElementById("ordersSection").scrollIntoView({behavior:"smooth",block:"start"});
-    }
-    function scrollToSection(id){document.getElementById(id)?.scrollIntoView({behavior:"smooth"})}
+        showAuthError(
+          error?.message ||
+            "Sign in failed."
+        );
+      } finally {
+        button.disabled =
+          false;
 
-    async function loadDashboard(){
-      try{
-        const data=await adminFetch("");
-        allOrders=data.orders||[];
-        allShoppers=data.shoppers||[];
-        allCustomers=data.customers||[];
-        pendingShoppers=data.pendingShoppers||[];
-        updateMetrics(Number(data.pendingSubstitutions||0));
-        renderOrders();renderShoppers();renderPendingShoppers();renderCustomers();
-        document.getElementById("ordersUpdated").textContent=`Last updated ${new Date().toLocaleTimeString("en-IN")}`;
-      }catch(e){
-        if(/session|authentication|authorized|expired/i.test(e.message)){
-          await logoutAdmin(false);
-        }
-        document.getElementById("ordersArea").innerHTML=`<div class="error">Dashboard error: ${esc(e.message)}</div>`;
-        document.getElementById("shoppersArea").innerHTML=`<div class="error">Dashboard error: ${esc(e.message)}</div>`;
+        button.textContent =
+          "Sign in";
       }
     }
 
-    function showLogin(){
-      document.getElementById("authScreen").style.display="flex";
-      document.getElementById("appShell").classList.remove("show");
-    }
-    function showApp(s){
-      session=s;document.getElementById("authScreen").style.display="none";
-      document.getElementById("appShell").classList.add("show");
-      document.getElementById("sessionUser").textContent=s?.user?.email?`Signed in: ${s.user.email}`:"";
-    }
-    async function loginAdmin(e){
-      e.preventDefault();
-      const button=document.getElementById("loginButton");
-      const errorBox=document.getElementById("authError");
-      errorBox.classList.remove("show");button.disabled=true;button.textContent="Signing in…";
-      try{
-        const {data,error}=await supabaseClient.auth.signInWithPassword({
-          email:document.getElementById("email").value.trim(),
-          password:document.getElementById("password").value
-        });
-        if(error)throw error;
-        showApp(data.session);
-        await loadDashboard();
-      }catch(e){errorBox.textContent=e?.message||"Sign in failed.";errorBox.classList.add("show")}
-      finally{button.disabled=false;button.textContent="Sign in"}
-    }
-    async function logoutAdmin(show=true){
+    async function logoutAdmin() {
       await supabaseClient.auth.signOut();
-      session=null;
-      if(show)showLogin();
-    }
-    async function initAuth(){
-      const {data}=await supabaseClient.auth.getSession();
-      if(data?.session){showApp(data.session);await loadDashboard()}else showLogin();
-      supabaseClient.auth.onAuthStateChange((event,s)=>{
-        if(event==="SIGNED_IN"&&s)showApp(s);
-        if(event==="SIGNED_OUT"){session=null;showLogin()}
-      });
+
+      adminSession =
+        null;
+
+      showLoginScreen();
     }
 
-    document.getElementById("loginForm").addEventListener("submit",loginAdmin);
-    initAuth();
-    setInterval(()=>{if(session)loadDashboard()},10000);
+    async function initializeAdminAuth() {
+      const {
+        data
+      } =
+        await supabaseClient.auth.getSession();
+
+      if (
+        data?.session
+      ) {
+        showAdminApp(
+          data.session
+        );
+
+        await loadDashboard();
+      } else {
+        showLoginScreen();
+      }
+
+      supabaseClient.auth.onAuthStateChange(
+        async (
+          event,
+          session
+        ) => {
+          if (
+            event ===
+              "SIGNED_IN" &&
+            session
+          ) {
+            showAdminApp(
+              session
+            );
+          }
+
+          if (
+            event ===
+            "SIGNED_OUT"
+          ) {
+            adminSession =
+              null;
+
+            showLoginScreen();
+          }
+        }
+      );
+    }
+
+    async function loadSubstitutionAlert() {
+      try {
+        const substitutions =
+          await api(
+            "substitution_requests?status=eq.pending&select=id&limit=100"
+          );
+
+        document.getElementById(
+          "substitutionAlert"
+        ).textContent =
+          substitutions.length;
+      } catch {
+        document.getElementById(
+          "substitutionAlert"
+        ).textContent =
+          "—";
+      }
+    }
+
+
+    function humanRole(role) {
+      const value =
+        String(role || "").toLowerCase();
+
+      if (value === "user") return "Customer";
+      if (value === "assistant") return "Fetch";
+      if (value === "shopper") return "Shopper";
+      if (value === "system") return "System";
+      return role || "Unknown";
+    }
+
+    function timelineState(index, currentIndex) {
+      if (index < currentIndex) return "done";
+      if (index === currentIndex) return "current";
+      return "";
+    }
+
+    function buildOrderTimeline(order, jobs, substitutions, messages) {
+      const status =
+        String(order?.status || "").toLowerCase();
+
+      const timeline = [];
+
+      timeline.push({
+        title: "Order created",
+        time: order.created_at,
+        extra:
+          `${order.items || "Items"} · ${order.store_name || "Any suitable local store"}`,
+        state: "done"
+      });
+
+      const acceptedJob =
+        jobs.find(
+          j =>
+            String(j.status || "").toLowerCase() ===
+            "accepted"
+        );
+
+      const offeredJob =
+        jobs.find(
+          j =>
+            String(j.status || "").toLowerCase() ===
+            "offered"
+        );
+
+      if (jobs.length) {
+        const firstOffer =
+          [...jobs].sort(
+            (a, b) =>
+              new Date(a.offered_at || 0) -
+              new Date(b.offered_at || 0)
+          )[0];
+
+        timeline.push({
+          title: "Shopper broadcast",
+          time: firstOffer?.offered_at,
+          extra:
+            `${jobs.length} shopper job record${jobs.length === 1 ? "" : "s"}`,
+          state: "done"
+        });
+      }
+
+      if (acceptedJob) {
+        const acceptedShopper =
+          allShoppers.find(
+            s =>
+              s.id ===
+              acceptedJob.shopper_id
+          );
+
+        timeline.push({
+          title: "Shopper accepted",
+          time: acceptedJob.accepted_at || acceptedJob.offered_at,
+          extra:
+            acceptedShopper
+              ? acceptedShopper.name
+              : "Shopper assigned",
+          state: "done"
+        });
+      } else if (
+        offeredJob ||
+        status === "finding_shopper"
+      ) {
+        timeline.push({
+          title: "Waiting for shopper",
+          time:
+            offeredJob?.offered_at ||
+            order.created_at,
+          extra:
+            jobs.length
+              ? `${jobs.filter(j => j.status === "offered").length} active offer(s)`
+              : "No shopper has accepted yet",
+          state: "current"
+        });
+      }
+
+      if (
+        order.priced_at ||
+        order.item_total ||
+        order.delivery_fee ||
+        [
+          "awaiting_customer_price_confirmation",
+          "payment_pending",
+          "customer_reported_paid",
+          "shopping",
+          "picked_up",
+          "out_for_delivery",
+          "delivered",
+          "completed"
+        ].includes(status)
+      ) {
+        timeline.push({
+          title: "Price submitted",
+          time: order.priced_at,
+          extra:
+            `Product ${money(order.item_total)} · Delivery ${money(order.delivery_fee)} · Total ${money(order.total_amount)}`,
+          state:
+            status ===
+            "awaiting_customer_price_confirmation"
+              ? "current"
+              : "done"
+        });
+      }
+
+      if (
+        [
+          "payment_pending",
+          "customer_reported_paid",
+          "shopping",
+          "picked_up",
+          "out_for_delivery",
+          "delivered",
+          "completed"
+        ].includes(status)
+      ) {
+        timeline.push({
+          title: "Customer approved price",
+          time:
+            order.priced_at,
+          extra:
+            "Order moved to payment",
+          state:
+            status ===
+            "payment_pending" ||
+            status ===
+            "customer_reported_paid"
+              ? "current"
+              : "done"
+        });
+      }
+
+      if (
+        [
+          "payment_pending",
+          "customer_reported_paid",
+          "shopping",
+          "picked_up",
+          "out_for_delivery",
+          "delivered",
+          "completed"
+        ].includes(status)
+      ) {
+        timeline.push({
+          title:
+            order.payment_status ===
+            "paid"
+              ? "Payment verified"
+              : order.payment_status ===
+                "customer_reported_paid"
+              ? "Customer says PAID"
+              : "Payment pending",
+          time:
+            order.payment_status ===
+            "paid"
+              ? order.paid_at ||
+                null
+              : null,
+          extra:
+            order.payment_status ===
+            "paid"
+              ? "Shopper confirmed RECEIVED"
+              : "Waiting for shopper verification",
+          state:
+            order.payment_status ===
+            "paid"
+              ? "done"
+              : "current"
+        });
+      }
+
+      const progression = [
+        ["shopping", "Shopping started"],
+        ["picked_up", "Items picked up"],
+        ["out_for_delivery", "Out for delivery"],
+        ["delivered", "Order delivered"]
+      ];
+
+      const rank = {
+        finding_shopper: -1,
+        shopper_assigned: -1,
+        awaiting_customer_price_confirmation: -1,
+        payment_pending: -1,
+        customer_reported_paid: -1,
+        shopping: 0,
+        picked_up: 1,
+        out_for_delivery: 2,
+        delivered: 3,
+        completed: 3
+      };
+
+      const currentRank =
+        Object.prototype.hasOwnProperty.call(rank, status)
+          ? rank[status]
+          : -1;
+
+      progression.forEach(
+        ([needed, title], index) => {
+          if (
+            currentRank >= index
+          ) {
+            timeline.push({
+              title,
+              time: null,
+              extra:
+                index === 0
+                  ? "Shopper started fulfilment"
+                  : index === 1
+                  ? "Items have been picked up"
+                  : index === 2
+                  ? "Shopper is on the way"
+                  : "Customer delivery completed",
+              state: "done"
+            });
+          } else if (
+            currentRank === index - 1 &&
+            [
+              "shopping",
+              "picked_up",
+              "out_for_delivery"
+            ].includes(status)
+          ) {
+            timeline.push({
+              title,
+              time: null,
+              extra: "Next expected stage",
+              state: "current"
+            });
+          }
+        }
+      );
+
+      if (
+        status === "cancelled"
+      ) {
+        timeline.push({
+          title: "Order cancelled",
+          time: null,
+          extra: "Order is no longer being fulfilled",
+          state: "current"
+        });
+      }
+
+      if (
+        substitutions.length
+      ) {
+        timeline.push({
+          title:
+            substitutions.some(
+              s =>
+                String(s.status || "").toLowerCase() ===
+                "pending"
+            )
+              ? "Substitution awaiting customer"
+              : "Substitution activity",
+          time:
+            substitutions[
+              substitutions.length - 1
+            ]?.created_at,
+          extra:
+            `${substitutions.length} substitution request${substitutions.length === 1 ? "" : "s"}`,
+          state:
+            substitutions.some(
+              s =>
+                String(s.status || "").toLowerCase() ===
+                "pending"
+            )
+              ? "current"
+              : "done"
+        });
+      }
+
+      return timeline;
+    }
+
+    function renderOrderModal(
+      order,
+      jobs,
+      substitutions,
+      messages
+    ) {
+      const shopper =
+        allShoppers.find(
+          s =>
+            s.id ===
+            order.shopper_id
+        );
+
+      const customer =
+        allCustomers.find(
+          c =>
+            c.id ===
+            order.customer_id
+        );
+
+      const timeline =
+        buildOrderTimeline(
+          order,
+          jobs,
+          substitutions,
+          messages
+        );
+
+      document.getElementById(
+        "modalTitle"
+      ).textContent =
+        `Order #${shortId(order.id)}`;
+
+      document.getElementById(
+        "modalSubtitle"
+      ).textContent =
+        `${statusLabel(order.status)} · ${fmtDate(order.created_at)}`;
+
+      document.getElementById(
+        "modalBody"
+      ).innerHTML = `
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-label">Customer</div>
+            <div class="detail-value">
+              ${esc(customer?.name || "Customer")}
+              <div class="subline">${esc(customer?.phone || "—")}</div>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Items</div>
+            <div class="detail-value">
+              ${esc(order.items || "—")}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Store</div>
+            <div class="detail-value">
+              ${esc(order.store_name || "Any suitable local store")}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Shopper</div>
+            <div class="detail-value">
+              ${esc(shopper?.name || "Not assigned")}
+              <div class="subline">${esc(shopper?.phone || "—")}</div>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Delivery</div>
+            <div class="detail-value">
+              ${esc(order.delivery_address || "—")}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Product</div>
+            <div class="detail-value">
+              ${money(order.item_total)}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Delivery fee</div>
+            <div class="detail-value">
+              ${money(order.delivery_fee)}
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-label">Total</div>
+            <div class="detail-value">
+              ${money(order.total_amount)}
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Order timeline</h3>
+          <div class="timeline">
+            ${
+              timeline.length
+                ? timeline.map(
+                    item => `
+                      <div class="timeline-item ${item.state}">
+                        <span class="timeline-dot"></span>
+                        <div class="timeline-title">
+                          ${esc(item.title)}
+                        </div>
+                        <div class="timeline-meta">
+                          ${fmtDate(item.time)}
+                        </div>
+                        ${
+                          item.extra
+                            ? `<div class="timeline-extra">${esc(item.extra)}</div>`
+                            : ""
+                        }
+                      </div>
+                    `
+                  ).join("")
+                : `<div class="empty">No timeline data available.</div>`
+            }
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Shopper offers</h3>
+          ${
+            jobs.length
+              ? `
+                <div class="table-wrap">
+                  <table class="mini-table">
+                    <thead>
+                      <tr>
+                        <th>Shopper</th>
+                        <th>Status</th>
+                        <th>Offered</th>
+                        <th>Accepted</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${
+                        jobs
+                          .sort(
+                            (a, b) =>
+                              new Date(a.offered_at || 0) -
+                              new Date(b.offered_at || 0)
+                          )
+                          .map(
+                            j => {
+                              const s =
+                                allShoppers.find(
+                                  x =>
+                                    x.id ===
+                                    j.shopper_id
+                                );
+
+                              return `
+                                <tr>
+                                  <td>
+                                    ${esc(s?.name || "Unknown")}
+                                    <div class="subline">${esc(s?.phone || "")}</div>
+                                  </td>
+                                  <td>
+                                    <span class="status ${statusClass(j.status)}">
+                                      ${esc(j.status || "unknown")}
+                                    </span>
+                                  </td>
+                                  <td>${fmtDate(j.offered_at)}</td>
+                                  <td>${fmtDate(j.accepted_at)}</td>
+                                </tr>
+                              `;
+                            }
+                          )
+                          .join("")
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              `
+              : `<div class="empty">No shopper offers recorded.</div>`
+          }
+        </div>
+
+        <div class="modal-section">
+          <h3>Substitutions</h3>
+          ${
+            substitutions.length
+              ? `
+                <div class="table-wrap">
+                  <table class="mini-table">
+                    <thead>
+                      <tr>
+                        <th>Original</th>
+                        <th>Proposed</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${substitutions.map(
+                        s => `
+                          <tr>
+                            <td>${esc(s.original_item)}</td>
+                            <td>${esc(s.proposed_item)}</td>
+                            <td>${esc(s.status || "pending")}</td>
+                            <td>${fmtDate(s.created_at)}</td>
+                          </tr>
+                        `
+                      ).join("")}
+                    </tbody>
+                  </table>
+                </div>
+              `
+              : `<div class="empty">No substitutions.</div>`
+          }
+        </div>
+
+        <div class="modal-section">
+          <h3>Conversation</h3>
+          ${
+            messages.length
+              ? `
+                <div class="message-list">
+                  ${messages
+                    .slice()
+                    .reverse()
+                    .map(
+                      m => `
+                        <div class="message">
+                          <div class="message-role">
+                            ${esc(humanRole(m.role))} · ${fmtDate(m.created_at)}
+                          </div>
+                          <div class="message-body">
+                            ${esc(m.message)}
+                          </div>
+                        </div>
+                      `
+                    )
+                    .join("")
+                  }
+                </div>
+              `
+              : `<div class="empty">No messages stored for this order.</div>`
+          }
+        </div>
+      `;
+    }
+
+    async function openOrderModal(orderId) {
+      const order =
+        allOrders.find(
+          o =>
+            o.id ===
+            orderId
+        );
+
+      if (!order) {
+        return;
+      }
+
+      const backdrop =
+        document.getElementById(
+          "orderModalBackdrop"
+        );
+
+      backdrop.classList.add(
+        "open"
+      );
+
+      document.getElementById(
+        "modalTitle"
+      ).textContent =
+        `Order #${shortId(order.id)}`;
+
+      document.getElementById(
+        "modalSubtitle"
+      ).textContent =
+        "Loading full order details…";
+
+      document.getElementById(
+        "modalBody"
+      ).innerHTML =
+        `<div class="empty">Loading timeline, shopper offers, substitutions and messages…</div>`;
+
+      try {
+        const [
+          jobs,
+          substitutions,
+          messages
+        ] = await Promise.all([
+          api(
+            `shopper_jobs?order_id=eq.${encodeURIComponent(
+              order.id
+            )}&select=*&order=offered_at.asc&limit=100`
+          ),
+          api(
+            `substitution_requests?order_id=eq.${encodeURIComponent(
+              order.id
+            )}&select=*&order=created_at.asc&limit=100`
+          ),
+          api(
+            `messages?order_id=eq.${encodeURIComponent(
+              order.id
+            )}&select=*&order=created_at.asc&limit=200`
+          )
+        ]);
+
+        renderOrderModal(
+          order,
+          Array.isArray(jobs) ? jobs : [],
+          Array.isArray(substitutions)
+            ? substitutions
+            : [],
+          Array.isArray(messages)
+            ? messages
+            : []
+        );
+      } catch (error) {
+        document.getElementById(
+          "modalBody"
+        ).innerHTML =
+          `<div class="error">Could not load order details: ${esc(error.message)}</div>`;
+      }
+    }
+
+    function closeOrderModal(event) {
+      if (
+        event &&
+        event.target &&
+        event.target.id !==
+          "orderModalBackdrop"
+      ) {
+        return;
+      }
+
+      document.getElementById(
+        "orderModalBackdrop"
+      ).classList.remove(
+        "open"
+      );
+    }
+
+    document.addEventListener(
+      "keydown",
+      event => {
+        if (
+          event.key ===
+          "Escape"
+        ) {
+          closeOrderModal();
+        }
+      }
+    );
+
+    function atcStatusClass(status) {
+      const s = String(status || "").toLowerCase();
+      if (["completed","available","accepted","started"].includes(s)) return "green";
+      if (["cancelled","declined","expired","failed"].includes(s)) return "red";
+      if (["offered","awaiting_input","resource_search","assigned"].includes(s)) return "amber";
+      if (["executing","active"].includes(s)) return "blue";
+      return "gray";
+    }
+
+    function atcBadge(status) {
+      return `<span class="status ${atcStatusClass(status)}">${esc(String(status || "—").replaceAll("_", " "))}</span>`;
+    }
+
+    async function loadAtcControlTower() {
+      try {
+        const token = adminSession?.access_token;
+        if (!token) return;
+        const response = await fetch("/api/admin/dashboard", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error || "ATC dashboard request failed.");
+
+        atcData = {
+          tasks: Array.isArray(data.atcTasks) ? data.atcTasks : [],
+          resources: Array.isArray(data.atcResources) ? data.atcResources : [],
+          assignments: Array.isArray(data.atcAssignments) ? data.atcAssignments : [],
+          events: Array.isArray(data.atcEvents) ? data.atcEvents : []
+        };
+
+        const activeTasks = atcData.tasks.filter(t => !["completed","cancelled"].includes(String(t.status || "").toLowerCase())).length;
+        const availableResources = atcData.resources.filter(r => String(r.status || "").toLowerCase() === "available").length;
+        const openAssignments = atcData.assignments.filter(a => !["completed","declined","expired"].includes(String(a.status || "").toLowerCase())).length;
+        const exceptions = atcData.events.filter(e => /declin|expir|fail|recover|redispatch|exception/i.test(String(e.event_type || ""))).length;
+
+        document.getElementById("atcActiveTasks").textContent = activeTasks;
+        document.getElementById("atcAvailableResources").textContent = availableResources;
+        document.getElementById("atcOpenAssignments").textContent = openAssignments;
+        document.getElementById("atcExceptions").textContent = exceptions;
+
+        const resourcesById = new Map(atcData.resources.map(r => [String(r.id), r]));
+        const assignmentsByTask = new Map();
+        for (const a of atcData.assignments) {
+          const key = `${a.task_source_type}:${a.task_source_id}`;
+          const existing = assignmentsByTask.get(key);
+          if (!existing || new Date(a.created_at || a.offered_at || 0) > new Date(existing.created_at || existing.offered_at || 0)) assignmentsByTask.set(key, a);
+        }
+        const eventsByTask = new Map();
+        for (const e of atcData.events) {
+          const key = `${e.task_source_type}:${e.task_source_id}`;
+          const existing = eventsByTask.get(key);
+          if (!existing || new Date(e.created_at || 0) > new Date(existing.created_at || 0)) eventsByTask.set(key, e);
+        }
+
+        const rows = atcData.tasks.slice(0, 100).map(task => {
+          const key = `${task.source_type}:${task.source_id}`;
+          const assignment = assignmentsByTask.get(key);
+          const resource = assignment ? resourcesById.get(String(assignment.resource_id)) : null;
+          const event = eventsByTask.get(key);
+          return `<tr>
+            <td><strong>${esc(String(task.task_type || "task").replaceAll("_", " "))}</strong><div class="subline">${esc(shortId(task.source_id))}</div></td>
+            <td>${esc(task.objective || "—")}</td>
+            <td>${atcBadge(task.status)}</td>
+            <td>${esc(resource?.display_name || resource?.external_id || "—")}</td>
+            <td>${atcBadge(assignment?.status || "unassigned")}</td>
+            <td class="atc-event">${esc(event?.event_type || "—")}</td>
+            <td>${fmtDate(task.updated_at || task.created_at)}</td>
+          </tr>`;
+        }).join("");
+
+        document.getElementById("atcTasksArea").innerHTML = rows || `<tr><td colspan="7" class="atc-empty">No ATC tasks yet.</td></tr>`;
+        document.getElementById("atcUpdated").textContent = `Last updated ${new Date().toLocaleTimeString("en-IN")}`;
+      } catch (error) {
+        console.error("ATC CONTROL TOWER ERROR:", error);
+        document.getElementById("atcTasksArea").innerHTML = `<tr><td colspan="7" class="error">ATC dashboard error: ${esc(error.message)}</td></tr>`;
+      }
+    }
+
+    async function loadDashboard() {
+      try {
+        const [
+          orders,
+          shoppers,
+          customers
+        ] =
+          await Promise.all([
+            api(
+              "orders?select=*&order=created_at.desc&limit=200"
+            ),
+            api(
+              "shoppers?select=*&order=name.asc&limit=100"
+            ),
+            api(
+              "customers?select=*&order=created_at.desc&limit=200"
+            )
+          ]);
+
+        allOrders =
+          Array.isArray(
+            orders
+          )
+            ? orders
+            : [];
+
+        allShoppers =
+          Array.isArray(
+            shoppers
+          )
+            ? shoppers
+            : [];
+
+        allCustomers =
+          Array.isArray(
+            customers
+          )
+            ? customers
+            : [];
+
+        updateMetrics();
+        renderOrders();
+        renderShoppers();
+        await loadSubstitutionAlert();
+        await loadAtcControlTower();
+
+        document.getElementById(
+          "ordersUpdated"
+        ).textContent =
+          `Last updated ${new Date().toLocaleTimeString("en-IN")}`;
+      } catch (error) {
+        console.error(
+          error
+        );
+
+        document.getElementById(
+          "ordersArea"
+        ).innerHTML =
+          `<div class="error">Dashboard error: ${esc(error.message)}</div>`;
+
+        document.getElementById(
+          "shoppersArea"
+        ).innerHTML =
+          `<div class="error">Dashboard error: ${esc(error.message)}</div>`;
+      }
+    }
+
+
+    function setOrderSearch(value) {
+      currentSearch =
+        String(value || "");
+
+      renderOrders();
+    }
+
+    function setOrderFilter(filter) {
+      currentFilter =
+        filter;
+
+      document
+        .querySelectorAll(
+          ".filter"
+        )
+        .forEach(
+          button => {
+            button.classList.toggle(
+              "active",
+              button.dataset.filter ===
+                filter
+            );
+          }
+        );
+
+      renderOrders();
+    }
+
+    document
+      .getElementById(
+        "loginForm"
+      )
+      .addEventListener(
+        "submit",
+        loginAdmin
+      );
+
+    initializeAdminAuth();
+
+    setInterval(
+      () => {
+        if (adminSession) {
+          loadDashboard();
+        }
+      },
+      10000
+    );
   </script>
 </body>
 </html>
