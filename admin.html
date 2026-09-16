@@ -3288,10 +3288,34 @@
           events: Array.isArray(data.atcEvents) ? data.atcEvents : []
         };
 
-        const activeTasks = atcData.tasks.filter(t => !["completed","cancelled"].includes(String(t.status || "").toLowerCase())).length;
-        const availableResources = atcData.resources.filter(r => String(r.status || "").toLowerCase() === "available").length;
-        const openAssignments = atcData.assignments.filter(a => !["completed","declined","expired"].includes(String(a.status || "").toLowerCase())).length;
-        const exceptions = atcData.events.filter(e => /declin|expir|fail|recover|redispatch|exception/i.test(String(e.event_type || ""))).length;
+        const activeTaskIds = new Set(
+          atcData.tasks
+            .filter(t => !["completed","cancelled"].includes(String(t.status || "").toLowerCase()))
+            .map(t => `${t.source_type}:${t.source_id}`)
+        );
+
+        const activeTasks = activeTaskIds.size;
+
+        const availableResources = atcData.resources.filter(
+          r => String(r.status || "").toLowerCase() === "available"
+        ).length;
+
+        // "Open assignments" means assignments that still require a shopper action.
+        // Historical offered rows attached to completed/cancelled tasks are not open.
+        const openAssignments = atcData.assignments.filter(a => {
+          const status = String(a.status || "").toLowerCase();
+          const taskKey = `${a.task_source_type}:${a.task_source_id}`;
+          return status === "offered" && activeTaskIds.has(taskKey);
+        }).length;
+
+        // Show unresolved exception events only for currently active tasks.
+        const exceptions = atcData.events.filter(e => {
+          const taskKey = `${e.task_source_type}:${e.task_source_id}`;
+          return activeTaskIds.has(taskKey) &&
+            /declin|expir|fail|recover|redispatch|exception/i.test(
+              String(e.event_type || "")
+            );
+        }).length;
 
         document.getElementById("atcActiveTasks").textContent = activeTasks;
         document.getElementById("atcAvailableResources").textContent = availableResources;
