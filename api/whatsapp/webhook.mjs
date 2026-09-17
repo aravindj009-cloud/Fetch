@@ -84,6 +84,12 @@ import {
   atcUpdateShopperLocation,
 } from "../../lib/atc.mjs";
 
+import {
+  handlePartnerStoreMessage,
+  dispatchOrderToPartnerStore,
+  getPartnerStoreByPhone,
+} from "../../lib/partner-store.mjs";
+
 function sleep(ms) {
   return new Promise((resolve) =>
     setTimeout(resolve, ms)
@@ -158,6 +164,287 @@ async function supabaseRequest(path, options = {}) {
 
   throw new Error("Supabase request failed");
 }
+
+
+/* =========================================================
+   WHATSAPP INTERACTIVE BUTTONS
+   Deterministic choices are buttons/lists instead of
+   requiring the user to type commands.
+
+   WhatsApp reply-button messages support up to 3 buttons.
+   The button ID is what the webhook uses for routing.
+========================================================= */
+
+async function sendWhatsAppButtons(
+  to,
+  body,
+  buttons,
+  options = {}
+) {
+  if (
+    !WHATSAPP_ACCESS_TOKEN ||
+    !WHATSAPP_PHONE_NUMBER_ID
+  ) {
+    throw new Error(
+      "WhatsApp environment variables are missing"
+    );
+  }
+
+  const normalizedTo = normalizePhone(to);
+
+  const safeButtons = (Array.isArray(buttons)
+    ? buttons
+    : []
+  )
+    .slice(0, 3)
+    .map((button) => ({
+      type: "reply",
+      reply: {
+        id: String(button.id),
+        title: String(button.title).slice(0, 20),
+      },
+    }));
+
+  if (!safeButtons.length) {
+    throw new Error(
+      "At least one WhatsApp button is required"
+    );
+  }
+
+  const interactive = {
+    type: "button",
+    body: {
+      text: String(body).slice(0, 1024),
+    },
+    action: {
+      buttons: safeButtons,
+    },
+  };
+
+  if (options.header) {
+    interactive.header = {
+      type: "text",
+      text: String(options.header).slice(0, 60),
+    };
+  }
+
+  if (options.footer) {
+    interactive.footer = {
+      text: String(options.footer).slice(0, 60),
+    };
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/v26.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization:
+          `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: normalizedTo,
+        type: "interactive",
+        interactive,
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      `WhatsApp interactive ${response.status}: ${JSON.stringify(data)}`
+    );
+  }
+
+  return data;
+}
+
+async function sendWhatsAppList(
+  to,
+  body,
+  rows,
+  options = {}
+) {
+  if (
+    !WHATSAPP_ACCESS_TOKEN ||
+    !WHATSAPP_PHONE_NUMBER_ID
+  ) {
+    throw new Error(
+      "WhatsApp environment variables are missing"
+    );
+  }
+
+  const normalizedTo = normalizePhone(to);
+
+  const safeRows = (Array.isArray(rows)
+    ? rows
+    : []
+  )
+    .slice(0, 10)
+    .map((row) => ({
+      id: String(row.id),
+      title: String(row.title).slice(0, 24),
+      ...(row.description
+        ? {
+            description:
+              String(row.description).slice(0, 72),
+          }
+        : {}),
+    }));
+
+  if (!safeRows.length) {
+    throw new Error(
+      "At least one WhatsApp list row is required"
+    );
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/v26.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization:
+          `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: normalizedTo,
+        type: "interactive",
+        interactive: {
+          type: "list",
+          ...(options.header
+            ? {
+                header: {
+                  type: "text",
+                  text: String(options.header).slice(0, 60),
+                },
+              }
+            : {}),
+          body: {
+            text: String(body).slice(0, 1024),
+          },
+          ...(options.footer
+            ? {
+                footer: {
+                  text: String(options.footer).slice(0, 60),
+                },
+              }
+            : {}),
+          action: {
+            button:
+              String(options.buttonText || "Choose")
+                .slice(0, 20),
+            sections: [
+              {
+                title:
+                  String(
+                    options.sectionTitle ||
+                      "Options"
+                  ).slice(0, 24),
+                rows: safeRows,
+              },
+            ],
+          },
+        },
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      `WhatsApp interactive list ${response.status}: ${JSON.stringify(data)}`
+    );
+  }
+
+  return data;
+}
+
+/*
+  Converts an interactive button/list selection into the
+  same command text understood by the existing deterministic
+  handlers. This lets us upgrade the UI without rebuilding
+  the entire order state machine.
+*/
+function extractInteractiveChoice(message) {
+  const interactive =
+    message?.interactive;
+
+  if (!interactive) {
+    return null;
+  }
+
+  if (
+    interactive.type === "button_reply" &&
+    interactive.button_reply?.id
+  ) {
+    return {
+      id: String(
+        interactive.button_reply.id
+      ),
+      title: String(
+        interactive.button_reply.title || ""
+      ),
+    };
+  }
+
+  if (
+    interactive.type === "list_reply" &&
+    interactive.list_reply?.id
+  ) {
+    return {
+      id: String(
+        interactive.list_reply.id
+      ),
+      title: String(
+        interactive.list_reply.title || ""
+      ),
+    };
+  }
+
+  return null;
+}
+
+function interactiveChoiceToCommand(choice) {
+  if (!choice?.id) return "";
+
+  const map = {
+    fetch_customer_yes: "YES",
+    fetch_customer_no: "NO",
+
+    fetch_partner_accept: "ACCEPT",
+    fetch_partner_reject: "REJECT",
+
+    fetch_shopper_accept: "ACCEPT",
+    fetch_shopper_decline: "DECLINE",
+
+    fetch_payment_received: "RECEIVED",
+    fetch_payment_not_received: "NOT RECEIVED",
+
+    fetch_shopper_shopping: "SHOPPING",
+    fetch_shopper_picked_up: "PICKED UP",
+    fetch_shopper_out_for_delivery:
+      "OUT FOR DELIVERY",
+    fetch_shopper_delivered: "DELIVERED",
+
+    fetch_substitution_yes: "YES",
+    fetch_substitution_no: "NO",
+
+    fetch_cancel: "CANCEL",
+    fetch_keep_order: "KEEP ORDER",
+  };
+
+  return map[choice.id] || "";
+}
+
 
 async function sendWhatsAppMessage(
   to,
@@ -2708,10 +2995,34 @@ async function notifyCustomerForOrder(
     message,
   });
 
-  await sendWhatsAppMessage(
-    customer.phone,
-    message
-  );
+  if (
+    /Your Fetch total/i.test(message) &&
+    /Product:/i.test(message) &&
+    /Delivery:/i.test(message)
+  ) {
+    await sendWhatsAppButtons(
+      customer.phone,
+      message,
+      [
+        {
+          id: "fetch_customer_yes",
+          title: "YES",
+        },
+        {
+          id: "fetch_customer_no",
+          title: "NO",
+        },
+      ],
+      {
+        footer: "Choose an option",
+      }
+    );
+  } else {
+    await sendWhatsAppMessage(
+      customer.phone,
+      message
+    );
+  }
 }
 
 /* =========================================================
@@ -6475,11 +6786,24 @@ async function handleCustomerMessage({
         if (
           shopper?.phone
         ) {
-          await sendWhatsAppMessage(
+          await sendWhatsAppButtons(
             shopper.phone,
             `💳 The customer says they have paid ₹${formatRupees(
               activeOrder.total_amount
-            )} directly to you.\n\nPlease check your UPI account.\n\nReply *RECEIVED* only after the money is actually visible in your account.`
+            )} directly to you.\n\nPlease check your UPI account. Select RECEIVED only after the money is actually visible.`,
+            [
+              {
+                id: "fetch_payment_received",
+                title: "RECEIVED",
+              },
+              {
+                id: "fetch_payment_not_received",
+                title: "NOT RECEIVED",
+              },
+            ],
+            {
+              footer: "Verify your UPI account first",
+            }
           );
         }
       }
@@ -8326,7 +8650,7 @@ function buildCustomerPriceApprovalMessage(order) {
     `🛒 Product: ₹${formatRupees(itemTotal)}\n` +
     `🚚 Delivery: ₹${formatRupees(deliveryFee)}\n` +
     `💰 *Total: ₹${formatRupees(total)}*\n\n` +
-    `Is that okay? Reply *YES* or *NO*.`
+    `Please choose an option below.`
   );
 }
 
@@ -10988,6 +11312,14 @@ function extractIncomingWhatsAppMessage(
     message?.location ||
     null;
 
+  const interactiveChoice =
+    extractInteractiveChoice(message);
+
+  const interactiveCommand =
+    interactiveChoiceToCommand(
+      interactiveChoice
+    );
+
   return {
     from:
       normalizePhone(
@@ -10996,7 +11328,10 @@ function extractIncomingWhatsAppMessage(
 
     text:
       message?.text?.body?.trim() ||
+      interactiveCommand ||
       "",
+
+    interactiveChoice,
 
     messageId:
       message.id ||
@@ -11203,6 +11538,142 @@ export default async function handler(
         text,
       })
     );
+
+    /*
+      =======================================================
+      PARTNER STORE ROUTING
+      Partner stores are procurement resources and must be
+      handled before shopper/customer routing.
+      =======================================================
+    */
+
+    const partnerStore =
+      await getPartnerStoreByPhone(from);
+
+    if (partnerStore) {
+      const partnerResult =
+        await handlePartnerStoreMessage({
+          phone: from,
+          text: text || "",
+        });
+
+      if (
+        partnerResult?.handled &&
+        partnerResult.action === "accepted_pending_price"
+      ) {
+        return res.status(200).json({
+          success: true,
+          partner_store: true,
+          action: "awaiting_partner_price",
+        });
+      }
+
+      if (
+        partnerResult?.handled &&
+        partnerResult.action === "accepted" &&
+        partnerResult.orderId
+      ) {
+        const partnerOrder =
+          await getOrderById(
+            partnerResult.orderId
+          );
+
+        if (partnerOrder) {
+          const quotedPrice =
+            Number(
+              partnerResult.quotedItemTotal
+            );
+
+          if (
+            Number.isFinite(quotedPrice) &&
+            quotedPrice > 0
+          ) {
+            const updated =
+              await updateOrder(
+                partnerOrder.id,
+                {
+                  item_total: quotedPrice,
+                  status: "finding_shopper",
+                  delivery_pricing_status: "pending",
+                  delivery_pricing_source: null,
+                  delivery_fee: 0,
+                  total_amount:
+                    quotedPrice + FETCH_FEE,
+                  partner_store_id:
+                    partnerResult.partnerStore?.id ||
+                    partnerOrder.partner_store_id ||
+                    null,
+                  partner_request_id:
+                    partnerResult.request?.id ||
+                    partnerOrder.partner_request_id ||
+                    null,
+                }
+              );
+
+            if (updated) {
+              await offerOrderToShopper(updated);
+            }
+          }
+        }
+      }
+
+      if (
+        partnerResult?.handled &&
+        partnerResult.action === "rejected" &&
+        partnerResult.orderId
+      ) {
+        const rejectedOrder =
+          await getOrderById(
+            partnerResult.orderId
+          );
+
+        if (rejectedOrder) {
+          const nextPartner =
+            await dispatchOrderToPartnerStore({
+              order: rejectedOrder,
+              excludedPartnerStoreIds: [
+                partnerResult.rejectedPartnerStoreId ||
+                  partnerStore.id,
+              ],
+            });
+
+          if (nextPartner.success) {
+            await updateOrder(
+              rejectedOrder.id,
+              {
+                status: "partner_offered",
+                partner_store_id:
+                  nextPartner.partnerStore?.id ||
+                  null,
+                partner_request_id:
+                  nextPartner.request?.id ||
+                  null,
+              }
+            );
+          } else {
+            const fallbackOrder =
+              await updateOrder(
+                rejectedOrder.id,
+                {
+                  status: "finding_shopper",
+                }
+              );
+
+            await offerOrderToShopper(
+              fallbackOrder || rejectedOrder
+            );
+          }
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        partner_store: true,
+        action:
+          partnerResult?.action ||
+          "handled",
+      });
+    }
 
     /*
       =======================================================
