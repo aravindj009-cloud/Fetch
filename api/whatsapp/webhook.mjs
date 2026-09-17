@@ -10504,6 +10504,36 @@ async function handleShopperMessage({
     );
 
     /*
+      PARTNER-STORE FLOW: the shopper is accepting a confirmed
+      procurement-and-delivery job. Payment must remain pending until
+      the customer reports payment and the shopper verifies receipt.
+
+      The previous implementation left the order in shopper_assigned
+      after the shopper accepted. That meant the customer could see the
+      I HAVE PAID button, but the deterministic payment handler rejected
+      it because the database status was not payment_pending.
+    */
+    if (claimedOrder.partner_store_id) {
+      const paymentPendingOrder =
+        await updateOrder(
+          claimedOrder.id,
+          {
+            status: "payment_pending",
+            payment_status: "pending",
+          }
+        );
+
+      if (!paymentPendingOrder) {
+        throw new Error(
+          "Could not move partner-store order to payment_pending after shopper acceptance"
+        );
+      }
+
+      claimedOrder.status = "payment_pending";
+      claimedOrder.payment_status = "pending";
+    }
+
+    /*
       Immediately cancel every losing offer and notify the
       losing shoppers.
     */
