@@ -7335,20 +7335,30 @@ async function handleCustomerMessage({
     }
 
     /*
-      The customer only supplies the request and delivery location.
-      Fetch owns the fulfillment decision. The shopper chooses the actual
-      source, reports the product price, and shares the source location.
-      Only then does Fetch calculate the delivery fee.
+      ATC FULFILLMENT DECISION
+
+      The customer supplies the request and delivery location.
+      ATC first tries an approved + opted-in partner store.
+
+      Partner store available:
+        customer -> ATC -> partner store -> price -> shopper
+
+      No partner store available:
+        customer -> ATC -> shopper fallback
+
+      IMPORTANT: When a partner store is selected, the shopper must NOT
+      choose the source, enter the product price, or share the store
+      location. The partner store already owns the product/price decision.
     */
     if (
       updatedOrder.status === "collecting_details" &&
       String(updatedOrder.items || "").trim()
     ) {
-      const findingShopper =
+      const findingPartner =
         await updateOrder(
           updatedOrder.id,
           {
-            status: "finding_shopper",
+            status: "finding_partner",
             delivery_pricing_status: "pending",
             delivery_pricing_source: null,
             distance_km: null,
@@ -7359,15 +7369,101 @@ async function handleCustomerMessage({
           }
         );
 
+      const orderForDispatch =
+        findingPartner || updatedOrder;
+
+      let partnerDispatch = null;
+
+      try {
+        partnerDispatch =
+          await dispatchOrderToPartnerStore({
+            order: orderForDispatch,
+          });
+      } catch (error) {
+        console.error(
+          "FETCH ATC PARTNER DISPATCH ERROR:",
+          error
+        );
+
+        partnerDispatch = {
+          success: false,
+          reason: "partner_dispatch_error",
+        };
+      }
+
+      if (partnerDispatch?.success) {
+        const partnerOffered =
+          await updateOrder(
+            orderForDispatch.id,
+            {
+              status: "partner_offered",
+              partner_store_id:
+                partnerDispatch.partnerStore?.id ||
+                null,
+              partner_request_id:
+                partnerDispatch.request?.id ||
+                null,
+              store_name:
+                partnerDispatch.partnerStore?.business_name ||
+                orderForDispatch.store_name ||
+                null,
+            }
+          );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "Got it 👍\n\nI’m checking the most suitable nearby partner store first. Once the item and price are confirmed, I’ll calculate the delivery fee and send the job to a Fetch shopper."
+        );
+
+        console.log(
+          "FETCH ATC PARTNER OFFERED:",
+          JSON.stringify({
+            orderId: orderForDispatch.id,
+            partnerStoreId:
+              partnerDispatch.partnerStore?.id || null,
+            partnerRequestId:
+              partnerDispatch.request?.id || null,
+            partnerStore:
+              partnerDispatch.partnerStore?.business_name || null,
+            distanceKm:
+              partnerDispatch.distanceKm ?? null,
+          })
+        );
+
+        return;
+      }
+
+      /*
+        No eligible partner store was available. Only now do we fall back
+        to the existing shopper-as-source flow.
+      */
+      const findingShopper =
+        await updateOrder(
+          orderForDispatch.id,
+          {
+            status: "finding_shopper",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
+            partner_store_id: null,
+            partner_request_id: null,
+            store_name: null,
+          }
+        );
+
       const dispatch =
         await offerOrderToShopper(
-          findingShopper || updatedOrder
+          findingShopper || orderForDispatch
         );
 
       await sendWhatsAppMessage(
         normalizedPhone,
         dispatch.success
-          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
+          ? "Got it 👍\n\nNo partner store was available, so I’m finding a Fetch shopper who can source and deliver this for you."
           : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
       );
 
