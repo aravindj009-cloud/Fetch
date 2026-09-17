@@ -2947,6 +2947,114 @@ async function applyApprovedSubstitution(
 }
 
 /* =========================================================
+   ATC FULFILLMENT DISPATCH
+
+   Customer order flow: partner store first, shopper second.
+   The partner store is a procurement resource. If no eligible
+   partner can receive the request, the existing shopper engine
+   becomes the fallback execution resource.
+========================================================= */
+async function dispatchOrderThroughATC(order) {
+  if (!order?.id) {
+    return {
+      success: false,
+      route: "none",
+      reason: "missing_order",
+      order: null,
+      partnerDispatch: null,
+      shopperDispatch: null,
+    };
+  }
+
+  const findingPartner =
+    await updateOrder(order.id, {
+      status: "finding_partner",
+      delivery_pricing_status: "pending",
+      delivery_pricing_source: null,
+      distance_km: null,
+      delivery_fee: 0,
+      item_total: 0,
+      total_amount: 0,
+      priced_at: null,
+      partner_store_id: null,
+      partner_request_id: null,
+    });
+
+  const partnerOrder =
+    findingPartner || order;
+
+  const partnerDispatch =
+    await dispatchOrderToPartnerStore({
+      order: partnerOrder,
+    });
+
+  if (partnerDispatch?.success) {
+    const partnerOfferedOrder =
+      await updateOrder(
+        partnerOrder.id,
+        {
+          status: "partner_offered",
+          partner_store_id:
+            partnerDispatch.partnerStore?.id || null,
+          partner_request_id:
+            partnerDispatch.request?.id || null,
+        }
+      );
+
+    return {
+      success: true,
+      route: "partner",
+      reason: "partner_offered",
+      order: partnerOfferedOrder || partnerOrder,
+      partnerDispatch,
+      shopperDispatch: null,
+    };
+  }
+
+  console.warn(
+    "FETCH ATC PARTNER DISPATCH FALLBACK:",
+    JSON.stringify({
+      orderId: partnerOrder.id,
+      reason: partnerDispatch?.reason || "unknown",
+    })
+  );
+
+  const findingShopper =
+    await updateOrder(
+      partnerOrder.id,
+      {
+        status: "finding_shopper",
+        delivery_pricing_status: "pending",
+        delivery_pricing_source: null,
+        distance_km: null,
+        delivery_fee: 0,
+        item_total: 0,
+        total_amount: 0,
+        priced_at: null,
+        partner_store_id: null,
+        partner_request_id: null,
+      }
+    );
+
+  const shopperDispatch =
+    await offerOrderToShopper(
+      findingShopper || partnerOrder
+    );
+
+  return {
+    success: Boolean(shopperDispatch?.success),
+    route: "shopper",
+    reason:
+      shopperDispatch?.reason ||
+      partnerDispatch?.reason ||
+      "shopper_fallback",
+    order: findingShopper || partnerOrder,
+    partnerDispatch,
+    shopperDispatch,
+  };
+}
+
+/* =========================================================
    CUSTOMER NOTIFICATION
 ========================================================= */
 
@@ -6181,31 +6289,18 @@ async function handleCustomerMessage({
         return;
       }
 
-      const findingShopper =
-        await updateOrder(
-          newOrder.id,
-          {
-            status: "finding_shopper",
-            delivery_pricing_status: "pending",
-            delivery_pricing_source: null,
-            distance_km: null,
-            delivery_fee: 0,
-            item_total: 0,
-            total_amount: 0,
-            priced_at: null,
-          }
-        );
-
       const dispatch =
-        await offerOrderToShopper(
-          findingShopper || resolvedDeliveryOrder
+        await dispatchOrderThroughATC(
+          resolvedDeliveryOrder
         );
 
       await sendWhatsAppMessage(
         normalizedPhone,
-        dispatch.success
-          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
-          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+        dispatch.route === "partner"
+          ? "Got it 👍\n\nI’m checking the most suitable nearby partner store first. I’ll send you the final price once the item is confirmed."
+          : dispatch.success
+            ? "Got it 👍\n\nThe partner-store route wasn’t available, so I’ve sent your request to a Fetch shopper. I’ll send you the final price once the item is found."
+            : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
       );
 
       return;
@@ -6342,33 +6437,20 @@ async function handleCustomerMessage({
     }
 
     // The customer never needs to choose or price the fulfillment source.
-    // Fetch dispatches the request first; the shopper reports the actual
-    // source and price, then Fetch calculates delivery automatically.
-    const findingShopper =
-      await updateOrder(
-        order.id,
-        {
-          status: "finding_shopper",
-          delivery_pricing_status: "pending",
-          delivery_pricing_source: null,
-          distance_km: null,
-          delivery_fee: 0,
-          item_total: 0,
-          total_amount: 0,
-          priced_at: null,
-        }
-      );
-
+    // ATC sends the request to an eligible partner store first. If no partner
+    // can receive it, the existing shopper engine is the fallback.
     const dispatch =
-      await offerOrderToShopper(
-        findingShopper || resolvedDeliveryOrder
+      await dispatchOrderThroughATC(
+        resolvedDeliveryOrder
       );
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      dispatch.success
-        ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nI’ve sent your request to an available Fetch shopper. I’ll send you the final price once it’s ready.`
-        : `Got it 👍 I have your request for ${items}. I’m looking for an available Fetch shopper now.`
+      dispatch.route === "partner"
+        ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nI’m checking the most suitable nearby partner store first. I’ll send you the final price once the item is confirmed.`
+        : dispatch.success
+          ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nThe partner-store route wasn’t available, so I’ve sent your request to a Fetch shopper. I’ll send you the final price once it’s ready.`
+          : `Got it 👍 I have your request for ${items}. I’m looking for an available Fetch shopper now.`
     );
 
     return;
@@ -7255,31 +7337,18 @@ async function handleCustomerMessage({
       updatedOrder.status === "collecting_details" &&
       String(updatedOrder.items || "").trim()
     ) {
-      const findingShopper =
-        await updateOrder(
-          updatedOrder.id,
-          {
-            status: "finding_shopper",
-            delivery_pricing_status: "pending",
-            delivery_pricing_source: null,
-            distance_km: null,
-            delivery_fee: 0,
-            item_total: 0,
-            total_amount: 0,
-            priced_at: null,
-          }
-        );
-
       const dispatch =
-        await offerOrderToShopper(
-          findingShopper || updatedOrder
+        await dispatchOrderThroughATC(
+          updatedOrder
         );
 
       await sendWhatsAppMessage(
         normalizedPhone,
-        dispatch.success
-          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
-          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+        dispatch.route === "partner"
+          ? "Got it 👍\n\nI’m checking the most suitable nearby partner store first. I’ll send you the final price once the item is confirmed."
+          : dispatch.success
+            ? "Got it 👍\n\nThe partner-store route wasn’t available, so I’ve sent your request to a Fetch shopper. I’ll send you the final price once the item is found."
+            : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
       );
 
       return;
