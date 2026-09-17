@@ -428,6 +428,7 @@ function interactiveChoiceToCommand(choice) {
 
     fetch_payment_received: "RECEIVED",
     fetch_payment_not_received: "NOT RECEIVED",
+    fetch_customer_paid: "PAID",
 
     fetch_shopper_shopping: "SHOPPING",
     fetch_shopper_picked_up: "PICKED UP",
@@ -2721,7 +2722,7 @@ async function claimOrderForShopper(
     await supabaseRequest(
       `orders?id=eq.${encodeURIComponent(
         orderId
-      )}&status=eq.finding_shopper&shopper_id=is.null`,
+      )}&status=in.(finding_shopper,payment_pending)&shopper_id=is.null`,
       {
         method: "PATCH",
 
@@ -6962,61 +6963,24 @@ async function handleCustomerMessage({
         );
       }
 
-      let shopper = null;
+      // Customer approved the total. Only now should ATC dispatch the
+      // confirmed partner-store job to an available shopper.
+      const shopperDispatch =
+        await offerOrderToShopper(approvedOrder);
 
-      if (
-        approvedOrder?.shopper_id
-      ) {
-        const shoppers =
-          await supabaseRequest(
-            `shoppers?id=eq.${encodeURIComponent(
-              approvedOrder.shopper_id
-            )}&select=*&limit=1`
-          );
-
-        shopper =
-          Array.isArray(
-            shoppers
-          ) &&
-          shoppers.length
-            ? shoppers[0]
-            : null;
-      }
-
-      const paymentDestination =
-        normalizePaymentDestination(
-          shopper?.upi_id ||
-          shopper?.phone
-        );
-
-      if (
-        !paymentDestination
-      ) {
+      if (!shopperDispatch?.success) {
         await sendWhatsAppMessage(
           normalizedPhone,
           `Approved 👍\n\n💰 Total: ₹${formatRupees(
             approvedOrder.total_amount
-          )}\n\nI’m waiting for the shopper’s payment details before you pay.`
+          )}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`
         );
-
-        return;
-      }
-
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        `Approved 👍\n\n${buildShopperPaymentMessage(
-          approvedOrder,
-          paymentDestination,
-          shopper?.name
-        )}`
-      );
-
-      if (
-        shopper?.phone
-      ) {
+      } else {
         await sendWhatsAppMessage(
-          shopper.phone,
-          "✅ Customer approved the price.\n\nWait for the customer’s payment. I’ll tell you when the payment is verified."
+          normalizedPhone,
+          `Approved 👍\n\n💰 Total: ₹${formatRupees(
+            approvedOrder.total_amount
+          )}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
         );
       }
 
@@ -10515,10 +10479,84 @@ async function handleShopperMessage({
       acceptanceMessage
     );
 
-    await notifyCustomerForOrder(
-      claimedOrder.id,
-      "✅ A Fetch shopper has accepted your order. They’ll start shopping soon."
-    );
+    // IMPORTANT: claimedOrder is the pre-acceptance snapshot. Do not use its
+    // old status to decide whether payment should be shown. The shopper has
+    // just accepted the job, so payment instructions must be sent now.
+    const paymentDestination =
+      normalizePaymentDestination(
+        shopper?.upi_id || shopper?.phone
+      );
+
+    let customerPaymentPhone =
+      claimedOrder.customer_phone ||
+      claimedOrder.customer_whatsapp ||
+      claimedOrder.customer_phone_number ||
+      null;
+
+    if (!customerPaymentPhone && claimedOrder.customer_id) {
+      const customerRows =
+        await supabaseRequest(
+          `customers?id=eq.${encodeURIComponent(
+            claimedOrder.customer_id
+          )}&select=*&limit=1`
+        );
+
+      const customerRow =
+        Array.isArray(customerRows) && customerRows.length
+          ? customerRows[0]
+          : null;
+
+      customerPaymentPhone =
+        customerRow?.phone ||
+        customerRow?.whatsapp_phone ||
+        customerRow?.whatsapp ||
+        null;
+    }
+
+    if (paymentDestination && customerPaymentPhone) {
+      const paymentMessage =
+        `✅ A Fetch shopper has accepted your order.\n\n${buildShopperPaymentMessage(
+          claimedOrder,
+          paymentDestination,
+          shopper?.name
+        )}`;
+
+      await saveMessage({
+        customerId:
+          claimedOrder.customer_id,
+        orderId:
+          claimedOrder.id,
+        phone:
+          customerPaymentPhone,
+        role:
+          "assistant",
+        message:
+          paymentMessage,
+      });
+
+      await sendWhatsAppButtons(
+        customerPaymentPhone,
+        paymentMessage,
+        [
+          {
+            id: "fetch_customer_paid",
+            title: "I HAVE PAID",
+          },
+        ],
+        { footer: "After payment" }
+      );
+    } else {
+      await notifyCustomerForOrder(
+        claimedOrder.id,
+        paymentDestination
+          ? `✅ A Fetch shopper has accepted your order.\n\n${buildShopperPaymentMessage(
+              claimedOrder,
+              paymentDestination,
+              shopper?.name
+            )}\n\nAfter payment, select I HAVE PAID or reply PAID.`
+          : "✅ A Fetch shopper has accepted your order. I’m waiting for the shopper’s payment details before you pay."
+      );
+    }
 
     return;
   }
@@ -11036,9 +11074,16 @@ async function handleShopperMessage({
       );
     }
 
-    await sendWhatsAppMessage(
+    await sendWhatsAppButtons(
       normalizedPhone,
-      "Payment verified ✅ The customer’s payment is confirmed. You can now purchase the items and continue shopping.\n\nReply SHOPPING when you start shopping."
+      "Payment verified ✅ The customer’s payment is confirmed. You can now collect the confirmed order from the partner store and continue.",
+      [
+        {
+          id: "fetch_shopper_shopping",
+          title: "SHOPPING",
+        },
+      ],
+      { footer: "Select when you start" }
     );
 
     await notifyCustomerForOrder(
@@ -11244,10 +11289,16 @@ async function handleShopperMessage({
       "task_started_event"
     );
 
-    await sendWhatsAppMessage(
+    await sendWhatsAppButtons(
       normalizedPhone,
-
-      "Shopping started 🛒"
+      "Shopping started 🛒\n\nOnce you have collected the order from the partner store, select PICKED UP.",
+      [
+        {
+          id: "fetch_shopper_picked_up",
+          title: "PICKED UP",
+        },
+      ],
+      { footer: "Next step" }
     );
 
     await notifyCustomerForOrder(
@@ -11274,10 +11325,16 @@ async function handleShopperMessage({
       }
     );
 
-    await sendWhatsAppMessage(
+    await sendWhatsAppButtons(
       normalizedPhone,
-
-      "Items picked up ✅\n\nReply OUT FOR DELIVERY when you’re on the way."
+      "Items picked up ✅\n\nSelect OUT FOR DELIVERY when you’re on the way to the customer.",
+      [
+        {
+          id: "fetch_shopper_out_for_delivery",
+          title: "OUT FOR DELIVERY",
+        },
+      ],
+      { footer: "Next step" }
     );
 
     await notifyCustomerForOrder(
@@ -11303,10 +11360,16 @@ async function handleShopperMessage({
       }
     );
 
-    await sendWhatsAppMessage(
+    await sendWhatsAppButtons(
       normalizedPhone,
-
-      "Out for delivery 🚴"
+      "Out for delivery 🚴\n\nSelect DELIVERED once the customer has received the order.",
+      [
+        {
+          id: "fetch_shopper_delivered",
+          title: "DELIVERED",
+        },
+      ],
+      { footer: "Final step" }
     );
 
     await notifyCustomerForOrder(
@@ -11901,7 +11964,7 @@ export default async function handler(
                 partnerOrder.id,
                 {
                   item_total: quotedPrice,
-                  status: "finding_shopper",
+                  status: "awaiting_customer_price_confirmation",
                   delivery_pricing_status: "calculated",
                   delivery_pricing_source: "partner_store_osrm_mvp",
                   distance_km: distanceKm,
@@ -11926,11 +11989,12 @@ export default async function handler(
               );
 
             if (updated) {
+              // IMPORTANT: do not dispatch the shopper until the customer
+              // approves the final product + delivery total.
               await notifyCustomerForOrder(
                 updated.id,
                 buildCustomerPriceApprovalMessage(updated)
               );
-              await offerOrderToShopper(updated);
             }
           }
         }
