@@ -5819,6 +5819,90 @@ function isCustomerOrderDetailsQuestion(text) {
 }
 
 /* =========================================================
+   DETERMINISTIC CUSTOMER PAYMENT CONFIRMATION
+
+   IMPORTANT: Interactive payment buttons must be handled before
+   the AI intent classifier. Otherwise "PAID" / "I HAVE PAID" can
+   be misclassified as a generic order confirmation.
+========================================================= */
+
+async function handleCustomerReportedPaid({
+  normalizedPhone,
+  customer,
+  activeOrder,
+  userMessage,
+}) {
+  if (!activeOrder || activeOrder.status !== "payment_pending") {
+    return false;
+  }
+
+  if (!isCustomerPaidMessage(userMessage)) {
+    return false;
+  }
+
+  if (activeOrder.payment_status === "paid") {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Payment is already verified ✅ Your shopper can continue with the order."
+    );
+    return true;
+  }
+
+  const reported = await updateOrder(
+    activeOrder.id,
+    {
+      payment_status: "customer_reported_paid",
+    }
+  );
+
+  if (!reported) {
+    throw new Error("Could not record customer payment report");
+  }
+
+  await saveMessage({
+    customerId: customer.id,
+    orderId: activeOrder.id,
+    phone: normalizedPhone,
+    role: "user",
+    message: userMessage,
+  });
+
+  if (activeOrder.shopper_id) {
+    const shopperRows = await supabaseRequest(
+      `shoppers?id=eq.${encodeURIComponent(
+        activeOrder.shopper_id
+      )}&select=*&limit=1`
+    );
+
+    const shopper =
+      Array.isArray(shopperRows) && shopperRows.length
+        ? shopperRows[0]
+        : null;
+
+    if (shopper?.phone) {
+      await sendWhatsAppButtons(
+        shopper.phone,
+        `💳 The customer says they have paid ₹${formatRupees(
+          activeOrder.total_amount
+        )} directly to you.\n\nPlease check your UPI account. Select RECEIVED only after the money is actually visible.`,
+        [
+          { id: "fetch_payment_received", title: "RECEIVED" },
+          { id: "fetch_payment_not_received", title: "NOT RECEIVED" },
+        ],
+        { footer: "Verify your UPI account first" }
+      );
+    }
+  }
+
+  await sendWhatsAppMessage(
+    normalizedPhone,
+    "Thanks 👍 I’ve told the shopper to verify the payment. The order will continue only after the shopper confirms RECEIVED."
+  );
+
+  return true;
+}
+
+/* =========================================================
    CUSTOMER ENGINE
 ========================================================= */
 
@@ -5844,6 +5928,24 @@ async function handleCustomerMessage({
     await getLatestOrder(
       customer.id
     );
+
+  // Handle the customer's payment button BEFORE any AI intent
+  // classification. This guarantees "I HAVE PAID" -> PAID is
+  // processed against payment_pending rather than being treated
+  // as a generic YES/confirmation.
+  if (
+    activeOrder &&
+    activeOrder.status === "payment_pending" &&
+    isCustomerPaidMessage(userMessage)
+  ) {
+    await handleCustomerReportedPaid({
+      normalizedPhone,
+      customer,
+      activeOrder,
+      userMessage,
+    });
+    return;
+  }
 
   const history =
     await getRecentMessages(
