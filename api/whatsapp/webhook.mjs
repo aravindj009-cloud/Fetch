@@ -2522,31 +2522,120 @@ async function offerOrderToShopper(
             )}\n`
           : "";
 
+      const partnerStoreId =
+        order.partner_store_id || null;
+
+      let partnerStore = null;
+
+      if (partnerStoreId) {
+        const partnerRows =
+          await supabaseRequest(
+            `partner_stores?id=eq.${encodeURIComponent(
+              partnerStoreId
+            )}&select=*&limit=1`
+          );
+
+        partnerStore =
+          Array.isArray(partnerRows) &&
+          partnerRows.length
+            ? partnerRows[0]
+            : null;
+      }
+
+      const partnerLat =
+        Number(partnerStore?.latitude);
+      const partnerLon =
+        Number(partnerStore?.longitude);
+
+      const hasPartnerCoordinates =
+        Number.isFinite(partnerLat) &&
+        Number.isFinite(partnerLon);
+
+      const storeMapLine =
+        hasPartnerCoordinates
+          ? `🗺️ Store location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+              `${partnerLat},${partnerLon}`
+            )}\n`
+          : "";
+
+      const customerMapLine =
+        hasCustomerCoordinates
+          ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+              `${Number(order.customer_latitude)},${Number(order.customer_longitude)}`
+            )}\n`
+          : locationPinLine;
+
+      const productPriceLine =
+        partnerStoreId && Number(order.item_total || 0) > 0
+          ? `🛒 Product price: ₹${formatRupees(order.item_total)}\n`
+          : "";
+
+      const deliveryFeeLine =
+        partnerStoreId &&
+        Number(order.delivery_fee || 0) >= 0 &&
+        order.delivery_pricing_status === "calculated"
+          ? `🚚 Delivery fee: ₹${formatRupees(order.delivery_fee)}${order.distance_km != null ? ` (${Number(order.distance_km).toFixed(2)} km)` : ""}\n`
+          : "";
+
       const storeInstruction =
-        isFlexibleStore
-          ? "🏪 Store: Any suitable nearby/local store\n"
-          : `🏪 Store: ${storeName}\n`;
+        partnerStoreId && partnerStore
+          ? `🏪 *Collect from: ${partnerStore.business_name || storeName || "Partner Store"}*\n` +
+            storeMapLine
+          : isFlexibleStore
+            ? "🏪 Store: Any suitable nearby/local store\n"
+            : `🏪 Store: ${storeName}\n`;
 
       const shopperInstruction =
-        isFlexibleStore
-          ? "Please find the requested item at a suitable nearby source and report the product price. Fetch will calculate the delivery charge after the actual source is known."
-          : "Please check the requested item at the requested store and report the product price. Fetch will calculate the delivery charge after the actual source location is known.";
+        partnerStoreId && partnerStore
+          ? "Please collect the order from the partner store shown above, then deliver it to the customer location shown below. You do not need to enter the product price or delivery fee."
+          : isFlexibleStore
+            ? "Please find the requested item at a suitable nearby source and report the product price. Fetch will calculate the delivery charge after the actual source is known."
+            : "Please check the requested item at the requested store and report the product price. Fetch will calculate the delivery charge after the actual source location is known.";
 
       const message =
         `🛍️ *New Fetch Job*\n\n` +
         storeInstruction +
         `🛒 Items: ${order.items}\n` +
-        destinationLine +
-        locationPinLine +
+        productPriceLine +
+        deliveryFeeLine +
+        `\n${destinationLine}` +
+        customerMapLine +
         `\n${shopperInstruction}\n\n` +
-        `Reply *ACCEPT* to take this job.\n` +
-        `Reply *DECLINE* to skip it.\n\n` +
-        `⚡ The first shopper to ACCEPT gets this order.`;
+        `Choose an option below.`;
 
-      await sendWhatsAppMessage(
-        shopper.phone,
-        message
-      );
+      if (partnerStoreId && partnerStore) {
+        await sendWhatsAppButtons(
+          shopper.phone,
+          message,
+          [
+            {
+              id: "fetch_shopper_accept",
+              title: "ACCEPT",
+            },
+            {
+              id: "fetch_shopper_decline",
+              title: "DECLINE",
+            },
+          ],
+          { footer: "First shopper to accept gets the order" }
+        );
+      } else {
+        await sendWhatsAppButtons(
+          shopper.phone,
+          message,
+          [
+            {
+              id: "fetch_shopper_accept",
+              title: "ACCEPT",
+            },
+            {
+              id: "fetch_shopper_decline",
+              title: "DECLINE",
+            },
+          ],
+          { footer: "Choose an option" }
+        );
+      }
 
       offeredCount += 1;
 
@@ -2944,114 +3033,6 @@ async function applyApprovedSubstitution(
         updatedItems,
     }
   );
-}
-
-/* =========================================================
-   ATC FULFILLMENT DISPATCH
-
-   Customer order flow: partner store first, shopper second.
-   The partner store is a procurement resource. If no eligible
-   partner can receive the request, the existing shopper engine
-   becomes the fallback execution resource.
-========================================================= */
-async function dispatchOrderThroughATC(order) {
-  if (!order?.id) {
-    return {
-      success: false,
-      route: "none",
-      reason: "missing_order",
-      order: null,
-      partnerDispatch: null,
-      shopperDispatch: null,
-    };
-  }
-
-  const findingPartner =
-    await updateOrder(order.id, {
-      status: "finding_partner",
-      delivery_pricing_status: "pending",
-      delivery_pricing_source: null,
-      distance_km: null,
-      delivery_fee: 0,
-      item_total: 0,
-      total_amount: 0,
-      priced_at: null,
-      partner_store_id: null,
-      partner_request_id: null,
-    });
-
-  const partnerOrder =
-    findingPartner || order;
-
-  const partnerDispatch =
-    await dispatchOrderToPartnerStore({
-      order: partnerOrder,
-    });
-
-  if (partnerDispatch?.success) {
-    const partnerOfferedOrder =
-      await updateOrder(
-        partnerOrder.id,
-        {
-          status: "partner_offered",
-          partner_store_id:
-            partnerDispatch.partnerStore?.id || null,
-          partner_request_id:
-            partnerDispatch.request?.id || null,
-        }
-      );
-
-    return {
-      success: true,
-      route: "partner",
-      reason: "partner_offered",
-      order: partnerOfferedOrder || partnerOrder,
-      partnerDispatch,
-      shopperDispatch: null,
-    };
-  }
-
-  console.warn(
-    "FETCH ATC PARTNER DISPATCH FALLBACK:",
-    JSON.stringify({
-      orderId: partnerOrder.id,
-      reason: partnerDispatch?.reason || "unknown",
-    })
-  );
-
-  const findingShopper =
-    await updateOrder(
-      partnerOrder.id,
-      {
-        status: "finding_shopper",
-        delivery_pricing_status: "pending",
-        delivery_pricing_source: null,
-        distance_km: null,
-        delivery_fee: 0,
-        item_total: 0,
-        total_amount: 0,
-        priced_at: null,
-        partner_store_id: null,
-        partner_request_id: null,
-      }
-    );
-
-  const shopperDispatch =
-    await offerOrderToShopper(
-      findingShopper || partnerOrder
-    );
-
-  return {
-    success: Boolean(shopperDispatch?.success),
-    route: "shopper",
-    reason:
-      shopperDispatch?.reason ||
-      partnerDispatch?.reason ||
-      "shopper_fallback",
-    order: findingShopper || partnerOrder,
-    partnerDispatch,
-    shopperDispatch,
-  };
 }
 
 /* =========================================================
@@ -6289,18 +6270,31 @@ async function handleCustomerMessage({
         return;
       }
 
+      const findingShopper =
+        await updateOrder(
+          newOrder.id,
+          {
+            status: "finding_shopper",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
+          }
+        );
+
       const dispatch =
-        await dispatchOrderThroughATC(
-          resolvedDeliveryOrder
+        await offerOrderToShopper(
+          findingShopper || resolvedDeliveryOrder
         );
 
       await sendWhatsAppMessage(
         normalizedPhone,
-        dispatch.route === "partner"
-          ? "Got it 👍\n\nI’m checking the most suitable nearby partner store first. I’ll send you the final price once the item is confirmed."
-          : dispatch.success
-            ? "Got it 👍\n\nThe partner-store route wasn’t available, so I’ve sent your request to a Fetch shopper. I’ll send you the final price once the item is found."
-            : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+        dispatch.success
+          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
+          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
       );
 
       return;
@@ -6437,20 +6431,33 @@ async function handleCustomerMessage({
     }
 
     // The customer never needs to choose or price the fulfillment source.
-    // ATC sends the request to an eligible partner store first. If no partner
-    // can receive it, the existing shopper engine is the fallback.
+    // Fetch dispatches the request first; the shopper reports the actual
+    // source and price, then Fetch calculates delivery automatically.
+    const findingShopper =
+      await updateOrder(
+        order.id,
+        {
+          status: "finding_shopper",
+          delivery_pricing_status: "pending",
+          delivery_pricing_source: null,
+          distance_km: null,
+          delivery_fee: 0,
+          item_total: 0,
+          total_amount: 0,
+          priced_at: null,
+        }
+      );
+
     const dispatch =
-      await dispatchOrderThroughATC(
-        resolvedDeliveryOrder
+      await offerOrderToShopper(
+        findingShopper || resolvedDeliveryOrder
       );
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      dispatch.route === "partner"
-        ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nI’m checking the most suitable nearby partner store first. I’ll send you the final price once the item is confirmed.`
-        : dispatch.success
-          ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nThe partner-store route wasn’t available, so I’ve sent your request to a Fetch shopper. I’ll send you the final price once it’s ready.`
-          : `Got it 👍 I have your request for ${items}. I’m looking for an available Fetch shopper now.`
+      dispatch.success
+        ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nI’ve sent your request to an available Fetch shopper. I’ll send you the final price once it’s ready.`
+        : `Got it 👍 I have your request for ${items}. I’m looking for an available Fetch shopper now.`
     );
 
     return;
@@ -7337,18 +7344,31 @@ async function handleCustomerMessage({
       updatedOrder.status === "collecting_details" &&
       String(updatedOrder.items || "").trim()
     ) {
+      const findingShopper =
+        await updateOrder(
+          updatedOrder.id,
+          {
+            status: "finding_shopper",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
+          }
+        );
+
       const dispatch =
-        await dispatchOrderThroughATC(
-          updatedOrder
+        await offerOrderToShopper(
+          findingShopper || updatedOrder
         );
 
       await sendWhatsAppMessage(
         normalizedPhone,
-        dispatch.route === "partner"
-          ? "Got it 👍\n\nI’m checking the most suitable nearby partner store first. I’ll send you the final price once the item is confirmed."
-          : dispatch.success
-            ? "Got it 👍\n\nThe partner-store route wasn’t available, so I’ve sent your request to a Fetch shopper. I’ll send you the final price once the item is found."
-            : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+        dispatch.success
+          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
+          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
       );
 
       return;
@@ -10330,8 +10350,69 @@ async function handleShopperMessage({
       shopper.id
     );
 
-    const acceptanceMessage =
-      "Accepted ✅\n\nYou Fetched this order first.\n\nFind the requested item at the most suitable source. Then send:\nPRICE: [product total]\n\nAfter that, share the source/store’s WhatsApp location 📍\n\nFetch will calculate the delivery charge automatically.";
+    let acceptanceMessage;
+
+    if (claimedOrder.partner_store_id) {
+      const partnerRows =
+        await supabaseRequest(
+          `partner_stores?id=eq.${encodeURIComponent(
+            claimedOrder.partner_store_id
+          )}&select=*&limit=1`
+        );
+
+      const partnerStore =
+        Array.isArray(partnerRows) &&
+        partnerRows.length
+          ? partnerRows[0]
+          : null;
+
+      const storeName =
+        partnerStore?.business_name ||
+        claimedOrder.store_name ||
+        "Partner Store";
+
+      const storeLat =
+        Number(partnerStore?.latitude);
+      const storeLon =
+        Number(partnerStore?.longitude);
+
+      const storeMap =
+        Number.isFinite(storeLat) &&
+        Number.isFinite(storeLon)
+          ? `🗺️ Store map: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${storeLat},${storeLon}`)}\n`
+          : "";
+
+      const customerMap =
+        Number.isFinite(Number(claimedOrder.customer_latitude)) &&
+        Number.isFinite(Number(claimedOrder.customer_longitude))
+          ? `🗺️ Customer map: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${Number(claimedOrder.customer_latitude)},${Number(claimedOrder.customer_longitude)}`)}\n`
+          : "";
+
+      const distanceLine =
+        claimedOrder.distance_km != null
+          ? `📏 Distance: ${Number(claimedOrder.distance_km).toFixed(2)} km\n`
+          : "";
+
+      const feeLine =
+        claimedOrder.delivery_fee != null
+          ? `🚚 Your delivery fee: ₹${formatRupees(claimedOrder.delivery_fee)}\n`
+          : "";
+
+      acceptanceMessage =
+        `Accepted ✅\n\n` +
+        `📦 *Collect the order from:* ${storeName}\n` +
+        storeMap +
+        `🛒 Items: ${claimedOrder.items}\n` +
+        `💰 Product price: ₹${formatRupees(claimedOrder.item_total)}\n` +
+        distanceLine +
+        feeLine +
+        `\n📍 *Deliver to customer:* ${claimedOrder.delivery_address || "Customer location"}\n` +
+        customerMap +
+        `\nNo price entry is required. Fetch has already received the product price from the partner store and calculated your delivery fee from the road distance.`;
+    } else {
+      acceptanceMessage =
+        "Accepted ✅\n\nYou Fetched this order first.\n\nFind the requested item at the most suitable source. Then send the product price and share the source/store location. Fetch will calculate the delivery charge automatically.";
+    }
 
     await sendWhatsAppMessage(
       normalizedPhone,
@@ -11657,29 +11738,102 @@ export default async function handler(
             Number.isFinite(quotedPrice) &&
             quotedPrice > 0
           ) {
+            const selectedPartnerStore =
+              partnerResult.partnerStore ||
+              partnerStore ||
+              null;
+
+            const customerLatitude =
+              Number(partnerOrder.customer_latitude);
+            const customerLongitude =
+              Number(partnerOrder.customer_longitude);
+            const storeLatitude =
+              Number(selectedPartnerStore?.latitude);
+            const storeLongitude =
+              Number(selectedPartnerStore?.longitude);
+
+            const hasCustomerCoordinates =
+              Number.isFinite(customerLatitude) &&
+              Number.isFinite(customerLongitude);
+            const hasStoreCoordinates =
+              Number.isFinite(storeLatitude) &&
+              Number.isFinite(storeLongitude);
+
+            if (!hasCustomerCoordinates || !hasStoreCoordinates) {
+              console.error(
+                "FETCH PARTNER PRICING MISSING COORDINATES:",
+                JSON.stringify({
+                  orderId: partnerOrder.id,
+                  customerLatitude,
+                  customerLongitude,
+                  storeLatitude,
+                  storeLongitude,
+                })
+              );
+
+              await sendWhatsAppMessage(
+                partnerStore.whatsapp_phone,
+                "The item price was received, but Fetch could not calculate the road distance to the customer. Please verify the store/customer location data before the shopper is dispatched."
+              );
+
+              return res.status(200).json({
+                success: true,
+                partner_store: true,
+                action: "awaiting_location_data",
+              });
+            }
+
+            const distanceKm =
+              await calculateRoadDistanceKmBetweenCoordinates(
+                storeLatitude,
+                storeLongitude,
+                customerLatitude,
+                customerLongitude
+              );
+
+            if (!Number.isFinite(distanceKm) || distanceKm > 100) {
+              throw new Error(
+                `PARTNER_STORE_DISTANCE_UNTRUSTED: ${distanceKm} km`
+              );
+            }
+
+            const deliveryFee =
+              calculateDeliveryFee(distanceKm);
+
             const updated =
               await updateOrder(
                 partnerOrder.id,
                 {
                   item_total: quotedPrice,
                   status: "finding_shopper",
-                  delivery_pricing_status: "pending",
-                  delivery_pricing_source: null,
-                  delivery_fee: 0,
+                  delivery_pricing_status: "calculated",
+                  delivery_pricing_source: "partner_store_osrm_mvp",
+                  distance_km: distanceKm,
+                  delivery_fee: deliveryFee,
+                  delivery_rate_per_km: DELIVERY_RATE_PER_KM,
+                  fetch_fee: FETCH_FEE,
                   total_amount:
-                    quotedPrice + FETCH_FEE,
+                    quotedPrice + deliveryFee + FETCH_FEE,
                   partner_store_id:
-                    partnerResult.partnerStore?.id ||
+                    selectedPartnerStore?.id ||
                     partnerOrder.partner_store_id ||
                     null,
                   partner_request_id:
                     partnerResult.request?.id ||
                     partnerOrder.partner_request_id ||
                     null,
+                  store_name:
+                    selectedPartnerStore?.business_name ||
+                    partnerOrder.store_name ||
+                    null,
                 }
               );
 
             if (updated) {
+              await notifyCustomerForOrder(
+                updated.id,
+                buildCustomerPriceApprovalMessage(updated)
+              );
               await offerOrderToShopper(updated);
             }
           }
