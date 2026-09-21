@@ -41,6 +41,8 @@ const ACTIVE_ORDER_STATUSES = [
   "awaiting_confirmation",
   "awaiting_customer_price_confirmation",
   "payment_pending",
+  "finding_partner",
+  "partner_offered",
   "finding_shopper",
   "shopper_assigned",
   "shopping",
@@ -81,29 +83,15 @@ import {
   atcUpdateAssignmentStatus,
   atcRecordEvent,
   atcSelectResourceForOrder,
+  atcSelectPartnerStoreForOrder,
   atcUpdateShopperLocation,
 } from "../../lib/atc.mjs";
 
 import {
   handlePartnerStoreMessage,
-  dispatchOrderToPartnerStore,
+  offerOrderToPartnerStore,
   getPartnerStoreByPhone,
 } from "../../lib/partner-store.mjs";
-
-/* =========================================================
-   FETCH V9 WORKFLOW LAYER
-
-   V9 is intentionally added as a fail-safe orchestration layer.
-   It creates the durable workflow/context record for customer
-   requests while the proven WhatsApp order execution path remains
-   responsible for the live MVP transaction.
-
-   This avoids replacing working procurement, pricing, payment,
-   shopper and delivery logic in one step.
-========================================================= */
-import {
-  processFetchV9Request,
-} from "../../lib/fetch-v9.mjs";
 
 function sleep(ms) {
   return new Promise((resolve) =>
@@ -119,6 +107,70 @@ function normalizePhone(phone) {
   return phone
     ? String(phone).replace(/[^\d]/g, "")
     : "";
+}
+
+/* =========================================================
+   ATC PARTNER-STORE DISPATCH
+
+   The WhatsApp execution path must use the same ATC selector
+   as the V9/ATC architecture. The old partner-store module
+   dispatcher selected the nearest resource directly and could
+   bypass ATC/catalog matching.
+========================================================= */
+async function dispatchOrderToPartnerStore({
+  order,
+  excludedPartnerStoreIds = [],
+}) {
+  if (!order?.id) {
+    return {
+      success: false,
+      reason: "missing_order",
+    };
+  }
+
+  const match = await atcSelectPartnerStoreForOrder({
+    order,
+    excludedPartnerStoreIds,
+  });
+
+  if (!match?.partnerStoreId) {
+    return {
+      success: false,
+      reason: "no_atc_partner_store_available",
+      match: null,
+    };
+  }
+
+  const storeRows = await supabaseRequest(
+    `partner_stores?id=eq.${encodeURIComponent(
+      match.partnerStoreId
+    )}&select=*&limit=1`
+  );
+
+  const partnerStore =
+    Array.isArray(storeRows) && storeRows.length
+      ? storeRows[0]
+      : null;
+
+  if (!partnerStore) {
+    return {
+      success: false,
+      reason: "partner_store_not_found",
+      match,
+    };
+  }
+
+  const offer = await offerOrderToPartnerStore({
+    order,
+    partnerStore,
+    distanceKm: match.distanceKm,
+    resourceId: match.resourceId,
+  });
+
+  return {
+    ...offer,
+    match,
+  };
 }
 
 async function supabaseRequest(path, options = {}) {
@@ -1675,6 +1727,12 @@ function formatOrderHistoryStatus(
     case "collecting_details":
       return "collecting details";
 
+    case "finding_partner":
+      return "finding partner store";
+
+    case "partner_offered":
+      return "waiting for partner store";
+
     case "finding_shopper":
       return "finding shopper";
 
@@ -2850,6 +2908,12 @@ function getOrderStatusText(
 
     case "awaiting_customer_price_confirmation":
       return "Your shopper has checked the product price and your order is waiting for your approval.";
+
+    case "finding_partner":
+      return "I’m checking the most suitable nearby partner store for your order.";
+
+    case "partner_offered":
+      return "I’ve sent your request to the selected partner store and I’m waiting for them to confirm availability and price.";
 
     case "finding_shopper":
       return "I’m finding a Fetch shopper for your order right now.";
@@ -4600,6 +4664,12 @@ function buildHumanEtaReply(order) {
   }
 
   switch (order.status) {
+    case "finding_partner":
+      return "I’m checking the most suitable nearby partner store for your order.";
+
+    case "partner_offered":
+      return "I’ve sent the request to the selected partner store and I’m waiting for them to confirm availability and price.";
+
     case "finding_shopper":
       return "I’m still finding a shopper for your order. I’ll update you as soon as someone accepts it.";
 
@@ -6268,61 +6338,6 @@ async function handleCustomerMessage({
     );
 
     return;
-  }
-
-
-  /*
-    -------------------------------------------------------
-    V9 WORKFLOW CREATION
-    -------------------------------------------------------
-    Run V9 only after deterministic payment/rating/conversation
-    gates are resolved. V9 failures must never break WhatsApp.
-  */
-  try {
-    const v9Result =
-      await processFetchV9Request({
-        text: userMessage,
-        customerId: customer.id,
-        conversationId: `whatsapp:${normalizedPhone}`,
-        channel: "whatsapp",
-        activeTaskId: activeOrder?.id || null,
-        suppliedContext: {
-          active_order: activeOrder
-            ? {
-                id: activeOrder.id || null,
-                status: activeOrder.status || null,
-                items: activeOrder.items || null,
-                store_name: activeOrder.store_name || null,
-                delivery_address:
-                  activeOrder.delivery_address || null,
-              }
-            : null,
-          latest_order: latestOrder
-            ? {
-                id: latestOrder.id || null,
-                status: latestOrder.status || null,
-              }
-            : null,
-        },
-      });
-
-    console.log(
-      "FETCH V9 WORKFLOW CREATED:",
-      JSON.stringify({
-        workflowId: v9Result?.workflow_id || null,
-        status: v9Result?.workflow_status || null,
-        segments: v9Result?.segments || [],
-        atcRequestCount:
-          Array.isArray(v9Result?.atc_requests)
-            ? v9Result.atc_requests.length
-            : 0,
-      })
-    );
-  } catch (error) {
-    console.error(
-      "FETCH V9 SHADOW ERROR (non-blocking):",
-      error?.message || String(error)
-    );
   }
 
 
