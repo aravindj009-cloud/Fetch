@@ -39,6 +39,8 @@ console.log(
 const ACTIVE_ORDER_STATUSES = [
   "collecting_details",
   "awaiting_confirmation",
+  "finding_partner",
+  "partner_offered",
   "awaiting_customer_price_confirmation",
   "payment_pending",
   "finding_shopper",
@@ -81,12 +83,13 @@ import {
   atcUpdateAssignmentStatus,
   atcRecordEvent,
   atcSelectResourceForOrder,
+  atcSelectPartnerStoreForOrder,
   atcUpdateShopperLocation,
 } from "../../lib/atc.mjs";
 
 import {
   handlePartnerStoreMessage,
-  dispatchOrderToPartnerStore,
+  offerOrderToPartnerStore,
   getPartnerStoreByPhone,
 } from "../../lib/partner-store.mjs";
 
@@ -1659,6 +1662,12 @@ function formatOrderHistoryStatus(
   switch (status) {
     case "collecting_details":
       return "collecting details";
+
+    case "finding_partner":
+      return "finding partner store";
+
+    case "partner_offered":
+      return "waiting for partner store";
 
     case "finding_shopper":
       return "finding shopper";
@@ -5902,6 +5911,205 @@ async function handleCustomerReportedPaid({
   return true;
 }
 
+
+/* =========================================================
+   ATC FULFILLMENT ROUTER V2
+   Customer -> Fetch Agent -> ATC -> Partner Store OR Human Shopper
+
+   Partner-store selection is made by ATC using the current
+   partner-store resource state + catalog matches. The existing
+   partner-store module is used only to create/send the selected
+   procurement request and process the store's response.
+
+   If ATC cannot find an eligible partner-store resource, the
+   existing human-shopper execution path is used as fallback.
+========================================================= */
+
+async function routeOrderThroughAtc(
+  order,
+  {
+    excludedPartnerStoreIds = [],
+    excludedShopperIds = [],
+    preferredShopperId = null,
+    allowPartner = true,
+  } = {}
+) {
+  if (!order?.id) {
+    return {
+      success: false,
+      mode: "none",
+      reason: "missing_order",
+    };
+  }
+
+  /*
+    If ATC has already selected a partner store for this order,
+    do not run partner discovery again. The shopper must collect
+    from the selected partner store.
+  */
+  const existingPartnerStoreId =
+    order.partner_store_id || null;
+
+  if (allowPartner && !existingPartnerStoreId) {
+    try {
+      const partnerMatch = await atcSafe(
+        () =>
+          atcSelectPartnerStoreForOrder({
+            order,
+            excludedPartnerStoreIds,
+          }),
+        "partner_store_matching"
+      );
+
+      if (partnerMatch?.partnerStoreId) {
+        const partnerRows = await supabaseRequest(
+          `partner_stores?id=eq.${encodeURIComponent(
+            partnerMatch.partnerStoreId
+          )}&select=*&limit=1`
+        );
+
+        const partnerStore =
+          Array.isArray(partnerRows) && partnerRows.length
+            ? partnerRows[0]
+            : null;
+
+        if (partnerStore) {
+          const partnerOffer =
+            await offerOrderToPartnerStore({
+              order,
+              partnerStore,
+              distanceKm:
+                partnerMatch.distanceKm ?? null,
+              resourceId:
+                partnerMatch.resourceId || null,
+            });
+
+          if (partnerOffer?.success) {
+            const updated =
+              await updateOrder(
+                order.id,
+                {
+                  status: "partner_offered",
+                  partner_store_id:
+                    partnerStore.id,
+                  partner_request_id:
+                    partnerOffer.request?.id || null,
+                  store_name:
+                    partnerStore.business_name ||
+                    order.store_name ||
+                    null,
+                }
+              );
+
+            await atcSafe(
+              () =>
+                atcRecordEvent({
+                  orderId: order.id,
+                  eventType: "partner_store_offer_sent",
+                  actorType: "atc",
+                  actorId:
+                    partnerMatch.resourceId || null,
+                  metadata: {
+                    partner_store_id:
+                      partnerStore.id,
+                    partner_request_id:
+                      partnerOffer.request?.id || null,
+                    distance_km:
+                      partnerMatch.distanceKm ?? null,
+                    requested_item_terms:
+                      partnerMatch.requestedItemTerms || [],
+                    catalog_matches:
+                      partnerMatch.catalogMatches || [],
+                  },
+                }),
+              "partner_store_offer_event"
+            );
+
+            return {
+              success: true,
+              mode: "partner_store",
+              reason: "partner_store_offered",
+              order:
+                updated || {
+                  ...order,
+                  status: "partner_offered",
+                  partner_store_id: partnerStore.id,
+                  partner_request_id:
+                    partnerOffer.request?.id || null,
+                  store_name:
+                    partnerStore.business_name ||
+                    order.store_name ||
+                    null,
+                },
+              partnerStore,
+              request:
+                partnerOffer.request || null,
+              distanceKm:
+                partnerMatch.distanceKm ?? null,
+            };
+          }
+
+          console.warn(
+            "FETCH ATC PARTNER OFFER FAILED:",
+            JSON.stringify({
+              orderId: order.id,
+              partnerStoreId: partnerStore.id,
+              reason:
+                partnerOffer?.reason || null,
+            })
+          );
+        }
+      }
+    } catch (error) {
+      /*
+        ATC is an orchestration layer. A partner-store matching
+        failure must never break the existing human-shopper MVP.
+      */
+      console.error(
+        "FETCH ATC PARTNER ROUTING ERROR:",
+        error
+      );
+    }
+  }
+
+  /*
+    Existing partner store already selected:
+    skip partner discovery and route the execution job to a shopper.
+  */
+  const shopperOrder =
+    existingPartnerStoreId
+      ? await updateOrder(
+          order.id,
+          {
+            status: "finding_shopper",
+          }
+        )
+      : await updateOrder(
+          order.id,
+          {
+            status: "finding_shopper",
+          }
+        );
+
+  const dispatch =
+    await offerOrderToShopper(
+      shopperOrder || order,
+      excludedShopperIds,
+      preferredShopperId
+    );
+
+  return {
+    success: Boolean(dispatch?.success),
+    mode: "human_shopper",
+    reason:
+      dispatch?.reason ||
+      "shopper_fallback",
+    order:
+      shopperOrder || order,
+    dispatch,
+  };
+}
+
 /* =========================================================
    CUSTOMER ENGINE
 ========================================================= */
@@ -6373,11 +6581,11 @@ async function handleCustomerMessage({
         return;
       }
 
-      const findingShopper =
+      const findingFulfillment =
         await updateOrder(
           newOrder.id,
           {
-            status: "finding_shopper",
+            status: "finding_partner",
             delivery_pricing_status: "pending",
             delivery_pricing_source: null,
             distance_km: null,
@@ -6385,19 +6593,23 @@ async function handleCustomerMessage({
             item_total: 0,
             total_amount: 0,
             priced_at: null,
+            partner_store_id: null,
+            partner_request_id: null,
           }
         );
 
-      const dispatch =
-        await offerOrderToShopper(
-          findingShopper || resolvedDeliveryOrder
+      const routing =
+        await routeOrderThroughAtc(
+          findingFulfillment || resolvedDeliveryOrder
         );
 
       await sendWhatsAppMessage(
         normalizedPhone,
-        dispatch.success
-          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
-          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+        routing.mode === "partner_store"
+          ? "Got it 👍\n\nI’m checking the most suitable nearby partner store first. Once the item and price are confirmed, I’ll calculate the delivery fee and send the job to a Fetch shopper."
+          : routing.success
+            ? "Got it 👍\n\nNo suitable partner store was available, so I’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
+            : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
       );
 
       return;
@@ -6536,11 +6748,11 @@ async function handleCustomerMessage({
     // The customer never needs to choose or price the fulfillment source.
     // Fetch dispatches the request first; the shopper reports the actual
     // source and price, then Fetch calculates delivery automatically.
-    const findingShopper =
+    const findingFulfillment =
       await updateOrder(
         order.id,
         {
-          status: "finding_shopper",
+          status: "finding_partner",
           delivery_pricing_status: "pending",
           delivery_pricing_source: null,
           distance_km: null,
@@ -6548,19 +6760,23 @@ async function handleCustomerMessage({
           item_total: 0,
           total_amount: 0,
           priced_at: null,
+          partner_store_id: null,
+          partner_request_id: null,
         }
       );
 
-    const dispatch =
-      await offerOrderToShopper(
-        findingShopper || resolvedDeliveryOrder
+    const routing =
+      await routeOrderThroughAtc(
+        findingFulfillment || resolvedDeliveryOrder
       );
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      dispatch.success
-        ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nI’ve sent your request to an available Fetch shopper. I’ll send you the final price once it’s ready.`
-        : `Got it 👍 I have your request for ${items}. I’m looking for an available Fetch shopper now.`
+      routing.mode === "partner_store"
+        ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nI’m checking the most suitable nearby partner store first. Once the item and price are confirmed, I’ll send the job to a Fetch shopper.`
+        : routing.success
+          ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nNo suitable partner store was available, so I’ve sent your request to an available Fetch shopper. I’ll send you the final price once it’s ready.`
+          : `Got it 👍 I have your request for ${items}. I’m looking for an available Fetch shopper now.`
     );
 
     return;
@@ -7438,44 +7654,29 @@ async function handleCustomerMessage({
       const orderForDispatch =
         findingPartner || updatedOrder;
 
-      let partnerDispatch = null;
-
-      try {
-        partnerDispatch =
-          await dispatchOrderToPartnerStore({
-            order: orderForDispatch,
-          });
-      } catch (error) {
-        console.error(
-          "FETCH ATC PARTNER DISPATCH ERROR:",
-          error
+      const findingFulfillment =
+        await updateOrder(
+          orderForDispatch.id,
+          {
+            status: "finding_partner",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
+            partner_store_id: null,
+            partner_request_id: null,
+          }
         );
 
-        partnerDispatch = {
-          success: false,
-          reason: "partner_dispatch_error",
-        };
-      }
+      const routing =
+        await routeOrderThroughAtc(
+          findingFulfillment || orderForDispatch
+        );
 
-      if (partnerDispatch?.success) {
-        const partnerOffered =
-          await updateOrder(
-            orderForDispatch.id,
-            {
-              status: "partner_offered",
-              partner_store_id:
-                partnerDispatch.partnerStore?.id ||
-                null,
-              partner_request_id:
-                partnerDispatch.request?.id ||
-                null,
-              store_name:
-                partnerDispatch.partnerStore?.business_name ||
-                orderForDispatch.store_name ||
-                null,
-            }
-          );
-
+      if (routing.mode === "partner_store") {
         await sendWhatsAppMessage(
           normalizedPhone,
           "Got it 👍\n\nI’m checking the most suitable nearby partner store first. Once the item and price are confirmed, I’ll calculate the delivery fee and send the job to a Fetch shopper."
@@ -7486,50 +7687,23 @@ async function handleCustomerMessage({
           JSON.stringify({
             orderId: orderForDispatch.id,
             partnerStoreId:
-              partnerDispatch.partnerStore?.id || null,
+              routing.partnerStore?.id || null,
             partnerRequestId:
-              partnerDispatch.request?.id || null,
+              routing.request?.id || null,
             partnerStore:
-              partnerDispatch.partnerStore?.business_name || null,
+              routing.partnerStore?.business_name || null,
             distanceKm:
-              partnerDispatch.distanceKm ?? null,
+              routing.distanceKm ?? null,
           })
         );
 
         return;
       }
 
-      /*
-        No eligible partner store was available. Only now do we fall back
-        to the existing shopper-as-source flow.
-      */
-      const findingShopper =
-        await updateOrder(
-          orderForDispatch.id,
-          {
-            status: "finding_shopper",
-            delivery_pricing_status: "pending",
-            delivery_pricing_source: null,
-            distance_km: null,
-            delivery_fee: 0,
-            item_total: 0,
-            total_amount: 0,
-            priced_at: null,
-            partner_store_id: null,
-            partner_request_id: null,
-            store_name: null,
-          }
-        );
-
-      const dispatch =
-        await offerOrderToShopper(
-          findingShopper || orderForDispatch
-        );
-
       await sendWhatsAppMessage(
         normalizedPhone,
-        dispatch.success
-          ? "Got it 👍\n\nNo partner store was available, so I’m finding a Fetch shopper who can source and deliver this for you."
+        routing.success
+          ? "Got it 👍\n\nNo suitable partner store was available, so I’m finding a Fetch shopper who can source and deliver this for you."
           : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
       );
 
@@ -8465,23 +8639,35 @@ async function handleCustomerMessage({
         activeOrder.id,
         {
           status:
-            "finding_shopper",
+            activeOrder.partner_store_id
+              ? "finding_shopper"
+              : "finding_partner",
         }
       );
 
     await sendWhatsAppMessage(
       normalizedPhone,
-
-      "Confirmed 👍 I’m finding a shopper for your order now."
+      activeOrder.partner_store_id
+        ? "Confirmed 👍 I’m finding a shopper to collect your order from the partner store."
+        : "Confirmed 👍 I’m routing your order through Fetch ATC now."
     );
 
-    const dispatch =
-      await offerOrderToShopper(
-        order
+    const routing =
+      await routeOrderThroughAtc(
+        order,
+        {
+          allowPartner:
+            !Boolean(activeOrder.partner_store_id),
+        }
       );
 
+    const dispatch =
+      routing.mode === "human_shopper"
+        ? routing.dispatch
+        : routing;
+
     if (
-      dispatch.success
+      routing.success
     ) {
       await sendWhatsAppMessage(
         normalizedPhone,
@@ -8607,20 +8793,25 @@ async function handleCustomerMessage({
       address
     );
 
-    const dispatch =
-      await offerOrderToShopper(
+    const routing =
+      await routeOrderThroughAtc(
         order
       );
 
-    if (dispatch.success) {
+    if (routing.mode === "partner_store") {
       await sendWhatsAppMessage(
         normalizedPhone,
-        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to all available Fetch shoppers nearby. Whoever accepts first will take the job. They’ll check the product price and delivery fee and send the details to you for approval.`
+        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’m checking the most suitable nearby partner store first. Once the item and price are confirmed, I’ll send the job to a Fetch shopper.`
+      );
+    } else if (routing.success) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nNo suitable partner store was available, so I’ve sent the order to an available Fetch shopper nearby.`
       );
     } else {
       await sendWhatsAppMessage(
         normalizedPhone,
-        `Got it 👍 I have your order for ${items}. There isn’t an available shopper right now, but your order is saved.`
+        `Got it 👍 I have your order for ${items}. There isn’t an available fulfillment resource right now, but your order is saved.`
       );
     }
 
@@ -8752,11 +8943,11 @@ async function handleCustomerMessage({
       }
     }
 
-    const findingShopper =
+    const findingFulfillment =
       await updateOrder(
         changedOrder.id,
         {
-          status: "finding_shopper",
+          status: "finding_partner",
           delivery_pricing_status: "pending",
           delivery_pricing_source: null,
           distance_km: null,
@@ -8764,19 +8955,23 @@ async function handleCustomerMessage({
           item_total: 0,
           total_amount: 0,
           priced_at: null,
+          partner_store_id: null,
+          partner_request_id: null,
         }
       );
 
-    const dispatch =
-      await offerOrderToShopper(
-        findingShopper || changedOrder
+    const routing =
+      await routeOrderThroughAtc(
+        findingFulfillment || changedOrder
       );
 
     await sendWhatsAppMessage(
       normalizedPhone,
-      dispatch.success
-        ? "Updated 👍 I’m finding a shopper for the revised request. I’ll send you the final price once it’s ready."
-        : "Updated 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+      routing.mode === "partner_store"
+        ? "Updated 👍 I’m checking the most suitable nearby partner store for the revised request."
+        : routing.success
+          ? "Updated 👍 No suitable partner store was available, so I’m finding a Fetch shopper for the revised request."
+          : "Updated 👍 Your request is saved. I’m looking for an available Fetch shopper now."
     );
 
     return;
@@ -12143,39 +12338,41 @@ export default async function handler(
           );
 
         if (rejectedOrder) {
-          const nextPartner =
-            await dispatchOrderToPartnerStore({
-              order: rejectedOrder,
-              excludedPartnerStoreIds: [
-                partnerResult.rejectedPartnerStoreId ||
-                  partnerStore.id,
-              ],
-            });
+          const nextRouting =
+            await routeOrderThroughAtc(
+              rejectedOrder,
+              {
+                excludedPartnerStoreIds: [
+                  partnerResult.rejectedPartnerStoreId ||
+                    partnerStore.id,
+                ],
+                allowPartner: true,
+              }
+            );
 
-          if (nextPartner.success) {
+          if (nextRouting.mode === "partner_store") {
             await updateOrder(
               rejectedOrder.id,
               {
                 status: "partner_offered",
                 partner_store_id:
-                  nextPartner.partnerStore?.id ||
+                  nextRouting.partnerStore?.id ||
                   null,
                 partner_request_id:
-                  nextPartner.request?.id ||
+                  nextRouting.request?.id ||
+                  null,
+                store_name:
+                  nextRouting.partnerStore?.business_name ||
+                  rejectedOrder.store_name ||
                   null,
               }
             );
-          } else {
-            const fallbackOrder =
-              await updateOrder(
-                rejectedOrder.id,
-                {
-                  status: "finding_shopper",
-                }
-              );
-
-            await offerOrderToShopper(
-              fallbackOrder || rejectedOrder
+          } else if (!nextRouting.success) {
+            await updateOrder(
+              rejectedOrder.id,
+              {
+                status: "finding_shopper",
+              }
             );
           }
         }
