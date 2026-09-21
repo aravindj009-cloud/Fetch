@@ -93,6 +93,18 @@ import {
   getPartnerStoreByPhone,
 } from "../../lib/partner-store.mjs";
 
+/* =========================================================
+   FETCH V8 MEMORY + CONTEXT LAYER
+   Additive integration. V8 enriches the customer AI decision
+   with durable memory, conversation context, recent decisions
+   and active-task context. The existing WhatsApp order/ATC
+   state machine remains the execution authority.
+   ========================================================= */
+
+import {
+  processFetchV8Request,
+} from "../../lib/fetch-v8.mjs";
+
 function sleep(ms) {
   return new Promise((resolve) =>
     setTimeout(resolve, ms)
@@ -3189,6 +3201,7 @@ async function callFetchAI({
   activeOrder,
   latestOrder,
   customer,
+  v8Decision = null,
 }) {
   if (!OPENAI_API_KEY) {
     throw new Error(
@@ -3273,6 +3286,30 @@ A new Fetch order may be offered to every eligible available shopper. The first 
 
     current_message:
       userMessage,
+
+    /*
+      V8 context is advisory to the existing WhatsApp AI parser
+      during this integration phase. The current order state
+      machine remains the final authority for side effects.
+    */
+    v8_context:
+      v8Decision?.context || {},
+
+    v8_decision:
+      v8Decision
+        ? {
+            intent:
+              v8Decision.intent || null,
+            entities:
+              v8Decision.entities || {},
+            decision:
+              v8Decision.decision || null,
+            plan:
+              v8Decision.plan || null,
+            atc_request:
+              v8Decision.atc_request || null,
+          }
+        : null,
   };
 
   let response = null;
@@ -6162,6 +6199,63 @@ async function handleCustomerMessage({
 
   /*
     -------------------------------------------------------
+    FETCH V8 MEMORY + CONTEXT
+    -------------------------------------------------------
+
+    V8 runs for customer messages before the legacy AI parser.
+    It loads durable customer memory, conversation context,
+    recent intent decisions and active-task context, then stores
+    a context snapshot. Any V8 failure is isolated so WhatsApp
+    continues through the existing customer engine.
+  */
+  let v8Decision = null;
+
+  try {
+    v8Decision =
+      await processFetchV8Request({
+        text: userMessage,
+        customerId: customer.id,
+        conversationId:
+          `whatsapp:${normalizedPhone}`,
+        channel: "whatsapp",
+        activeTaskId:
+          activeOrder?.id || null,
+        suppliedContext: {
+          active_order: activeOrder || null,
+          latest_order: latestOrder || null,
+          customer: {
+            id: customer.id,
+            name: customer.name || null,
+            address: customer.address || null,
+          },
+        },
+      });
+
+    console.log(
+      "FETCH V8 CONTEXT RESOLVED:",
+      JSON.stringify({
+        customerId: customer.id,
+        conversationId:
+          `whatsapp:${normalizedPhone}`,
+        intent:
+          v8Decision?.intent || null,
+        decisionStatus:
+          v8Decision?.decision?.status || null,
+        contextSnapshotId:
+          v8Decision?.context_snapshot_id || null,
+      })
+    );
+  } catch (error) {
+    console.error(
+      "FETCH V8 CONTEXT ERROR (SAFE FALLBACK):",
+      error
+    );
+
+    v8Decision = null;
+  }
+
+  /*
+    -------------------------------------------------------
     CUSTOMER RATING
     -------------------------------------------------------
     Ratings are accepted only for the latest delivered order
@@ -8376,6 +8470,7 @@ async function handleCustomerMessage({
         activeOrder,
         latestOrder,
         customer,
+        v8Decision,
       });
   } catch (error) {
     console.error(
