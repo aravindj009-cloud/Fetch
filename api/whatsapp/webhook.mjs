@@ -90,6 +90,17 @@ import {
   getPartnerStoreByPhone,
 } from "../../lib/partner-store.mjs";
 
+/* =========================================================
+   FETCH V9 WORKFLOW LAYER
+
+   V9 is intentionally added as a fail-safe orchestration layer.
+   It creates the durable workflow/context record for customer
+   requests while the proven WhatsApp order execution path remains
+   responsible for the live MVP transaction.
+
+   This avoids replacing working procurement, pricing, payment,
+   shopper and delivery logic in one step.
+========================================================= */
 import {
   processFetchV9Request,
 } from "../../lib/fetch-v9.mjs";
@@ -98,102 +109,6 @@ function sleep(ms) {
   return new Promise((resolve) =>
     setTimeout(resolve, ms)
   );
-}
-
-/* =========================================================
-   V9 ORCHESTRATION BRIDGE
-
-   V9 is now connected to the WhatsApp customer channel, but
-   the existing order state machine remains the execution
-   authority for the physical-shopping MVP. V9 creates the
-   durable workflow/context record and exposes ATC-ready
-   decisions. Failures are isolated so WhatsApp does not break.
-   ========================================================= */
-function shouldRunV9Orchestration({
-  userMessage,
-  activeOrder,
-  decision,
-}) {
-  const text = String(userMessage || "").trim();
-  if (!text) return false;
-
-  // Deterministic customer controls are already handled by the
-  // existing order state machine and should not create a new
-  // autonomous workflow for every YES/NO/PAID/CANCEL message.
-  if (/^(yes|no|ok|okay|confirm|confirmed|cancel|cancel order|paid|i have paid|received|not received|keep order|decline|reject)$/i.test(text)) {
-    return false;
-  }
-
-  const intent = String(decision?.intent || "").toLowerCase();
-
-  if (intent === "status" || intent === "cancel" || intent === "confirm" || intent === "reject") {
-    return false;
-  }
-
-  // With an active order, V9 is used for meaningful order
-  // changes only. Without an active order, V9 can understand
-  // any new service request such as flights, reservations,
-  // calendar actions, messaging, phone calls, or shopping.
-  if (activeOrder) {
-    return intent === "shopping_request" || intent === "update_order";
-  }
-
-  return text.length >= 3;
-}
-
-async function runV9Orchestration({
-  customer,
-  phone,
-  userMessage,
-  activeOrder,
-  decision,
-}) {
-  if (!shouldRunV9Orchestration({
-    userMessage,
-    activeOrder,
-    decision,
-  })) {
-    return null;
-  }
-
-  const normalizedPhone = normalizePhone(phone);
-  const conversationId = `whatsapp:${normalizedPhone}`;
-
-  try {
-    const result = await processFetchV9Request({
-      text: userMessage,
-      customerId: customer?.id || null,
-      conversationId,
-      channel: "whatsapp",
-      activeTaskId: activeOrder?.id || null,
-      suppliedContext: {
-        active_order_id: activeOrder?.id || null,
-        active_order_status: activeOrder?.status || null,
-        active_order_items: activeOrder?.items || null,
-        legacy_intent: decision?.intent || null,
-      },
-    });
-
-    console.log(
-      "FETCH V9 WORKFLOW CREATED:",
-      JSON.stringify({
-        customerId: customer?.id || null,
-        conversationId,
-        workflowId: result?.workflow_id || null,
-        workflowStatus: result?.workflow_status || null,
-        segments: result?.segments || [],
-        atcRequestCount: result?.atc_requests?.length || 0,
-      })
-    );
-
-    return result;
-  } catch (error) {
-    console.error(
-      "FETCH V9 ORCHESTRATION ERROR (NON-BLOCKING):",
-      error
-    );
-    return null;
-  }
 }
 
 /* =========================================================
@@ -6356,6 +6271,61 @@ async function handleCustomerMessage({
   }
 
 
+  /*
+    -------------------------------------------------------
+    V9 WORKFLOW CREATION
+    -------------------------------------------------------
+    Run V9 only after deterministic payment/rating/conversation
+    gates are resolved. V9 failures must never break WhatsApp.
+  */
+  try {
+    const v9Result =
+      await processFetchV9Request({
+        text: userMessage,
+        customerId: customer.id,
+        conversationId: `whatsapp:${normalizedPhone}`,
+        channel: "whatsapp",
+        activeTaskId: activeOrder?.id || null,
+        suppliedContext: {
+          active_order: activeOrder
+            ? {
+                id: activeOrder.id || null,
+                status: activeOrder.status || null,
+                items: activeOrder.items || null,
+                store_name: activeOrder.store_name || null,
+                delivery_address:
+                  activeOrder.delivery_address || null,
+              }
+            : null,
+          latest_order: latestOrder
+            ? {
+                id: latestOrder.id || null,
+                status: latestOrder.status || null,
+              }
+            : null,
+        },
+      });
+
+    console.log(
+      "FETCH V9 WORKFLOW CREATED:",
+      JSON.stringify({
+        workflowId: v9Result?.workflow_id || null,
+        status: v9Result?.workflow_status || null,
+        segments: v9Result?.segments || [],
+        atcRequestCount:
+          Array.isArray(v9Result?.atc_requests)
+            ? v9Result.atc_requests.length
+            : 0,
+      })
+    );
+  } catch (error) {
+    console.error(
+      "FETCH V9 SHADOW ERROR (non-blocking):",
+      error?.message || String(error)
+    );
+  }
+
+
   /* -----------------------------------------
      SIMPLE MVP: NEW ORDER -> SHOPPER
   ----------------------------------------- */
@@ -8427,24 +8397,6 @@ async function handleCustomerMessage({
         deterministicParts.address;
     }
   }
-
-  /*
-    -------------------------------------------------------
-    FETCH V9 AUTONOMOUS WORKFLOW
-    -------------------------------------------------------
-    V9 now receives the normalized customer request and creates
-    a durable workflow/context record. The current physical
-    shopping state machine continues below as the execution
-    authority, so this integration is additive and fail-safe.
-  */
-
-  await runV9Orchestration({
-    customer,
-    phone: normalizedPhone,
-    userMessage,
-    activeOrder,
-    decision,
-  });
 
   /* STATUS */
 
