@@ -1934,6 +1934,36 @@ async function getActiveOrder(
   return fallback;
 }
 
+async function getPaymentPendingOrder(customerId) {
+  if (!customerId) {
+    return null;
+  }
+
+  const statuses = [
+    "payment_pending",
+    "customer_reported_paid",
+  ].join(",");
+
+  const data = await supabaseRequest(
+    `orders?customer_id=eq.${encodeURIComponent(
+      customerId
+    )}&status=in.(${encodeURIComponent(
+      statuses
+    )})&select=*&order=created_at.desc&limit=5`
+  );
+
+  if (!Array.isArray(data)) {
+    return null;
+  }
+
+  return (
+    data.find(
+      (order) =>
+        String(order?.payment_status || "").toLowerCase() !== "paid"
+    ) || null
+  );
+}
+
 async function getLatestOrder(
   customerId
 ) {
@@ -5917,13 +5947,25 @@ async function handleCustomerReportedPaid({
   activeOrder,
   userMessage,
 }) {
-  if (!activeOrder || activeOrder.status !== "payment_pending") {
-    return false;
-  }
-
   if (!isCustomerPaidMessage(userMessage)) {
     return false;
   }
+
+  // Refresh from Supabase so payment confirmation acts on the persisted
+  // order state rather than a stale in-memory snapshot.
+  let order = activeOrder;
+  if (order?.id) {
+    const freshOrder = await getOrderById(order.id);
+    if (freshOrder) {
+      order = freshOrder;
+    }
+  }
+
+  if (!order || order.status !== "payment_pending") {
+    return false;
+  }
+
+  activeOrder = order;
 
   if (activeOrder.payment_status === "paid") {
     await sendWhatsAppMessage(
@@ -6014,22 +6056,29 @@ async function handleCustomerMessage({
       customer.id
     );
 
-  // Handle the customer's payment button BEFORE any AI intent
-  // classification. This guarantees "I HAVE PAID" -> PAID is
-  // processed against payment_pending rather than being treated
-  // as a generic YES/confirmation.
-  if (
-    activeOrder &&
-    activeOrder.status === "payment_pending" &&
-    isCustomerPaidMessage(userMessage)
-  ) {
-    await handleCustomerReportedPaid({
-      normalizedPhone,
-      customer,
-      activeOrder,
-      userMessage,
-    });
-    return;
+  // Handle customer payment confirmation BEFORE any AI intent
+  // classification. Resolve the payment-pending order directly from
+  // the database as a fallback when current_order_id is stale.
+  if (isCustomerPaidMessage(userMessage)) {
+    let paymentOrder =
+      activeOrder &&
+      activeOrder.status === "payment_pending"
+        ? activeOrder
+        : null;
+
+    if (!paymentOrder) {
+      paymentOrder = await getPaymentPendingOrder(customer.id);
+    }
+
+    if (paymentOrder) {
+      await handleCustomerReportedPaid({
+        normalizedPhone,
+        customer,
+        activeOrder: paymentOrder,
+        userMessage,
+      });
+      return;
+    }
   }
 
   const history =
@@ -10730,7 +10779,7 @@ async function handleShopperMessage({
         null;
     }
 
-    if (paymentDestination && customerPaymentPhone) {
+    if (claimedOrder.partner_store_id && paymentDestination && customerPaymentPhone) {
       const paymentMessage =
         `✅ A Fetch shopper has accepted your order.\n\n${buildShopperPaymentMessage(
           claimedOrder,
@@ -10762,7 +10811,7 @@ async function handleShopperMessage({
         ],
         { footer: "After payment" }
       );
-    } else {
+    } else if (claimedOrder.partner_store_id) {
       await notifyCustomerForOrder(
         claimedOrder.id,
         paymentDestination
@@ -10772,6 +10821,31 @@ async function handleShopperMessage({
               shopper?.name
             )}\n\nAfter payment, select I HAVE PAID or reply PAID.`
           : "✅ A Fetch shopper has accepted your order. I’m waiting for the shopper’s payment details before you pay."
+      );
+    } else if (customerPaymentPhone) {
+      // Human-shopper fallback: source first, then price + source location.
+      // Never request payment with a ₹0 total.
+      const sourcingMessage =
+        "🛒 A Fetch shopper has accepted your order.\n\n" +
+        "The shopper will source the requested items first, then send Fetch the actual product price and source location.\n\n" +
+        "You’ll receive the final total and payment option only after the price is confirmed.";
+
+      await saveMessage({
+        customerId:
+          claimedOrder.customer_id,
+        orderId:
+          claimedOrder.id,
+        phone:
+          customerPaymentPhone,
+        role:
+          "assistant",
+        message:
+          sourcingMessage,
+      });
+
+      await sendWhatsAppMessage(
+        customerPaymentPhone,
+        sourcingMessage
       );
     }
 
