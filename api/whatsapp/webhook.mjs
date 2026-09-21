@@ -1990,7 +1990,7 @@ async function createOrder({
             customerId,
 
           store_name:
-            storeName,
+            (String(storeName || "").trim() || "Any available local store"),
 
           items,
 
@@ -7602,7 +7602,7 @@ async function handleCustomerMessage({
             priced_at: null,
             partner_store_id: null,
             partner_request_id: null,
-            store_name: null,
+            store_name: "Any available local store",
           }
         );
 
