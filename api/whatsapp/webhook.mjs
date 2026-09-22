@@ -1,3 +1,4 @@
+/* FETCH WHATSAPP WEBHOOK - V9 MEMORY RETRIEVAL RESPONSE FIX */
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL ||
   "https://skfxzagxlxputwpwxwbe.supabase.co";
@@ -6153,7 +6154,8 @@ async function tryUniversalFetchCustomerRequest({
     */
     if (
       result?.fetch?.memory?.status === "saved" ||
-      result?.fetch?.memory?.status === "needs_clarification"
+      result?.fetch?.memory?.status === "needs_clarification" ||
+      result?.fetch?.memory?.status === "found"
     ) {
       const memory = result.fetch.memory;
 
@@ -6162,10 +6164,25 @@ async function tryUniversalFetchCustomerRequest({
           normalizedPhone,
           "I can remember that for you. Tell me the fact you'd like me to save."
         );
+      } else if (memory.status === "found") {
+        const answer =
+          result?.fetch?.answer ||
+          memory.value_text ||
+          memory.value?.value ||
+          memory.value?.date ||
+          null;
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          answer
+            ? String(answer)
+            : "I found the saved information, but I couldn't read the value."
+        );
       } else {
         const valueText =
           memory.value_text ||
           memory.value?.value ||
+          memory.value?.date ||
           "that";
 
         await sendWhatsAppMessage(
