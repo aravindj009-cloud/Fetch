@@ -1,3 +1,4 @@
+/* FETCH WHATSAPP WEBHOOK - V9 DIRECT MEMORY FALLBACK FIX */
 /* FETCH WHATSAPP WEBHOOK - V9 MEMORY RETRIEVAL RESPONSE FIX */
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL ||
@@ -6102,6 +6103,223 @@ function shouldRunV9ForCustomerMessage(text) {
   );
 }
 
+function normalizeMemoryTokensForWhatsApp(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter(
+      (token) =>
+        !new Set([
+          "what",
+          "when",
+          "where",
+          "who",
+          "which",
+          "is",
+          "are",
+          "was",
+          "were",
+          "do",
+          "did",
+          "does",
+          "can",
+          "you",
+          "remember",
+          "saved",
+          "stored",
+          "my",
+          "mine",
+          "me",
+          "the",
+          "a",
+          "an",
+          "please",
+          "tell",
+          "have",
+          "has",
+          "had",
+          "your",
+          "for",
+          "of",
+          "to",
+        ]).has(token)
+    );
+}
+
+function memoryRowTextForWhatsApp(row) {
+  const value = row?.memory_value;
+
+  if (value && typeof value === "object") {
+    return [
+      row?.memory_key,
+      value?.subject,
+      value?.value,
+      value?.date,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  return [row?.memory_key, value].filter(Boolean).join(" ");
+}
+
+function isLikelyMemoryQuestionForWhatsApp(text) {
+  const value = String(text || "").trim();
+
+  if (!value) return false;
+
+  const hasQuestionWord =
+    /\b(what|when|where|who|which|do|did|does|can)\b/i.test(value);
+
+  const hasMemoryReference =
+    /\b(my|mine|me|remember|saved|stored|preferred|preference)\b/i.test(
+      value
+    );
+
+  return hasQuestionWord && hasMemoryReference;
+}
+
+async function tryDirectCustomerMemoryQuestion({
+  customer,
+  phone,
+  userMessage,
+  activeOrder = null,
+} = {}) {
+  if (!customer?.id || !isLikelyMemoryQuestionForWhatsApp(userMessage)) {
+    return {
+      handled: false,
+      answer: null,
+    };
+  }
+
+  try {
+    const rows = await supabaseRequest(
+      `fetch_customer_memory?customer_id=eq.${encodeURIComponent(
+        customer.id
+      )}&or=(expires_at.is.null,expires_at.gt.${encodeURIComponent(
+        new Date().toISOString()
+      )})&order=updated_at.desc&limit=100`
+    );
+
+    const queryTokens = new Set(
+      normalizeMemoryTokensForWhatsApp(userMessage)
+    );
+
+    if (!queryTokens.size) {
+      return {
+        handled: false,
+        answer: null,
+      };
+    }
+
+    let best = null;
+
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const rowTokens = new Set(
+        normalizeMemoryTokensForWhatsApp(
+          memoryRowTextForWhatsApp(row)
+        )
+      );
+
+      const overlap = [...queryTokens].filter((token) =>
+        rowTokens.has(token)
+      );
+
+      if (!overlap.length) continue;
+
+      const score =
+        overlap.length / Math.max(1, queryTokens.size);
+
+      if (!best || score > best.score) {
+        best = {
+          row,
+          score,
+          overlap,
+        };
+      }
+    }
+
+    /*
+      Require a strong semantic/keyword match so a generic question does
+      not accidentally expose an unrelated saved memory.
+    */
+    if (!best || best.score < 0.5) {
+      return {
+        handled: false,
+        answer: null,
+      };
+    }
+
+    const storedValue = best.row?.memory_value ?? null;
+
+    const answer =
+      storedValue?.value ||
+      storedValue?.date ||
+      (storedValue == null ? null : String(storedValue));
+
+    if (!answer) {
+      return {
+        handled: false,
+        answer: null,
+      };
+    }
+
+    const reply = String(answer).trim();
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: activeOrder?.id || null,
+      phone: normalizePhone(phone),
+      role: "user",
+      message: userMessage,
+    });
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: activeOrder?.id || null,
+      phone: normalizePhone(phone),
+      role: "assistant",
+      message: reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizePhone(phone),
+      reply
+    );
+
+    console.log(
+      "FETCH DIRECT MEMORY HIT:",
+      JSON.stringify({
+        customerId: customer.id,
+        memoryKey: best.row?.memory_key || null,
+        score: best.score,
+        overlap: best.overlap,
+      })
+    );
+
+    return {
+      handled: true,
+      answer: reply,
+    };
+  } catch (error) {
+    console.error(
+      "FETCH DIRECT MEMORY LOOKUP ERROR:",
+      error
+    );
+
+    /*
+      Memory lookup is an additive safeguard. If it fails, the normal V9
+      and legacy customer paths continue unchanged.
+    */
+    return {
+      handled: false,
+      answer: null,
+    };
+  }
+}
+
 async function tryUniversalFetchCustomerRequest({
   customer,
   phone,
@@ -6350,6 +6568,23 @@ async function handleCustomerMessage({
     await getLatestOrder(
       customer.id
     );
+
+  /*
+    Deterministic durable-memory lookup comes first for memory questions.
+    This prevents the legacy shopping classifier from answering a memory
+    question before the saved Fetch memory is surfaced.
+  */
+  const directMemoryResult =
+    await tryDirectCustomerMemoryQuestion({
+      customer,
+      phone: normalizedPhone,
+      userMessage,
+      activeOrder,
+    });
+
+  if (directMemoryResult.handled) {
+    return;
+  }
 
   /*
     Fetch Agent / V9 first for universal requests.
