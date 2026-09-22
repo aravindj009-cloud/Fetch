@@ -93,6 +93,10 @@ import {
   getPartnerStoreByPhone,
 } from "../../lib/partner-store.mjs";
 
+import {
+  executeUniversalFetchRequest,
+} from "../../lib/fetch-universal-execution.mjs";
+
 function sleep(ms) {
   return new Promise((resolve) =>
     setTimeout(resolve, ms)
@@ -6030,6 +6034,280 @@ async function handleCustomerReportedPaid({
 }
 
 /* =========================================================
+   FETCH V9 -> UNIVERSAL EXECUTION BRIDGE
+   Channel integration:
+     WhatsApp -> Fetch Agent/V9 -> ATC -> execution network
+
+   IMPORTANT:
+   - Partner-store / physical shopping remains owned by the existing
+     WhatsApp order state machine.
+   - V9 is allowed to plan and route physical requests, but it must not
+     create a second physical order.
+   - Digital-agent requests can complete through the universal bridge.
+   - If V9/ATC cannot safely execute a request, this function fails open
+     to the existing customer engine so the working MVP remains intact.
+========================================================= */
+
+function shouldRunV9ForCustomerMessage(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+
+  const lower = value.toLowerCase();
+
+  /*
+    Keep deterministic transactional commands on the existing WhatsApp
+    state machine. These are already implemented and should not create
+    unnecessary V9 workflows.
+  */
+  const legacyOnly = [
+    /^(yes|y|yeah|yep|ya|ok|okay|sure|go ahead|confirm|confirmed)$/i,
+    /^(no|n|nope|cancel|cancel it|don't|dont)$/i,
+    /^(paid|i'?ve paid|i have paid|payment done|payment completed)$/i,
+    /^(received|payment received|got the payment)$/i,
+    /^(status|track|eta|update|any update|where is my order)$/i,
+    /^(new order|new fetch order|start new order|another order)$/i,
+    /^(join|start|accept|decline|available|earnings|payout|last order)$/i,
+    /^(shopping|picked up|out for delivery|delivered)$/i,
+  ];
+
+  if (legacyOnly.some((pattern) => pattern.test(value))) {
+    return false;
+  }
+
+  /*
+    Explicit memory is a Fetch Agent capability and should go through V9.
+  */
+  if (
+    /\b(remember|memorize|save|store|don't forget|do not forget)\b/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+
+  /*
+    Requests that clearly need a universal digital/human execution layer.
+    Shopping requests are intentionally also allowed through V9 as a
+    planning/shadow layer; physical execution still falls through to the
+    existing order engine.
+  */
+  return (
+    /\b(book|booking|reserve|reservation|flight|flights|calendar|meeting|schedule|appointment|message|email|call|phone|research|find out|look up|compare|weather|news|latest|current|remind|reminder|cancel my|send this|contact)\b/i.test(
+      lower
+    ) ||
+    /\b(buy|get|fetch|purchase|order|pick up|pickup|deliver|shopping|groceries|items)\b/i.test(
+      lower
+    )
+  );
+}
+
+async function tryUniversalFetchCustomerRequest({
+  customer,
+  phone,
+  userMessage,
+  activeOrder = null,
+} = {}) {
+  if (!customer?.id || !shouldRunV9ForCustomerMessage(userMessage)) {
+    return {
+      handled: false,
+      result: null,
+    };
+  }
+
+  const normalizedPhone = normalizePhone(phone);
+
+  try {
+    const result = await executeUniversalFetchRequest({
+      text: userMessage,
+      customerId: customer.id,
+      conversationId: `whatsapp:${normalizedPhone}`,
+      channel: "whatsapp",
+      activeTaskId: activeOrder?.id || null,
+
+      /*
+        Existing physical orders are supplied only as execution context.
+        The universal bridge explicitly refuses to create a second
+        physical order when this context is absent.
+      */
+      suppliedContext: {
+        physical_order: activeOrder || null,
+        source: "whatsapp_customer",
+      },
+    });
+
+    console.log(
+      "FETCH V9 WHATSAPP RESULT:",
+      JSON.stringify({
+        customerId: customer.id,
+        phone: normalizedPhone,
+        status: result?.status || null,
+        workflowId: result?.workflow_id || null,
+        resourceType: result?.atc?.resource_type || null,
+        executionStatus: result?.execution?.status || null,
+      })
+    );
+
+    /*
+      Explicit memory is complete inside V9. Tell the customer what was
+      saved instead of sending the request into the shopping state machine.
+    */
+    if (
+      result?.fetch?.memory?.status === "saved" ||
+      result?.fetch?.memory?.status === "needs_clarification"
+    ) {
+      const memory = result.fetch.memory;
+
+      if (memory.status === "needs_clarification") {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I can remember that for you. Tell me the fact you'd like me to save."
+        );
+      } else {
+        const valueText =
+          memory.value_text ||
+          memory.value?.value ||
+          "that";
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Got it 👍 I’ll remember ${valueText}.`
+        );
+      }
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "user",
+        message: userMessage,
+      });
+
+      return {
+        handled: true,
+        result,
+      };
+    }
+
+    /*
+      A successful digital-agent execution is a real universal Fetch
+      execution. Return its result to WhatsApp and do not send it into
+      the old shopping classifier.
+    */
+    if (
+      result?.execution?.success === true &&
+      result?.execution?.message
+    ) {
+      const reply = String(result.execution.message).trim();
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "user",
+        message: userMessage,
+      });
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "assistant",
+        message: reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return {
+        handled: true,
+        result,
+      };
+    }
+
+    /*
+      If ATC matched a partner store / physical network, deliberately
+      continue into the existing physical shopping engine. That engine
+      remains the single source of truth for creating orders, partner
+      offers, shopper dispatch, payment and delivery.
+    */
+    const resourceType =
+      String(result?.atc?.resource_type || "").toLowerCase();
+
+    if (
+      resourceType === "partner_store" ||
+      resourceType === "physical_network" ||
+      result?.status === "awaiting_physical_order"
+    ) {
+      return {
+        handled: false,
+        result,
+      };
+    }
+
+    /*
+      If a non-physical resource was matched but has no connector yet,
+      tell the customer rather than pretending the task happened.
+    */
+    if (
+      result?.status === "resource_matched" &&
+      result?.execution?.status === "awaiting_connector"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I understand the task, but that service is not connected to Fetch yet. I haven't claimed it was completed."
+      );
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "user",
+        message: userMessage,
+      });
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "assistant",
+        message:
+          "I understand the task, but that service is not connected to Fetch yet. I haven't claimed it was completed.",
+      });
+
+      return {
+        handled: true,
+        result,
+      };
+    }
+
+    /*
+      If V9 needs clarification, allow the mature customer engine to
+      continue handling the request. This is the fail-open behavior.
+    */
+    return {
+      handled: false,
+      result,
+    };
+  } catch (error) {
+    console.error(
+      "FETCH V9 WHATSAPP BRIDGE ERROR:",
+      error
+    );
+
+    /*
+      V9 must never take down the existing WhatsApp MVP. A bridge error
+      simply hands the request back to the existing customer engine.
+    */
+    return {
+      handled: false,
+      result: null,
+    };
+  }
+}
+
+/* =========================================================
    CUSTOMER ENGINE
 ========================================================= */
 
@@ -6055,6 +6333,23 @@ async function handleCustomerMessage({
     await getLatestOrder(
       customer.id
     );
+
+  /*
+    Fetch Agent / V9 first for universal requests.
+    Physical shopping intentionally falls through to the existing
+    order engine; digital executions can complete here.
+  */
+  const universalResult =
+    await tryUniversalFetchCustomerRequest({
+      customer,
+      phone: normalizedPhone,
+      userMessage,
+      activeOrder,
+    });
+
+  if (universalResult.handled) {
+    return;
+  }
 
   // Handle customer payment confirmation BEFORE any AI intent
   // classification. Resolve the payment-pending order directly from
