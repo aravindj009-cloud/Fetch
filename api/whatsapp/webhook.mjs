@@ -6087,14 +6087,6 @@ function shouldRunV9ForCustomerMessage(text) {
     return true;
   }
 
-  /* Natural-language questions about saved preferences/facts also belong
-     to the Fetch Agent. Direct memory lookup runs before this bridge, but
-     keeping the route here gives V9 a second chance if the direct lookup
-     cannot resolve the memory. */
-  if (isLikelyMemoryQuestionForWhatsApp(value)) {
-    return true;
-  }
-
   /*
     Requests that clearly need a universal digital/human execution layer.
     Shopping requests are intentionally also allowed through V9 as a
@@ -6111,55 +6103,46 @@ function shouldRunV9ForCustomerMessage(text) {
   );
 }
 
-function normalizeMemoryTokenForWhatsApp(token) {
-  const value = String(token || "")
-    .toLowerCase()
-    .trim();
-
+function canonicalMemoryTokenForWhatsApp(token) {
+  let value = String(token || "").toLowerCase().trim();
   if (!value) return "";
 
-  /*
-    Lightweight normalization for natural-language memory questions.
-    Users may ask "deliveries" about a memory saved as "delivery", or
-    "prefer" about a memory stored under "preferred". Exact wording must
-    not be required for a memory lookup.
-  */
   const aliases = {
-    deliveries: "delivery",
-    delivered: "delivery",
-    delivering: "delivery",
-    deliverys: "delivery",
-    prefer: "preferred",
-    preference: "preferred",
-    preferences: "preferred",
-    pref: "preferred",
-    saved: "save",
-    stored: "store",
+    prefer: "prefer",
+    prefers: "prefer",
+    preferred: "prefer",
+    preference: "prefer",
+    preferences: "prefer",
+
+    deliver: "deliver",
+    delivers: "deliver",
+    delivered: "deliver",
+    delivering: "deliver",
+    delivery: "deliver",
+    deliveries: "deliver",
+
+    time: "time",
+    timing: "time",
   };
 
   if (aliases[value]) return aliases[value];
 
+  // Lightweight normalization for ordinary singular/plural/tense variants.
   if (value.endsWith("ies") && value.length > 4) {
-    return `${value.slice(0, -3)}y`;
+    value = `${value.slice(0, -3)}y`;
+  } else if (value.endsWith("ing") && value.length > 5) {
+    value = value.slice(0, -3);
+  } else if (value.endsWith("ed") && value.length > 4) {
+    value = value.slice(0, -2);
+  } else if (value.endsWith("s") && value.length > 4) {
+    value = value.slice(0, -1);
   }
 
-  if (value.endsWith("ing") && value.length > 5) {
-    return value.slice(0, -3);
-  }
-
-  if (value.endsWith("ed") && value.length > 4) {
-    return value.slice(0, -2);
-  }
-
-  if (value.endsWith("s") && value.length > 4) {
-    return value.slice(0, -1);
-  }
-
-  return value;
+  return aliases[value] || value;
 }
 
 function normalizeMemoryTokensForWhatsApp(value) {
-  const ignoredWords = new Set([
+  const stopWords = new Set([
     "what",
     "when",
     "where",
@@ -6192,16 +6175,16 @@ function normalizeMemoryTokensForWhatsApp(value) {
     "for",
     "of",
     "to",
-    "i",
   ]);
 
   return String(value || "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]+/g, " ")
     .split(/\s+/)
-    .map(normalizeMemoryTokenForWhatsApp)
     .filter(Boolean)
-    .filter((token) => !ignoredWords.has(token));
+    .filter((token) => !stopWords.has(token))
+    .map(canonicalMemoryTokenForWhatsApp)
+    .filter(Boolean);
 }
 
 function memoryRowTextForWhatsApp(row) {
@@ -6218,7 +6201,7 @@ function memoryRowTextForWhatsApp(row) {
       .join(" ");
   }
 
-  return [row?.memory_key, value].filter(Boolean).join(" ");
+  return [row?.memory_key, value].filter(Boolean).join(" " );
 }
 
 function isLikelyMemoryQuestionForWhatsApp(text) {
@@ -6230,7 +6213,7 @@ function isLikelyMemoryQuestionForWhatsApp(text) {
     /\b(what|when|where|who|which|do|did|does|can)\b/i.test(value);
 
   const hasMemoryReference =
-    /\b(my|mine|me|remember|saved|stored|preferred|preference)\b/i.test(
+    /\b(my|mine|me|remember|saved|stored|preferred|preference|prefer)\b/i.test(
       value
     );
 
@@ -6288,26 +6271,12 @@ async function tryDirectCustomerMemoryQuestion({
       const score =
         overlap.length / Math.max(1, queryTokens.size);
 
-      /*
-        Stronger match: when the normalized memory key/value contains all
-        meaningful query tokens, treat it as an exact semantic memory hit.
-        This is what lets:
-          "What time do I prefer deliveries?"
-        match a saved memory such as:
-          preferred_delivery_time = "after 7 PM"
-      */
-      const exactSemanticMatch =
-        queryTokens.size > 0 &&
-        overlap.length === queryTokens.size;
-
-      const candidate = {
-        row,
-        score: exactSemanticMatch ? 1 : score,
-        overlap,
-      };
-
-      if (!best || candidate.score > best.score) {
-        best = candidate;
+      if (!best || score > best.score) {
+        best = {
+          row,
+          score,
+          overlap,
+        };
       }
     }
 
