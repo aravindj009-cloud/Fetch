@@ -6087,6 +6087,14 @@ function shouldRunV9ForCustomerMessage(text) {
     return true;
   }
 
+  /* Natural-language questions about saved preferences/facts also belong
+     to the Fetch Agent. Direct memory lookup runs before this bridge, but
+     keeping the route here gives V9 a second chance if the direct lookup
+     cannot resolve the memory. */
+  if (isLikelyMemoryQuestionForWhatsApp(value)) {
+    return true;
+  }
+
   /*
     Requests that clearly need a universal digital/human execution layer.
     Shopping requests are intentionally also allowed through V9 as a
@@ -6103,49 +6111,97 @@ function shouldRunV9ForCustomerMessage(text) {
   );
 }
 
+function normalizeMemoryTokenForWhatsApp(token) {
+  const value = String(token || "")
+    .toLowerCase()
+    .trim();
+
+  if (!value) return "";
+
+  /*
+    Lightweight normalization for natural-language memory questions.
+    Users may ask "deliveries" about a memory saved as "delivery", or
+    "prefer" about a memory stored under "preferred". Exact wording must
+    not be required for a memory lookup.
+  */
+  const aliases = {
+    deliveries: "delivery",
+    delivered: "delivery",
+    delivering: "delivery",
+    deliverys: "delivery",
+    prefer: "preferred",
+    preference: "preferred",
+    preferences: "preferred",
+    pref: "preferred",
+    saved: "save",
+    stored: "store",
+  };
+
+  if (aliases[value]) return aliases[value];
+
+  if (value.endsWith("ies") && value.length > 4) {
+    return `${value.slice(0, -3)}y`;
+  }
+
+  if (value.endsWith("ing") && value.length > 5) {
+    return value.slice(0, -3);
+  }
+
+  if (value.endsWith("ed") && value.length > 4) {
+    return value.slice(0, -2);
+  }
+
+  if (value.endsWith("s") && value.length > 4) {
+    return value.slice(0, -1);
+  }
+
+  return value;
+}
+
 function normalizeMemoryTokensForWhatsApp(value) {
+  const ignoredWords = new Set([
+    "what",
+    "when",
+    "where",
+    "who",
+    "which",
+    "is",
+    "are",
+    "was",
+    "were",
+    "do",
+    "did",
+    "does",
+    "can",
+    "you",
+    "remember",
+    "saved",
+    "stored",
+    "my",
+    "mine",
+    "me",
+    "the",
+    "a",
+    "an",
+    "please",
+    "tell",
+    "have",
+    "has",
+    "had",
+    "your",
+    "for",
+    "of",
+    "to",
+    "i",
+  ]);
+
   return String(value || "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]+/g, " ")
     .split(/\s+/)
+    .map(normalizeMemoryTokenForWhatsApp)
     .filter(Boolean)
-    .filter(
-      (token) =>
-        !new Set([
-          "what",
-          "when",
-          "where",
-          "who",
-          "which",
-          "is",
-          "are",
-          "was",
-          "were",
-          "do",
-          "did",
-          "does",
-          "can",
-          "you",
-          "remember",
-          "saved",
-          "stored",
-          "my",
-          "mine",
-          "me",
-          "the",
-          "a",
-          "an",
-          "please",
-          "tell",
-          "have",
-          "has",
-          "had",
-          "your",
-          "for",
-          "of",
-          "to",
-        ]).has(token)
-    );
+    .filter((token) => !ignoredWords.has(token));
 }
 
 function memoryRowTextForWhatsApp(row) {
@@ -6232,12 +6288,26 @@ async function tryDirectCustomerMemoryQuestion({
       const score =
         overlap.length / Math.max(1, queryTokens.size);
 
-      if (!best || score > best.score) {
-        best = {
-          row,
-          score,
-          overlap,
-        };
+      /*
+        Stronger match: when the normalized memory key/value contains all
+        meaningful query tokens, treat it as an exact semantic memory hit.
+        This is what lets:
+          "What time do I prefer deliveries?"
+        match a saved memory such as:
+          preferred_delivery_time = "after 7 PM"
+      */
+      const exactSemanticMatch =
+        queryTokens.size > 0 &&
+        overlap.length === queryTokens.size;
+
+      const candidate = {
+        row,
+        score: exactSemanticMatch ? 1 : score,
+        overlap,
+      };
+
+      if (!best || candidate.score > best.score) {
+        best = candidate;
       }
     }
 
