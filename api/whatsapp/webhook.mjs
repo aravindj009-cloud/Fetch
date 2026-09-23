@@ -13010,3 +13010,17 @@ export default async function handler(
       });
   }
 }
+/* =========================================================
+   WEB API EXPORTS
+   These existing Fetch backend functions are reused by
+   api/web/agent.mjs so the website uses the same order,
+   ATC, partner-store, and shopper engine as WhatsApp.
+   ========================================================= */
+export {
+  getOrCreateCustomer,
+  createOrder,
+  updateOrder,
+  getOrderById,
+  dispatchOrderToPartnerStore,
+  offerOrderToShopper,
+};
