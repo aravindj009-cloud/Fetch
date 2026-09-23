@@ -357,6 +357,79 @@ async function handlePhysicalWebRequest({
   };
 }
 
+function buildWebOrderMessage(order) {
+  const status = cleanText(order?.status).toLowerCase();
+
+  if (status === "finding_partner") {
+    return "I’m finding a matching nearby partner store for your request.";
+  }
+
+  if (status === "partner_offered") {
+    return "Your request has been sent to the matching nearby partner store. I’m waiting for its real availability and price.";
+  }
+
+  if (status === "awaiting_customer_price_confirmation") {
+    const itemTotal = Number(order?.item_total);
+    const deliveryFee = Number(order?.delivery_fee);
+    const fetchFee = Number(order?.fetch_fee);
+    const total = Number(order?.total_amount);
+
+    const parts = [];
+
+    if (Number.isFinite(itemTotal)) {
+      parts.push(`Products: ₹${itemTotal.toFixed(2)}`);
+    }
+
+    if (Number.isFinite(deliveryFee)) {
+      parts.push(`Delivery: ₹${deliveryFee.toFixed(2)}`);
+    }
+
+    if (Number.isFinite(fetchFee)) {
+      parts.push(`Fetch fee: ₹${fetchFee.toFixed(2)}`);
+    }
+
+    if (Number.isFinite(total)) {
+      parts.push(`Total: ₹${total.toFixed(2)}`);
+    }
+
+    return (
+      "The partner store has confirmed the order and provided the real price.\n\n" +
+      parts.join("\n") +
+      "\n\nPlease approve the total to continue."
+    );
+  }
+
+  if (status === "finding_shopper") {
+    return "I couldn’t use a partner store, so Fetch is finding a shopper who can source the items for you.";
+  }
+
+  if (status === "shopper_assigned") {
+    return "Your Fetch shopper has accepted the order and will start shopping soon.";
+  }
+
+  if (status === "shopping") {
+    return "Your Fetch shopper is shopping for your order now.";
+  }
+
+  if (status === "picked_up") {
+    return "Your order has been picked up and is on its way.";
+  }
+
+  if (status === "out_for_delivery") {
+    return "Your order is out for delivery.";
+  }
+
+  if (status === "delivered") {
+    return "Your Fetch order has been delivered.";
+  }
+
+  if (status === "cancelled") {
+    return "Your Fetch order has been cancelled.";
+  }
+
+  return null;
+}
+
 async function handleGet(req, res) {
   const origin = req.headers.origin || "";
   const orderId = cleanText(req.query?.orderId);
@@ -394,6 +467,10 @@ async function handleGet(req, res) {
       success: true,
       orderId: order.id,
       status: order.status || "unknown",
+      message: buildWebOrderMessage(order),
+      terminal: ["delivered", "cancelled"].includes(
+        cleanText(order.status).toLowerCase()
+      ),
       order,
     },
     origin
