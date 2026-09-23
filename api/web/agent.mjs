@@ -505,6 +505,178 @@ async function handlePost(req, res) {
   }
 
   /*
+   * WEB CUSTOMER PRICE APPROVAL
+   *
+   * WhatsApp already has deterministic approval logic for an order
+   * in awaiting_customer_price_confirmation. The web channel must
+   * use the same state-machine path instead of sending "approve"
+   * into the Universal Task Engine as a brand-new request.
+   *
+   * The web conversation maps to a deterministic synthetic customer
+   * identity, so current_order_id is the authoritative order pointer.
+   */
+  const normalizedApproval = text
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .trim();
+
+  const isWebApproval =
+    /^(approve|approved|yes|y|yeah|yep|ya|ok|okay|sure|go ahead|confirm|confirmed|please confirm|please confirm my order)$/.test(
+      normalizedApproval
+    );
+
+  const isWebRejection =
+    /^(no|n|nope|cancel|cancelled|reject|rejected|decline|declined|don't|do not)$/.test(
+      normalizedApproval
+    );
+
+  if (isWebApproval || isWebRejection) {
+    const phone = syntheticWebPhone(conversationId);
+    const customer = await getOrCreateCustomer(phone);
+
+    const currentOrderId =
+      customer?.current_order_id || null;
+
+    const activeOrder = currentOrderId
+      ? await getOrderById(currentOrderId)
+      : null;
+
+    if (
+      activeOrder &&
+      activeOrder.status ===
+        "awaiting_customer_price_confirmation"
+    ) {
+      if (isWebRejection) {
+        const cancelledOrder = await updateOrder(
+          activeOrder.id,
+          {
+            status: "cancelled",
+          }
+        );
+
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: "cancelled",
+            message: "Okay 👍 The order is cancelled.",
+            orderId:
+              cancelledOrder?.id ||
+              activeOrder.id,
+            order:
+              cancelledOrder ||
+              activeOrder,
+            terminal: true,
+          },
+          origin
+        );
+      }
+
+      if (
+        activeOrder.delivery_pricing_status !==
+        "calculated"
+      ) {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status:
+              activeOrder.status,
+            message:
+              "The delivery fee is still being calculated by Fetch from the road distance. Please wait for the final pricing before confirming.",
+            orderId: activeOrder.id,
+            order: activeOrder,
+            terminal: false,
+          },
+          origin
+        );
+      }
+
+      const approvedOrder = await updateOrder(
+        activeOrder.id,
+        {
+          status: "payment_pending",
+          payment_status: "pending",
+        }
+      );
+
+      if (!approvedOrder) {
+        throw new Error(
+          "Could not move order to payment_pending"
+        );
+      }
+
+      /*
+       * Match the existing WhatsApp customer-approval flow:
+       * only after the customer approves the real total do we
+       * offer the confirmed procurement job to a shopper.
+       */
+      const shopperDispatch =
+        await offerOrderToShopper(
+          approvedOrder
+        );
+
+      const total = Number(
+        approvedOrder.total_amount || 0
+      );
+
+      const message =
+        shopperDispatch?.success
+          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
+          : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
+
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: approvedOrder.status,
+          message,
+          orderId: approvedOrder.id,
+          order: approvedOrder,
+          terminal: false,
+          execution: {
+            success: Boolean(
+              shopperDispatch?.success
+            ),
+            status:
+              shopperDispatch?.success
+                ? "shopper_offer_sent"
+                : "shopper_queued",
+          },
+        },
+        origin
+      );
+    }
+
+    /*
+     * If this is an approval/rejection but there is no quoted order,
+     * return a useful state response rather than sending it to the
+     * generic connector path.
+     */
+    if (isWebApproval) {
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: activeOrder?.status || "no_active_order",
+          message:
+            activeOrder
+              ? "There is no order currently waiting for price approval."
+              : "There is no active Fetch order waiting for approval.",
+          orderId: activeOrder?.id || null,
+          order: activeOrder || null,
+          terminal: false,
+        },
+        origin
+      );
+    }
+  }
+
+  /*
    * IMPORTANT:
    * Always let the Universal Task Engine understand the request first.
    * The web bridge only takes over once the result identifies a physical
