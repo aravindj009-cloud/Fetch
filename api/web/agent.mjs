@@ -92,47 +92,120 @@ function isPhysicalResult(result) {
 }
 
 function extractPhysicalItems(result) {
-  const decisions = Array.isArray(result?.fetch?.decisions)
-    ? result.fetch.decisions
-    : [];
+  /*
+   * Physical entities can be preserved at several layers of the
+   * Universal Task response. V9 normally exposes them under
+   * fetch.decisions[].entities.items, while the Universal Task Contract
+   * also preserves them under task.entities and task.task_data.entities.
+   *
+   * We check these structured locations first so the physical web bridge
+   * does not depend on one exact response shape.
+   */
+  const candidateLists = [
+    result?.fetch?.decisions?.[0]?.entities?.items,
+    result?.task?.entities?.items,
+    result?.task?.task_data?.entities?.items,
+    result?.tasks?.[0]?.entities?.items,
+    result?.tasks?.[0]?.task_data?.entities?.items,
+    result?.fetch?.context?.conversation_context?.last_entities?.items,
+    result?.fetch?.context?.last_entities?.items,
+    result?.fetch?.decisions?.[0]?.plan?.entities?.items,
+    result?.fetch?.decisions?.[0]?.decision?.entities?.items,
+  ];
 
   const items = [];
 
-  for (const decision of decisions) {
-    const decisionItems = Array.isArray(decision?.entities?.items)
-      ? decision.entities.items
-      : [];
+  function addItem(rawItem) {
+    const name = cleanText(
+      rawItem?.name ||
+      rawItem?.item ||
+      rawItem?.product ||
+      rawItem?.title
+    );
 
-    for (const item of decisionItems) {
-      const name = cleanText(
-        item?.name ||
-        item?.item ||
-        item?.product ||
-        item?.title
-      );
+    const quantity = Number(
+      rawItem?.quantity ??
+      rawItem?.qty ??
+      rawItem?.count ??
+      1
+    );
 
-      const quantity = Number(item?.quantity || 1);
+    if (!name) return;
 
-      if (!name) continue;
+    const safeQuantity =
+      Number.isFinite(quantity) && quantity > 0
+        ? Math.floor(quantity)
+        : 1;
 
-      const safeQuantity =
-        Number.isFinite(quantity) && quantity > 0
-          ? Math.floor(quantity)
-          : 1;
+    const existing = items.find(
+      (entry) =>
+        entry.name.toLowerCase() === name.toLowerCase()
+    );
 
-      const existing = items.find(
-        (entry) =>
-          entry.name.toLowerCase() === name.toLowerCase()
-      );
+    if (existing) {
+      existing.quantity += safeQuantity;
+    } else {
+      items.push({
+        name,
+        quantity: safeQuantity,
+      });
+    }
+  }
 
-      if (existing) {
-        existing.quantity += safeQuantity;
-      } else {
-        items.push({
-          name,
-          quantity: safeQuantity,
-        });
-      }
+  /*
+   * Use the first structured source that contains items.
+   * The same entities are often copied into multiple layers, so reading
+   * all layers would incorrectly double quantities.
+   */
+  for (const list of candidateLists) {
+    if (!Array.isArray(list) || !list.length) continue;
+
+    for (const rawItem of list) {
+      addItem(rawItem);
+    }
+
+    if (items.length) break;
+  }
+
+  /*
+   * Last-resort parser for simple physical requests when structured
+   * entities are unexpectedly absent. This is intentionally limited and
+   * does not replace V9's entity extraction.
+   */
+  if (!items.length) {
+    const rawText = cleanText(
+      result?.task?.user_request ||
+      result?.task?.source_text ||
+      result?.fetch?.received_text
+    );
+
+    const knownProducts = [
+      {
+        pattern: /\bkit\s*kats?\b/i,
+        quantityPattern: /(\d+)\s+kit\s*kats?/i,
+        name: "KitKat",
+      },
+      {
+        pattern: /\bmilk\b/i,
+        quantityPattern: /(\d+)\s+milk/i,
+        name: "milk",
+      },
+      {
+        pattern: /\bbread\b/i,
+        quantityPattern: /(\d+)\s+bread/i,
+        name: "bread",
+      },
+    ];
+
+    for (const product of knownProducts) {
+      if (!product.pattern.test(rawText)) continue;
+
+      const match = rawText.match(product.quantityPattern);
+
+      addItem({
+        name: product.name,
+        quantity: match ? Number(match[1]) : 1,
+      });
     }
   }
 
