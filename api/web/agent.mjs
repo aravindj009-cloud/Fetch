@@ -756,6 +756,50 @@ async function handlePost(req, res) {
   }
 
   /*
+   * BROWSER AGENT BRIDGE
+   *
+   * The Universal Task Engine has already routed the request to the
+   * Browser Agent and completed the worker call. The web API must expose
+   * the worker's actual result instead of falling through to the generic
+   * "no execution connector" message.
+   */
+  if (
+    cleanText(result?.atc?.resource_type).toLowerCase() ===
+    "browser_agent"
+  ) {
+    const browserExecution =
+      result?.execution?.execution || result?.execution || {};
+
+    const browserMessage =
+      result?.task?.result ||
+      browserExecution?.result ||
+      browserExecution?.message ||
+      "The Browser Agent completed the task.";
+
+    const browserSuccess =
+      result?.status === "completed" ||
+      browserExecution?.success === true ||
+      result?.task?.status === "completed";
+
+    return sendJson(
+      res,
+      200,
+      {
+        success: browserSuccess,
+        status: browserSuccess
+          ? "completed"
+          : "execution_failed",
+        workflow_id: result?.workflow_id || null,
+        message: String(browserMessage),
+        fetch: result?.fetch || null,
+        atc: result?.atc || null,
+        execution: browserExecution,
+      },
+      origin
+    );
+  }
+
+  /*
    * DIGITAL AGENT BRIDGE
    *
    * The ATC route is authoritative. If ATC selected digital_agent,
