@@ -16,6 +16,7 @@
  */
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
+import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
 
 import {
   getOrCreateCustomer,
@@ -737,7 +738,99 @@ async function handlePost(req, res) {
   }
 
   /*
-   * Non-physical requests remain on the Universal Task Engine path.
+   * DIGITAL AGENT BRIDGE
+   *
+   * The ATC route is authoritative. If ATC selected digital_agent,
+   * invoke the existing Fetch Digital Agent connector directly.
+   *
+   * This is deliberately NOT a new model and does NOT train anything.
+   * It connects the existing agent executor to the web channel.
+   *
+   * The direct bridge also protects the web channel from an older
+   * universal-execution deployment falling through to the generic
+   * "awaiting connector" response.
+   */
+  if (
+    cleanText(result?.atc?.resource_type).toLowerCase() ===
+    "digital_agent"
+  ) {
+    const task = {
+      id:
+        result?.task?.task_id ||
+        result?.workflow_id ||
+        `web:${Date.now()}`,
+      source_text: text,
+      goal:
+        result?.task?.goal ||
+        result?.fetch?.decisions?.[0]?.plan?.source_text ||
+        text,
+      objective:
+        result?.task?.objective ||
+        result?.fetch?.decisions?.[0]?.plan?.steps?.[0]?.purpose ||
+        text,
+      task_data: {
+        ...(result?.task || {}),
+        source_text: text,
+        text,
+        atc_route: result?.atc || null,
+      },
+    };
+
+    let digitalExecution;
+
+    try {
+      digitalExecution = await executeDigitalAgent({
+        task,
+        route: result?.atc || {},
+        resource: result?.atc?.resource || {},
+        context: {
+          channel: "web",
+          text,
+          customer_id: null,
+          conversation_id: conversationId,
+          workflow_id: result?.workflow_id || null,
+          task_id: task.id,
+          atc_route: result?.atc || null,
+          use_web_search: true,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "FETCH WEB DIGITAL AGENT BRIDGE ERROR:",
+        error
+      );
+
+      digitalExecution = {
+        success: false,
+        status: "execution_error",
+        message:
+          error?.message ||
+          "Fetch's digital agent could not complete the request.",
+      };
+    }
+
+    return sendJson(
+      res,
+      200,
+      {
+        success: true,
+        status: digitalExecution?.success
+          ? "completed"
+          : "execution_failed",
+        workflow_id: result?.workflow_id || null,
+        message:
+          digitalExecution?.message ||
+          "Fetch's digital agent could not complete the request.",
+        fetch: result?.fetch || null,
+        atc: result?.atc || null,
+        execution: digitalExecution || null,
+      },
+      origin
+    );
+  }
+
+  /*
+   * Other non-physical requests remain on the Universal Task Engine path.
    * Do not pretend that an unimplemented connector completed.
    */
   return sendJson(
