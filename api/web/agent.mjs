@@ -986,19 +986,114 @@ async function handlePost(req, res) {
   }
 
   /*
-   * Other non-physical requests remain on the Universal Task Engine path.
-   * Do not pretend that an unimplemented connector completed.
+   * CONVERSATION FALLBACK
+   *
+   * A general personal-agent request does not need a separate connector.
+   * If it is not physical commerce, not Browser Agent, and not an explicit
+   * digital-agent route, let Fetch's existing open-model conversation layer
+   * answer it. This prevents ordinary questions and conversational messages
+   * such as "I feel lonely" from exposing an internal connector error.
+   *
+   * We still return a genuine failure if the Digital Agent itself fails;
+   * we never manufacture an answer.
    */
+  try {
+    const fallbackTask = {
+      id:
+        result?.task?.task_id ||
+        result?.workflow_id ||
+        `web:fallback:${Date.now()}`,
+      source_text: text,
+      goal: text,
+      objective: text,
+      task_data: {
+        ...(result?.task || {}),
+        source_text: text,
+        text,
+        atc_route: result?.atc || null,
+      },
+    };
+
+    const fallbackExecution = await executeDigitalAgent({
+      task: fallbackTask,
+      route: {
+        ...(result?.atc || {}),
+        resource_type: "digital_agent",
+      },
+      resource: result?.atc?.resource || {},
+      context: {
+        channel: "web",
+        text,
+        customer_id: null,
+        conversation_id: conversationId,
+        workflow_id: result?.workflow_id || null,
+        task_id: fallbackTask.id,
+        atc_route: result?.atc || null,
+        use_web_search: true,
+        conversation_history: Array.isArray(body.conversationHistory)
+          ? body.conversationHistory
+              .slice(-10)
+              .map((message) => ({
+                role:
+                  message?.role === "assistant"
+                    ? "assistant"
+                    : "user",
+                content: String(
+                  message?.content || ""
+                ).slice(0, 4000),
+              }))
+          : [],
+      },
+    });
+
+    const fallbackMessage = cleanText(
+      fallbackExecution?.message ||
+      fallbackExecution?.result ||
+      fallbackExecution?.answer ||
+      fallbackExecution?.text
+    );
+
+    if (fallbackExecution?.success !== false && fallbackMessage) {
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: "completed",
+          workflow_id: result?.workflow_id || null,
+          message: fallbackMessage,
+          fetch: result?.fetch || null,
+          atc: {
+            ...(result?.atc || {}),
+            resource_type: "digital_agent",
+          },
+          execution: {
+            ...fallbackExecution,
+            status: "completed",
+            execution_type: "digital_agent",
+            resource_type: "digital_agent",
+            message: fallbackMessage,
+          },
+        },
+        origin
+      );
+    }
+  } catch (error) {
+    console.error(
+      "FETCH WEB CONVERSATION FALLBACK ERROR:",
+      error
+    );
+  }
+
   return sendJson(
     res,
     200,
     {
-      success: true,
-      status: result?.status || "awaiting_connector",
+      success: false,
+      status: "execution_failed",
       workflow_id: result?.workflow_id || null,
       message:
-        result?.execution?.message ||
-        "Fetch understood the request, but this channel does not have an execution connector for it yet.",
+        "I’m not able to complete that request right now. Please try again.",
       fetch: result?.fetch || null,
       atc: result?.atc || null,
       execution: result?.execution || null,
