@@ -763,17 +763,21 @@ async function handlePost(req, res) {
    * the worker's actual result instead of falling through to the generic
    * "no execution connector" message.
    */
-  if (
-    cleanText(result?.atc?.resource_type).toLowerCase() ===
-    "browser_agent"
-  ) {
+  const browserResourceType = cleanText(
+    result?.atc?.resource_type ||
+    result?.task?.resource?.type ||
+    result?.execution?.resource_type ||
+    result?.execution?.execution?.execution_type
+  ).toLowerCase();
+
+  if (browserResourceType === "browser_agent") {
     const browserExecution =
       result?.execution?.execution || result?.execution || {};
 
     const browserMessage =
-      result?.task?.result ||
       browserExecution?.result ||
       browserExecution?.message ||
+      result?.task?.result ||
       "The Browser Agent completed the task.";
 
     const browserSuccess =
