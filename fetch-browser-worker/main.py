@@ -1,264 +1,266 @@
-import asyncio
 import os
-import time
-from typing import Any
-from urllib.parse import urlparse
+import asyncio
+import logging
+from typing import Any, Optional
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
-os.environ.setdefault("BROWSER_USE_LOGGING_LEVEL", "info")
-os.environ.setdefault("IN_DOCKER", "True")
-
-from browser_use import Agent, ChatOpenAI
+from browser_use import Agent
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.browser.profile import ViewportSize
+from langchain_openai import ChatOpenAI
 
 
-app = FastAPI(
-    title="Fetch Browser Worker",
-    version="1.0.0",
-)
+# ---------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------
 
-
-# ============================================================
-# ENVIRONMENT
-# ============================================================
+PORT = int(os.getenv("PORT", "8080"))
 
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
-
-WORKER_TOKEN = os.getenv("WORKER_TOKEN", "").strip()
+HF_BASE_URL = os.getenv(
+    "HF_BASE_URL",
+    "https://router.huggingface.co/v1",
+).strip()
 
 BROWSER_MODEL = os.getenv(
     "BROWSER_MODEL",
     "openai/gpt-oss-120b:fastest",
 ).strip()
 
-HF_BASE_URL = os.getenv(
-    "HF_BASE_URL",
-    "https://router.huggingface.co/v1",
-).strip()
+WORKER_TOKEN = os.getenv("WORKER_TOKEN", "").strip()
 
 MAX_STEPS = int(
-    os.getenv("BROWSER_MAX_STEPS", "30")
+    os.getenv(
+        "BROWSER_MAX_STEPS",
+        os.getenv("MAX_STEPS", "30"),
+    )
 )
 
 TASK_TIMEOUT_SECONDS = int(
-    os.getenv("BROWSER_TASK_TIMEOUT_SECONDS", "240")
+    os.getenv(
+        "BROWSER_TASK_TIMEOUT_SECONDS",
+        os.getenv("TASK_TIMEOUT_SECONDS", "240"),
+    )
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+
+logger = logging.getLogger("fetch-browser-worker")
+
+
+# ---------------------------------------------------------
+# FastAPI
+# ---------------------------------------------------------
+
+app = FastAPI(
+    title="Fetch Browser Worker",
+    version="1.0.1",
 )
 
 
-# ============================================================
-# PROTECTED WEBSITES
-# ============================================================
+# ---------------------------------------------------------
+# Request models
+# ---------------------------------------------------------
+
+class ExecuteRequest(BaseModel):
+    task: str = Field(..., min_length=1, max_length=12000)
+    url: Optional[str] = None
+    conversation_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+
+
+# ---------------------------------------------------------
+# Security
+# ---------------------------------------------------------
 
 BLOCKED_HOSTS = {
     "accounts.google.com",
     "login.microsoftonline.com",
+    "login.live.com",
     "paypal.com",
     "www.paypal.com",
 }
 
 
-# ============================================================
-# REQUEST MODEL
-# ============================================================
-
-class ExecuteRequest(BaseModel):
-
-    task: str = Field(
-        min_length=1,
-        max_length=12000,
-    )
-
-    url: str | None = None
-
-    conversation_id: str | None = None
-
-    workflow_id: str | None = None
-
-
-# ============================================================
-# SECURITY
-# ============================================================
-
-def check_worker_token(
-    authorization: str | None,
-) -> None:
+def require_worker_token(authorization: Optional[str]) -> None:
+    """
+    Protect /execute with the same WORKER_TOKEN configured in Railway
+    and BROWSER_WORKER_TOKEN configured in Vercel.
+    """
 
     if not WORKER_TOKEN:
-
         raise HTTPException(
             status_code=503,
-            detail="WORKER_TOKEN is not configured",
+            detail="WORKER_TOKEN is not configured on the browser worker.",
         )
 
     expected = f"Bearer {WORKER_TOKEN}"
 
     if authorization != expected:
-
         raise HTTPException(
             status_code=401,
-            detail="Unauthorized",
+            detail="Unauthorized.",
         )
 
 
-def validate_url(
-    url: str | None,
-) -> None:
+def host_is_blocked(url: str) -> bool:
+    try:
+        from urllib.parse import urlparse
 
-    if not url:
-        return
+        host = (urlparse(url).hostname or "").lower()
 
-    parsed = urlparse(url)
+        if host in BLOCKED_HOSTS:
+            return True
 
-    if parsed.scheme not in {
-        "http",
-        "https",
-    }:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid URL",
+        return any(
+            host.endswith("." + blocked)
+            for blocked in BLOCKED_HOSTS
         )
 
-    if not parsed.netloc:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid URL",
-        )
-
-    host = (
-        parsed.hostname or ""
-    ).lower()
-
-    for blocked in BLOCKED_HOSTS:
-
-        if (
-            host == blocked
-            or host.endswith("." + blocked)
-        ):
-
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "This website requires "
-                    "a dedicated secure executor"
-                ),
-            )
+    except Exception:
+        return False
 
 
-# ============================================================
-# BUILD BROWSER TASK
-# ============================================================
+# ---------------------------------------------------------
+# Safety instructions for the browser agent
+# ---------------------------------------------------------
 
-def build_task(
-    request: ExecuteRequest,
-) -> str:
+SAFETY_INSTRUCTIONS = """
+You are Fetch's browser execution worker.
 
-    task = request.task.strip()
+You operate a real web browser to complete the user's requested task.
 
-    if request.url:
+Rules:
 
-        validate_url(request.url)
+1. Never ask for, enter, expose, or retrieve passwords, OTPs, authentication
+   codes, private keys, API secrets, or other sensitive credentials.
 
-        task = (
-            f"Start at this URL: {request.url}\n\n"
-            f"User's browser task:\n{task}"
-        )
+2. Never complete a payment, purchase, money transfer, financial transaction,
+   subscription purchase, donation, or other irreversible financial action.
 
-    return f"""
-You are the Browser Agent for Fetch.
+3. Never submit an irreversible action such as deleting an account, deleting
+   important data, permanently closing an account, or accepting a legal
+   agreement on behalf of the user.
 
-Fetch is a general-purpose personal AI assistant.
+4. If the task reaches a login page, OTP prompt, payment page, CAPTCHA,
+   security challenge, or other sensitive checkpoint, stop and report that
+   human interaction is required.
 
-Your job is to use a real web browser to complete
-the user's requested web task.
+5. Do not claim an action succeeded unless the browser provides clear evidence
+   that it actually succeeded.
 
-IMPORTANT RULES:
+6. Read public web pages, search public websites, navigate pages, compare
+   information, and extract publicly available information when requested.
 
-1. Navigate normal public websites.
+7. Return a concise factual result describing what you actually found or did.
 
-2. Read pages carefully.
+8. If the requested task cannot be completed, explain the exact blocker.
 
-3. Click, type, search, scroll and navigate when
-   required to complete the task.
+9. Do not invent URLs, prices, availability, confirmations, reservations,
+   purchases, or successful actions.
 
-4. If a website asks for a password, OTP,
-   banking PIN, card CVV, authentication secret,
-   or other private credential, STOP and report
-   that Fetch needs the user to complete that
-   secure step.
-
-5. Do NOT make purchases.
-
-6. Do NOT submit payments.
-
-7. Do NOT place financial orders.
-
-8. Do NOT send irreversible messages.
-
-9. These actions require an explicit confirmation
-   flow from Fetch.
-
-10. Never claim an action succeeded unless the
-    website clearly confirms success.
-
-11. If a CAPTCHA, login wall, anti-bot system,
-    or other blocker prevents completion, report
-    the blocker honestly.
-
-12. Do not invent information.
-
-13. Prefer completing the task over explaining
-    how the user could do it themselves.
-
-14. When finished, return a concise factual result.
-
-USER TASK:
-
-{task}
-""".strip()
+10. The user request is the source of truth for the task. Do not perform
+    unrelated actions.
+"""
 
 
-# ============================================================
-# EXECUTE BROWSER TASK
-# ============================================================
+# ---------------------------------------------------------
+# Health / root endpoints
+# ---------------------------------------------------------
 
-async def execute_browser_task(
-    request: ExecuteRequest,
-) -> dict[str, Any]:
+@app.get("/")
+async def root():
+    return {
+        "ok": True,
+        "service": "fetch-browser-worker",
+        "status": "online",
+        "health": "/health",
+        "execute": "/execute",
+    }
 
-    if not HF_TOKEN:
 
-        raise RuntimeError(
-            "HF_TOKEN is not configured"
-        )
+@app.get("/health")
+async def health():
+    return {
+        "ok": True,
+        "service": "fetch-browser-worker",
+        "browser_model": BROWSER_MODEL,
+        "hf_configured": bool(HF_TOKEN),
+        "worker_token_configured": bool(WORKER_TOKEN),
+    }
 
-    started = time.time()
 
-    # --------------------------------------------------------
-    # Hugging Face OpenAI-compatible model
-    # --------------------------------------------------------
-
-    llm = ChatOpenAI(
-        model=BROWSER_MODEL,
-        base_url=HF_BASE_URL,
-        api_key=HF_TOKEN,
+@app.get("/favicon.ico")
+async def favicon():
+    # Railway/browser requests this automatically. Returning 204 avoids
+    # unnecessary 404 noise in the logs.
+    return JSONResponse(
+        content=None,
+        status_code=204,
     )
 
-    # --------------------------------------------------------
-    # Browser configuration
-    # --------------------------------------------------------
+
+# ---------------------------------------------------------
+# Browser execution
+# ---------------------------------------------------------
+
+async def run_browser_task(
+    task: str,
+    url: Optional[str] = None,
+) -> Any:
+
+    if not HF_TOKEN:
+        raise RuntimeError(
+            "HF_TOKEN is not configured on the browser worker."
+        )
+
+    final_task = task.strip()
+
+    if url:
+        url = url.strip()
+
+        if host_is_blocked(url):
+            raise RuntimeError(
+                "This destination requires sensitive authentication or "
+                "financial interaction and is blocked by Fetch."
+            )
+
+        final_task = (
+            f"Open this URL first: {url}\n\n"
+            f"Then complete this task:\n{task.strip()}"
+        )
+
+    final_task = (
+        f"{SAFETY_INSTRUCTIONS}\n\n"
+        "USER TASK:\n"
+        f"{final_task}"
+    )
+
+    logger.info(
+        "Starting browser task. model=%s max_steps=%s timeout=%ss",
+        BROWSER_MODEL,
+        MAX_STEPS,
+        TASK_TIMEOUT_SECONDS,
+    )
+
+    # Hugging Face exposes an OpenAI-compatible endpoint.
+    # This keeps the worker independent of the OpenAI API.
+    llm = ChatOpenAI(
+        model=BROWSER_MODEL,
+        api_key=HF_TOKEN,
+        base_url=HF_BASE_URL,
+        temperature=0,
+    )
 
     browser_profile = BrowserProfile(
-
         headless=True,
-
         chromium_sandbox=False,
-
         viewport=ViewportSize(
             width=1920,
             height=1080,
@@ -270,214 +272,146 @@ async def execute_browser_task(
     )
 
     try:
-
         await browser_session.start()
 
-        # ----------------------------------------------------
-        # Browser Use Agent
-        # ----------------------------------------------------
-
         agent = Agent(
-
-            task=build_task(request),
-
+            task=final_task,
             llm=llm,
-
-            browser_session=browser_session,
-
+            browser=browser_session,
             use_vision=True,
-
-            max_failures=4,
-
             max_actions_per_step=5,
-
-            use_thinking=True,
         )
 
         history = await asyncio.wait_for(
-
-            agent.run(
-                max_steps=MAX_STEPS
-            ),
-
+            agent.run(max_steps=MAX_STEPS),
             timeout=TASK_TIMEOUT_SECONDS,
         )
 
-        # ----------------------------------------------------
-        # Extract final result
-        # ----------------------------------------------------
-
         result = None
 
-        final_result = getattr(
-            history,
-            "final_result",
-            None,
-        )
-
-        if callable(final_result):
-
-            result = final_result()
+        try:
+            result = history.final_result()
+        except Exception:
+            result = None
 
         if result is None:
-
             result = str(history)
 
-        return {
+        logger.info("Browser task completed.")
 
-            "ok": True,
-
-            "status": "completed",
-
-            "result": result,
-
-            "model": BROWSER_MODEL,
-
-            "duration_seconds": round(
-                time.time() - started,
-                2,
-            ),
-
-            "conversation_id":
-                request.conversation_id,
-
-            "workflow_id":
-                request.workflow_id,
-        }
-
-    except asyncio.TimeoutError:
-
-        return {
-
-            "ok": False,
-
-            "status": "timeout",
-
-            "error": (
-                "Browser task exceeded "
-                f"{TASK_TIMEOUT_SECONDS} seconds"
-            ),
-
-            "duration_seconds": round(
-                time.time() - started,
-                2,
-            ),
-        }
-
-    except Exception as exc:
-
-        return {
-
-            "ok": False,
-
-            "status": "failed",
-
-            "error": str(exc),
-
-            "duration_seconds": round(
-                time.time() - started,
-                2,
-            ),
-        }
+        return result
 
     finally:
-
         try:
-
-            await browser_session.kill()
-
-        except Exception:
-
-            pass
-
-
-# ============================================================
-# HEALTH
-# ============================================================
-
-@app.get("/")
-async def root():
-
-    return {
-
-        "service":
-            "fetch-browser-worker",
-
-        "status":
-            "online",
-
-        "version":
-            "1.0.0",
-    }
+            await browser_session.stop()
+        except Exception as exc:
+            logger.warning(
+                "Browser session cleanup warning: %s",
+                exc,
+            )
 
 
-@app.get("/health")
-async def health():
-
-    return {
-
-        "ok": True,
-
-        "service":
-            "fetch-browser-worker",
-
-        "browser_model":
-            BROWSER_MODEL,
-
-        "hf_configured":
-            bool(HF_TOKEN),
-
-        "worker_token_configured":
-            bool(WORKER_TOKEN),
-    }
-
-
-# ============================================================
-# EXECUTE
-# ============================================================
+# ---------------------------------------------------------
+# Execute endpoint
+# ---------------------------------------------------------
 
 @app.post("/execute")
 async def execute(
-
     request: ExecuteRequest,
-
-    authorization: str | None =
-        Header(default=None),
+    authorization: Optional[str] = Header(default=None),
 ):
+    require_worker_token(authorization)
 
-    check_worker_token(
-        authorization
+    task = request.task.strip()
+
+    if not task:
+        raise HTTPException(
+            status_code=400,
+            detail="Task is required.",
+        )
+
+    logger.info(
+        "Received browser execution request. conversation_id=%s workflow_id=%s",
+        request.conversation_id,
+        request.workflow_id,
     )
 
-    validate_url(
-        request.url
-    )
+    try:
+        result = await run_browser_task(
+            task=task,
+            url=request.url,
+        )
 
-    return await execute_browser_task(
-        request
-    )
+        return {
+            "ok": True,
+            "status": "completed",
+            "result": result,
+            "conversation_id": request.conversation_id,
+            "workflow_id": request.workflow_id,
+        }
+
+    except asyncio.TimeoutError:
+        logger.exception("Browser task timed out.")
+
+        return JSONResponse(
+            status_code=504,
+            content={
+                "ok": False,
+                "status": "timeout",
+                "error": (
+                    f"Browser task exceeded the "
+                    f"{TASK_TIMEOUT_SECONDS}-second timeout."
+                ),
+                "conversation_id": request.conversation_id,
+                "workflow_id": request.workflow_id,
+            },
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        logger.exception("Browser task failed.")
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "status": "failed",
+                "error": str(exc),
+                "conversation_id": request.conversation_id,
+                "workflow_id": request.workflow_id,
+            },
+        )
 
 
-# ============================================================
-# LOCAL ENTRYPOINT
-# ============================================================
+# ---------------------------------------------------------
+# Startup
+# ---------------------------------------------------------
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("==========================================")
+    logger.info("Fetch Browser Worker starting")
+    logger.info("PORT=%s", PORT)
+    logger.info("BROWSER_MODEL=%s", BROWSER_MODEL)
+    logger.info("HF_BASE_URL=%s", HF_BASE_URL)
+    logger.info("HF_TOKEN configured=%s", bool(HF_TOKEN))
+    logger.info("WORKER_TOKEN configured=%s", bool(WORKER_TOKEN))
+    logger.info("MAX_STEPS=%s", MAX_STEPS)
+    logger.info("TASK_TIMEOUT_SECONDS=%s", TASK_TIMEOUT_SECONDS)
+    logger.info("==========================================")
+
+
+# ---------------------------------------------------------
+# Main
+# ---------------------------------------------------------
 
 if __name__ == "__main__":
-
     import uvicorn
 
-    port = int(
-        os.getenv(
-            "PORT",
-            "8080",
-        )
-    )
-
     uvicorn.run(
-
-        "main:app",
-
+        app,
         host="0.0.0.0",
-
-        port=port,
+        port=PORT,
     )
