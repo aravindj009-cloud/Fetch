@@ -531,6 +531,22 @@ async function handlePost(req, res) {
       normalizedApproval
     );
 
+  /*
+   * IMPORTANT CONVERSATION RULE:
+   *
+   * Words such as "yes", "no", "okay" and "sure" are normal
+   * conversational replies. They become order approval/rejection
+   * ONLY when this web conversation has an order that is explicitly
+   * waiting for customer price confirmation.
+   *
+   * This prevents a normal reply such as:
+   *   Fetch: "Would you like the hourly weather forecast?"
+   *   User: "Yes"
+   *
+   * from being incorrectly routed to the order state machine.
+   */
+  let activeOrder = null;
+
   if (isWebApproval || isWebRejection) {
     const phone = syntheticWebPhone(conversationId);
     const customer = await getOrCreateCustomer(phone);
@@ -538,7 +554,7 @@ async function handlePost(req, res) {
     const currentOrderId =
       customer?.current_order_id || null;
 
-    const activeOrder = currentOrderId
+    activeOrder = currentOrderId
       ? await getOrderById(currentOrderId)
       : null;
 
@@ -653,28 +669,13 @@ async function handlePost(req, res) {
     }
 
     /*
-     * If this is an approval/rejection but there is no quoted order,
-     * return a useful state response rather than sending it to the
-     * generic connector path.
+     * No order is waiting for approval.
+     *
+     * DO NOT return NO_ACTIVE_ORDER here.
+     * Let the Universal Task Engine handle the message as normal
+     * conversation. This is what makes "yes", "no", "okay", etc.
+     * work naturally after a Fetch answer.
      */
-    if (isWebApproval) {
-      return sendJson(
-        res,
-        200,
-        {
-          success: true,
-          status: activeOrder?.status || "no_active_order",
-          message:
-            activeOrder
-              ? "There is no order currently waiting for price approval."
-              : "There is no active Fetch order waiting for approval.",
-          orderId: activeOrder?.id || null,
-          order: activeOrder || null,
-          terminal: false,
-        },
-        origin
-      );
-    }
   }
 
   /*
@@ -697,6 +698,23 @@ async function handlePost(req, res) {
             longitude: Number(longitude),
           }
         : null,
+
+      /*
+       * Pass recent visible conversation into the universal engine.
+       * This is used by the digital agent to understand follow-ups
+       * such as "yes", "what do you mean?", "and tomorrow?", etc.
+       */
+      conversation_history: Array.isArray(body.conversationHistory)
+        ? body.conversationHistory
+            .slice(-10)
+            .map((message) => ({
+              role:
+                message?.role === "assistant"
+                  ? "assistant"
+                  : "user",
+              content: String(message?.content || "").slice(0, 4000),
+            }))
+        : [],
     },
   });
 
@@ -792,6 +810,23 @@ async function handlePost(req, res) {
           task_id: task.id,
           atc_route: result?.atc || null,
           use_web_search: true,
+
+          /*
+           * Keep the same conversation context for the direct
+           * digital-agent bridge. This is critical for normal
+           * multi-turn conversation on the web channel.
+           */
+          conversation_history: Array.isArray(body.conversationHistory)
+            ? body.conversationHistory
+                .slice(-10)
+                .map((message) => ({
+                  role:
+                    message?.role === "assistant"
+                      ? "assistant"
+                      : "user",
+                  content: String(message?.content || "").slice(0, 4000),
+                }))
+            : [],
         },
       });
     } catch (error) {
