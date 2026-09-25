@@ -7,10 +7,9 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from browser_use import Agent
+from browser_use import Agent, ChatOpenAI
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.browser.profile import ViewportSize
-from langchain_openai import ChatOpenAI
 
 
 # ---------------------------------------------------------
@@ -277,7 +276,7 @@ async def run_browser_task(
         agent = Agent(
             task=final_task,
             llm=llm,
-            browser=browser_session,
+            browser_session=browser_session,
             use_vision=True,
             max_actions_per_step=5,
         )
@@ -303,7 +302,7 @@ async def run_browser_task(
 
     finally:
         try:
-            await browser_session.stop()
+            await browser_session.kill()
         except Exception as exc:
             logger.warning(
                 "Browser session cleanup warning: %s",
