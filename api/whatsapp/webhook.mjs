@@ -7917,61 +7917,45 @@ async function handleCustomerMessage({
     return;
   }
 
-  /* -----------------------------------------
-     SIMPLE MVP: LOCATION AFTER PRODUCT PRICE
-  ----------------------------------------- */
+  /*
+    CUSTOMER LOCATION IDEMPOTENCY
 
-  if (
-    activeOrder &&
-    activeOrder.status ===
-      "awaiting_customer_price_confirmation" &&
-    location &&
-    Number.isFinite(
-      Number(location.latitude)
-    ) &&
-    Number.isFinite(
-      Number(location.longitude)
-    )
-  ) {
-    const locationLabel =
-      [
-        location.name,
-        location.address,
-      ]
-        .map(
-          (value) =>
-            String(value || "").trim()
-        )
-        .filter(Boolean)
-        .join(", ");
+    WhatsApp can deliver the same location more than once, and customers
+    may intentionally resend their current location after the order has
+    already reached pricing/approval.
 
-    const updatedOrder =
-      await updateOrder(
-        activeOrder.id,
-        {
-          delivery_address:
-            locationLabel ||
-            activeOrder.delivery_address ||
-            "WhatsApp location",
-        }
-      );
+    The old flow handled every location as a fresh location event. That
+    could re-notify the shopper and, more importantly, make an already
+    priced order look as though it still needed location processing.
 
-    if (!updatedOrder) {
-      await sendWhatsAppMessage(
-        normalizedPhone,
-        "I received your location, but I couldn’t update the order. Please send it again."
-      );
-      return;
+    Treat an identical location as an idempotent acknowledgement.
+    A materially different location is still allowed through the normal
+    location path below.
+  */
+  function customerLocationMatchesOrder(order, latitude, longitude) {
+    if (!order) return false;
+
+    const existingLatitude = Number(order.customer_latitude);
+    const existingLongitude = Number(order.customer_longitude);
+
+    if (
+      !Number.isFinite(existingLatitude) ||
+      !Number.isFinite(existingLongitude) ||
+      existingLatitude === 0 ||
+      existingLongitude === 0
+    ) {
+      return false;
     }
 
-    await sendWhatsAppMessage(
-      normalizedPhone,
-      "Location saved 📍. Fetch will calculate the delivery fee from the road distance once the store is known."
+    // ~1 metre tolerance. WhatsApp normally returns the same coordinates
+    // for a repeated location pin, while still allowing a real move.
+    const tolerance = 0.00001;
+
+    return (
+      Math.abs(existingLatitude - latitude) <= tolerance &&
+      Math.abs(existingLongitude - longitude) <= tolerance
     );
-
-    return;
   }
-
 
   function buildCustomerMapsLink(latitude, longitude) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
@@ -8041,6 +8025,59 @@ async function handleCustomerMessage({
     const latitude = locationLatitude;
     const longitude = locationLongitude;
 
+    /*
+      Idempotent repeat-location handling.
+
+      Do this before writing the message or notifying the shopper. This
+      prevents a second identical location pin from looking like a new
+      fulfillment event.
+    */
+    if (
+      activeOrder &&
+      customerLocationMatchesOrder(
+        activeOrder,
+        latitude,
+        longitude
+      ) &&
+      activeOrder.status !== "collecting_details"
+    ) {
+      console.log(
+        "FETCH CUSTOMER LOCATION IDEMPOTENT:",
+        JSON.stringify({
+          orderId: activeOrder.id,
+          status: activeOrder.status,
+          latitude,
+          longitude,
+        })
+      );
+
+      if (
+        activeOrder.status ===
+        "awaiting_customer_price_confirmation"
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `I already have this delivery location 📍\n\nYour current Fetch total is ₹${formatRupees(
+            activeOrder.total_amount
+          )}. Please use the approval option in the pricing message to continue.`
+        );
+      } else if (
+        activeOrder.status === "payment_pending"
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I already have your delivery location 📍. Your order is now waiting for payment."
+        );
+      } else {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I already have this delivery location 📍. No action is needed."
+        );
+      }
+
+      return;
+    }
+
     const locationLabel =
       [
         location.name,
@@ -8098,6 +8135,9 @@ async function handleCustomerMessage({
 
       customer_location_shared_at:
         new Date().toISOString(),
+
+      customer_location_source:
+        "whatsapp_location",
     };
 
     /*
