@@ -64,12 +64,29 @@ function sendJson(res, status, payload, origin = "") {
   return res.json(payload);
 }
 
-function isPhysicalResult(result) {
+function isLikelyPhysicalText(value) {
+  const text = cleanText(value).toLowerCase();
+  if (!text) return false;
+
+  const acquisitionVerb = /\b(buy|purchase|order|get|bring|send|deliver|delivery|shop|pick up|pickup|arrange|source|need)\b/i.test(text);
+  const physicalObject = /\b(item|product|goods?|grocery|groceries|medicine|medicines|food|drink|drinks|snack|snacks|pack|packs|box|boxes|bottle|bottles|piece|pieces|unit|units|supplies|stuff)\b/i.test(text);
+  const deliveryCue = /\b(deliver|delivery|delivered|my address|our address|near me|nearby|at home|to my home)\b/i.test(text);
+  const quantityObjectCue = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+[a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)?\b/i.test(text);
+
+  return Boolean(
+    acquisitionVerb &&
+    (physicalObject || deliveryCue || quantityObjectCue)
+  );
+}
+
+function isPhysicalResult(result, requestText = "") {
   const network =
     cleanText(
       result?.task?.execution_network ||
-      result?.task?.intent?.domain ||
-      result?.fetch?.decisions?.[0]?.decision?.network
+      result?.task?.intent?.execution_network ||
+      result?.fetch?.decisions?.[0]?.decision?.network ||
+      result?.atc?.execution_network ||
+      result?.execution?.network
     ).toLowerCase();
 
   const resourceType =
@@ -81,13 +98,23 @@ function isPhysicalResult(result) {
 
   const fetchDomain =
     cleanText(
-      result?.fetch?.decisions?.[0]?.intent?.domain
+      result?.fetch?.decisions?.[0]?.intent?.domain ||
+      result?.task?.domain ||
+      result?.task?.intent?.domain
     ).toLowerCase();
+
+  const sourceClass = cleanText(
+    result?.task?.metadata?.source_class ||
+    result?.task?.metadata?.source_policy?.source_class
+  ).toLowerCase();
 
   return (
     network === "physical_network" ||
     resourceType === "partner_store" ||
-    fetchDomain === "physical"
+    fetchDomain === "physical" ||
+    fetchDomain === "physical_commerce" ||
+    sourceClass === "physical_fulfilment" ||
+    isLikelyPhysicalText(requestText)
   );
 }
 
@@ -817,7 +844,7 @@ async function handlePost(req, res) {
     })
   );
 
-  if (isPhysicalResult(result)) {
+  if (isPhysicalResult(result, text)) {
     const physical = await handlePhysicalWebRequest({
       result,
       text,
