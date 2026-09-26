@@ -169,8 +169,15 @@ function extractPhysicalItems(result) {
 
   /*
    * Last-resort parser for simple physical requests when structured
-   * entities are unexpectedly absent. This is intentionally limited and
-   * does not replace V9's entity extraction.
+   * entities are unexpectedly absent. This is intentionally generic.
+   * It never contains a hard-coded product catalogue.
+   *
+   * Examples it can recover:
+   *   "get me two KitKats"
+   *   "I need 3 bottles of water"
+   *   "deliver 2 ice packs to my address"
+   *
+   * V9 structured entities remain the preferred source.
    */
   if (!items.length) {
     const rawText = cleanText(
@@ -179,36 +186,38 @@ function extractPhysicalItems(result) {
       result?.fetch?.received_text
     );
 
-    const knownProducts = [
-      {
-        pattern: /\bkit\s*kats?\b/i,
-        quantityPattern: /(\d+)\s+kit\s*kats?/i,
-        name: "KitKat",
-      },
-      {
-        pattern: /\bmilk\b/i,
-        quantityPattern: /(\d+)\s+milk/i,
-        name: "milk",
-      },
-      {
-        pattern: /\bbread\b/i,
-        quantityPattern: /(\d+)\s+bread/i,
-        name: "bread",
-      },
+    const genericPatterns = [
+      /\b(?:get|buy|purchase|order|bring|send|deliver|find|source|need)\s+(?:me\s+|us\s+)?(\d+)\s+(.+?)(?:\s+(?:delivered|to\s+(?:my|our)\s+address|for\s+(?:me|us)))?$/i,
+      /\b(?:get|buy|purchase|order|bring|send|deliver|find|source|need)\s+(?:me\s+|us\s+)?(.+?)(?:\s+(?:delivered|to\s+(?:my|our)\s+address|for\s+(?:me|us)))?$/i,
     ];
 
-    for (const product of knownProducts) {
-      if (!product.pattern.test(rawText)) continue;
+    for (const pattern of genericPatterns) {
+      const match = rawText.match(pattern);
+      if (!match) continue;
 
-      const match = rawText.match(product.quantityPattern);
+      const quantity = /^\d+$/.test(match[1] || '')
+        ? Number(match[1])
+        : 1;
+      const rawName = /^\d+$/.test(match[1] || '')
+        ? match[2]
+        : match[1];
 
-      addItem({
-        name: product.name,
-        quantity: match ? Number(match[1]) : 1,
-      });
+      const name = cleanText(rawName)
+        .replace(/\b(?:delivered|delivery|to\s+(?:my|our)\s+address|for\s+(?:me|us))\b.*$/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (name && name.length <= 120) {
+        addItem({
+          name,
+          quantity: Number.isFinite(quantity) && quantity > 0
+            ? Math.floor(quantity)
+            : 1,
+        });
+        break;
+      }
     }
   }
-
   return items;
 }
 
@@ -842,54 +851,6 @@ async function handlePost(req, res) {
     result?.execution?.resource_type ||
     result?.execution?.execution?.execution_type
   ).toLowerCase();
-
-  /*
-   * DETERMINISTIC UTILITY BRIDGE
-   *
-   * Utility results such as current time are already fully executed by
-   * the Universal Task Engine. Return that verified result directly.
-   * Never send it through the language model.
-   */
-  const utilityResourceType = cleanText(
-    result?.atc?.resource_type ||
-    result?.task?.resource?.type ||
-    result?.execution?.resource_type
-  ).toLowerCase();
-
-  if (utilityResourceType === "utility_agent") {
-    const utilityExecution =
-      result?.execution?.execution ||
-      result?.execution ||
-      {};
-
-    const utilityMessage =
-      utilityExecution?.result ||
-      utilityExecution?.message ||
-      result?.task?.result ||
-      "Fetch completed the utility request.";
-
-    const utilitySuccess =
-      result?.status === "completed" ||
-      utilityExecution?.success === true ||
-      result?.task?.status === "completed";
-
-    return sendJson(
-      res,
-      200,
-      {
-        success: utilitySuccess,
-        status: utilitySuccess
-          ? "completed"
-          : "execution_failed",
-        workflow_id: result?.workflow_id || null,
-        message: String(utilityMessage),
-        fetch: result?.fetch || null,
-        atc: result?.atc || null,
-        execution: utilityExecution,
-      },
-      origin
-    );
-  }
 
   if (browserResourceType === "browser_agent") {
     const browserExecution =
