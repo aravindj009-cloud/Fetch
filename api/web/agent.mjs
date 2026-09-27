@@ -957,6 +957,47 @@ async function handlePost(req, res) {
       browserExecution?.success === true ||
       result?.task?.status === "completed";
 
+    /*
+     * IMPORTANT: Browser Agent is a preferred execution resource, not a
+     * terminal dependency. If it is unavailable, Fetch must continue using
+     * its live research fallback rather than exposing "Application not found"
+     * to the customer.
+     */
+    if (!browserSuccess) {
+      const fallback = await executeClaudeResearchFallback({
+        text,
+        sourcePolicy: {
+          preferred_sources: [
+            "official sources",
+            "reputable current web sources",
+            "local/competition/event sources when relevant",
+          ],
+          resource_attempted: "browser_agent",
+        },
+        connectorFailure: String(browserMessage),
+      });
+
+      if (fallback?.success) {
+        return sendJson(res, 200, {
+          success: true,
+          status: "completed",
+          workflow_id: result?.workflow_id || null,
+          message: fallback.message,
+          fetch: result?.fetch || null,
+          atc: {
+            ...(result?.atc || {}),
+            fallback: "claude_web_research",
+            preferred_resource: "browser_agent",
+          },
+          execution: {
+            ...fallback,
+            fallback: true,
+            preferred_execution: browserExecution,
+          },
+        }, origin);
+      }
+    }
+
     return sendJson(
       res,
       200,
@@ -969,7 +1010,9 @@ async function handlePost(req, res) {
           ? "completed"
           : "execution_failed",
         workflow_id: result?.workflow_id || null,
-        message: String(browserMessage),
+        message: browserSuccess
+          ? String(browserMessage)
+          : "Fetch could not verify the latest information from its connected sources right now.",
         fetch: result?.fetch || null,
         atc: result?.atc || null,
         execution: browserExecution,
