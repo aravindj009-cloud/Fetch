@@ -17,6 +17,7 @@
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
+import { executeClaudeResearchFallback } from "../../lib/fetch-claude-research-fallback.mjs";
 
 import {
   getOrCreateCustomer,
@@ -900,6 +901,32 @@ async function handlePost(req, res) {
     );
   }
 
+  /* LIVE WEATHER SOURCE BRIDGE */
+  const resourceType = cleanText(
+    result?.atc?.resource_type ||
+    result?.task?.resource?.type ||
+    result?.execution?.resource_type
+  ).toLowerCase();
+
+  if (resourceType === "weather_source") {
+    const weatherExecution = result?.execution || {};
+    const weatherMessage =
+      weatherExecution?.result ||
+      weatherExecution?.message ||
+      result?.task?.result ||
+      "Fetch could not retrieve the current weather.";
+
+    return sendJson(res, 200, {
+      success: Boolean(weatherExecution?.success),
+      status: weatherExecution?.success ? "completed" : "execution_failed",
+      workflow_id: result?.workflow_id || null,
+      message: String(weatherMessage),
+      fetch: result?.fetch || null,
+      atc: result?.atc || null,
+      execution: weatherExecution,
+    }, origin);
+  }
+
   /*
    * BROWSER AGENT BRIDGE
    *
@@ -1040,6 +1067,29 @@ async function handlePost(req, res) {
       };
     }
 
+    if (!digitalExecution?.success) {
+      const fallback = await executeClaudeResearchFallback({
+        text,
+        sourcePolicy: {
+          preferred_sources: ["authoritative current web sources", "official sources"],
+          resource_attempted: "digital_agent",
+        },
+        connectorFailure: digitalExecution?.message || "Digital Agent execution failed.",
+      });
+
+      if (fallback?.success) {
+        return sendJson(res, 200, {
+          success: true,
+          status: "completed",
+          workflow_id: result?.workflow_id || null,
+          message: fallback.message,
+          fetch: result?.fetch || null,
+          atc: { ...(result?.atc || {}), fallback: "claude_web_research" },
+          execution: { ...fallback, fallback: true },
+        }, origin);
+      }
+    }
+
     return sendJson(
       res,
       200,
@@ -1061,6 +1111,43 @@ async function handlePost(req, res) {
       },
       origin
     );
+  }
+
+  /* UNIVERSAL LIVE RESEARCH FALLBACK */
+  const fallbackResource = cleanText(
+    result?.atc?.resource_type ||
+    result?.task?.resource?.type ||
+    result?.execution?.resource_type ||
+    result?.task?.execution_network
+  ).toLowerCase();
+
+  const fallbackEligible = ![
+    "partner_store", "physical_network", "human_shopper", "shopper", "physical"
+  ].includes(fallbackResource);
+
+  if (fallbackEligible) {
+    const fallback = await executeClaudeResearchFallback({
+      text,
+      sourcePolicy: {
+        preferred_sources: fallbackResource === "browser_agent"
+          ? ["official sources", "reputable current web sources"]
+          : ["authoritative current web sources", "official sources"],
+        resource_attempted: fallbackResource || null,
+      },
+      connectorFailure: result?.execution?.message || result?.task?.result || result?.status || null,
+    });
+
+    if (fallback?.success) {
+      return sendJson(res, 200, {
+        success: true,
+        status: "completed",
+        workflow_id: result?.workflow_id || null,
+        message: fallback.message,
+        fetch: result?.fetch || null,
+        atc: { ...(result?.atc || {}), fallback: "claude_web_research" },
+        execution: { ...fallback, fallback: true },
+      }, origin);
+    }
   }
 
   /*
