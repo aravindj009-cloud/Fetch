@@ -25,6 +25,8 @@ import {
   getOrderById,
   dispatchOrderToPartnerStore,
   offerOrderToShopper,
+  getShopperById,
+  sendWhatsAppMessage,
 } from "../whatsapp/webhook.mjs";
 
 const ALLOWED_ORIGINS = new Set([
@@ -503,6 +505,55 @@ async function handlePhysicalWebRequest({
   };
 }
 
+
+function formatRupees(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toFixed(2) : "0.00";
+}
+
+function normalizePaymentDestination(value) {
+  return cleanText(value).replace(/\s+/g, "");
+}
+
+function buildWebPaymentMessage(order, shopper) {
+  const total = Number(order?.total_amount || 0);
+  const destination = normalizePaymentDestination(
+    shopper?.upi_id || shopper?.phone
+  );
+
+  if (!destination) {
+    return (
+      `Approved 👍\n\n` +
+      `💰 Total: ₹${formatRupees(total)}\n\n` +
+      `Payment is pending. I’m waiting for your Fetch shopper to provide payment details.`
+    );
+  }
+
+  const shopperName = cleanText(shopper?.name);
+
+  return (
+    `Approved 👍\n\n` +
+    `💰 Total: ₹${formatRupees(total)}\n\n` +
+    `💳 Pay the shopper directly:\n` +
+    `${destination}\n\n` +
+    (shopperName ? `Shopper: ${shopperName}\n\n` : "") +
+    `After you complete the payment, reply **PAID** here.\n` +
+    `Fetch will ask the shopper to verify the payment before shopping continues.`
+  );
+}
+
+function isPaymentHelpText(text) {
+  return /^(pay|payment|payment details|upi|how do i pay|how can i pay|show payment|show payment details|pay now)$/i.test(
+    cleanText(text).replace(/[.!?]+$/g, "").trim()
+  );
+}
+
+function isPaymentReportedText(text) {
+  return /^(paid|i paid|payment done|payment sent|i have paid|paid the shopper|done paid)$/i.test(
+    cleanText(text).replace(/[.!?]+$/g, "").trim()
+  );
+}
+
 function buildWebOrderMessage(order) {
   const status = cleanText(order?.status).toLowerCase();
 
@@ -571,9 +622,7 @@ function buildWebOrderMessage(order) {
   }
 
   if (status === "payment_pending") {
-    return order?.shopper_id
-      ? "Approved 👍\n\nYour Fetch shopper is already assigned to this order. Payment is now pending; once the payment is verified, the shopper can continue shopping."
-      : "Approved 👍\n\nPayment is now pending. Fetch will continue the order as soon as a shopper is assigned.";
+    return "Payment is pending. Fetch is waiting for the customer payment to be verified.";
   }
 
   if (status === "delivered") {
@@ -703,7 +752,12 @@ async function handlePost(req, res) {
    */
   let activeOrder = null;
 
-  if (isWebApproval || isWebRejection) {
+  if (
+    isWebApproval ||
+    isWebRejection ||
+    isPaymentHelpText(text) ||
+    isPaymentReportedText(text)
+  ) {
     const phone = syntheticWebPhone(conversationId);
     const customer = await getOrCreateCustomer(phone);
 
@@ -716,9 +770,46 @@ async function handlePost(req, res) {
 
     if (
       activeOrder &&
-      activeOrder.status ===
-        "awaiting_customer_price_confirmation"
+      activeOrder.status === "payment_pending" &&
+      !isPaymentReportedText(text)
     ) {
+      if (isWebRejection) {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: activeOrder.status,
+            message: "Your payment is already pending for this approved order. If you want to stop the order, use CANCEL.",
+            orderId: activeOrder.id,
+            order: activeOrder,
+            terminal: false,
+          },
+          origin
+        );
+      }
+
+      let shopper = null;
+      if (activeOrder.shopper_id) {
+        shopper = await getShopperById(activeOrder.shopper_id);
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: activeOrder.status,
+          message: buildWebPaymentMessage(activeOrder, shopper),
+          orderId: activeOrder.id,
+          order: activeOrder,
+          terminal: false,
+        },
+        origin
+      );
+    }
+
+    if (activeOrder && activeOrder.status === "awaiting_customer_price_confirmation") {
       if (isWebRejection) {
         const cancelledOrder = await updateOrder(
           activeOrder.id,
@@ -805,11 +896,16 @@ async function handlePost(req, res) {
           );
       }
 
+      let shopper = null;
+      if (approvedOrder.shopper_id) {
+        shopper = await getShopperById(approvedOrder.shopper_id);
+      }
+
       const message =
         approvedOrder.shopper_id
-          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nYour Fetch shopper is already assigned to this order. Payment is now pending; the shopper will continue once payment is verified.`
+          ? buildWebPaymentMessage(approvedOrder, shopper)
           : shopperDispatch?.success
-            ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
+            ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. Payment details will appear automatically as soon as the shopper accepts.`
             : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
 
       return sendJson(
@@ -844,6 +940,68 @@ async function handlePost(req, res) {
      * conversation. This is what makes "yes", "no", "okay", etc.
      * work naturally after a Fetch answer.
      */
+  }
+
+  /* WEB PAYMENT HELP / PAYMENT REPORT */
+  if (activeOrder && activeOrder.status === "payment_pending" && isPaymentHelpText(text)) {
+    const shopper = activeOrder.shopper_id
+      ? await getShopperById(activeOrder.shopper_id)
+      : null;
+
+    return sendJson(res, 200, {
+      success: true,
+      status: activeOrder.status,
+      message: buildWebPaymentMessage(activeOrder, shopper),
+      orderId: activeOrder.id,
+      order: activeOrder,
+      terminal: false,
+    }, origin);
+  }
+
+  if (activeOrder && activeOrder.status === "payment_pending" && isPaymentReportedText(text)) {
+    const reported = await updateOrder(activeOrder.id, {
+      payment_status: "customer_reported_paid",
+    });
+
+    if (!reported) {
+      throw new Error("Could not record web customer payment report");
+    }
+
+    let shopper = null;
+    if (activeOrder.shopper_id) {
+      shopper = await getShopperById(activeOrder.shopper_id);
+    }
+
+    const paymentDestination = normalizePaymentDestination(
+      shopper?.upi_id || shopper?.phone
+    );
+
+    if (!paymentDestination) {
+      return sendJson(res, 200, {
+        success: true,
+        status: activeOrder.status,
+        message: "I’m still waiting for your Fetch shopper’s payment details. Please ask them to send their UPI ID in WhatsApp, then tap Payment details here.",
+        orderId: activeOrder.id,
+        order: activeOrder,
+        terminal: false,
+      }, origin);
+    }
+
+    if (shopper?.phone) {
+      await sendWhatsAppMessage(
+        shopper.phone,
+        `💳 The customer says they have paid ₹${formatRupees(activeOrder.total_amount)} directly to you.\n\nPlease check your UPI account. Reply RECEIVED only after the money is actually visible.`
+      );
+    }
+
+    return sendJson(res, 200, {
+      success: true,
+      status: "payment_pending",
+      message: "Thanks 👍 I’ve told your Fetch shopper to verify the payment. The order will continue only after the shopper confirms RECEIVED.",
+      orderId: activeOrder.id,
+      order: reported,
+      terminal: false,
+    }, origin);
   }
 
   /*
