@@ -273,18 +273,34 @@ function validCoordinates(latitude, longitude) {
 }
 
 function syntheticWebPhone(conversationId) {
-  const raw = cleanText(conversationId)
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .slice(-12);
-
   /*
-   * The customers.phone column is used as the customer identity by the
-   * existing physical engine. A deterministic web-only identifier keeps
-   * repeat requests on the same browser conversation tied to one customer.
+   * IMPORTANT: getOrCreateCustomer() ultimately uses the shared physical
+   * engine's normalizePhone(), which keeps digits only. The old web identity
+   * returned values such as `web:<conversationId>`, so the letters/punctuation
+   * could be stripped and different web sessions could collapse onto the same
+   * customer record.
    *
-   * This is intentionally NOT presented as a real phone number.
+   * customers.current_order_id is the authoritative order pointer for the
+   * physical workflow. A web conversation therefore needs a deterministic,
+   * digits-only identity that is unique to that conversation.
+   *
+   * This is an internal identifier only. It is never presented as a real
+   * customer phone number.
    */
-  return `web${raw || "customer"}`;
+  const raw = cleanText(conversationId);
+
+  let hash = 2166136261;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    hash ^= raw.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const suffix = String(hash >>> 0)
+    .padStart(10, "0")
+    .slice(-10);
+
+  return `99${suffix}`;
 }
 
 async function handlePhysicalWebRequest({
