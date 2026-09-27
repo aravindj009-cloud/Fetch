@@ -36,6 +36,365 @@ function cleanText(value) {
   return String(value ?? "").trim();
 }
 
+
+/* =========================================================
+   SOURCE-OF-TRUTH EXECUTORS
+
+   These are deterministic source adapters. They run before the
+   generic conversational agent for domains where "current" data
+   must come from an actual source rather than model memory.
+========================================================= */
+
+function getConversationHistory(body) {
+  return Array.isArray(body?.conversationHistory)
+    ? body.conversationHistory
+        .slice(-10)
+        .map((message) => ({
+          role: message?.role === "assistant" ? "assistant" : "user",
+          content: String(message?.content || "").slice(0, 4000),
+        }))
+    : [];
+}
+
+function buildEffectiveRequestText(text, history) {
+  const current = cleanText(text);
+  if (!current) return current;
+
+  const lower = current.toLowerCase();
+  const looksLikeLocationFollowUp =
+    /^(?:in|at|near|around)\s+.+$/i.test(current) ||
+    /^(?:trivandrum|thiruvananthapuram|kochi|bangalore|bengaluru|chennai|mumbai|delhi|hyderabad|pune|kolkata|goa|new york|london|tokyo|dubai)$/i.test(current);
+
+  if (!looksLikeLocationFollowUp) return current;
+
+  const previousUserMessages = history
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .filter(Boolean);
+
+  const previousAssistantMessages = history
+    .filter((message) => message.role === "assistant")
+    .map((message) => message.content)
+    .filter(Boolean);
+
+  const weatherContext = [...previousUserMessages, ...previousAssistantMessages]
+    .some((value) => /\b(weather|temperature|forecast|rain|rainfall|humidity|wind)\b/i.test(value));
+
+  if (weatherContext) {
+    return `What is the weather today ${current}?`;
+  }
+
+  return current;
+}
+
+function isWeatherRequest(text = "") {
+  return /\b(weather|temperature|forecast|rainfall|rain|humidity|wind speed|wind)\b/i.test(
+    cleanText(text)
+  );
+}
+
+function extractWeatherLocation(text = "") {
+  const value = cleanText(text);
+  const match = value.match(/\b(?:in|at|near|around)\s+([^,?.!]+?)(?:\s+(?:today|now|tonight|tomorrow|currently)\b|[,?.!]|$)/i);
+  if (match?.[1]) return cleanText(match[1]);
+
+  const standalone = value.match(/\b(?:trivandrum|thiruvananthapuram|kochi|cochin|bangalore|bengaluru|chennai|mumbai|delhi|new delhi|hyderabad|pune|kolkata|goa|tokyo|london|dubai|new york)\b/i);
+  return standalone?.[0] ? cleanText(standalone[0]) : null;
+}
+
+async function geocodeWeatherLocation(location) {
+  const query = cleanText(location);
+  if (!query) return null;
+
+  const response = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5&language=en&format=json`
+  );
+
+  if (!response.ok) {
+    throw new Error(`Weather geocoding failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  const results = Array.isArray(data?.results) ? data.results : [];
+  if (!results.length) return null;
+
+  const preferred =
+    results.find((item) =>
+      /india/i.test(`${item?.country || ""} ${item?.country_code || ""}`)
+    ) || results[0];
+
+  return {
+    latitude: Number(preferred.latitude),
+    longitude: Number(preferred.longitude),
+    name: preferred.name || query,
+    country: preferred.country || "",
+    timezone: preferred.timezone || "auto",
+  };
+}
+
+function weatherDescription(code) {
+  const map = {
+    0: "Clear sky",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Depositing rime fog",
+    51: "Light drizzle",
+    53: "Moderate drizzle",
+    55: "Dense drizzle",
+    56: "Light freezing drizzle",
+    57: "Dense freezing drizzle",
+    61: "Slight rain",
+    63: "Moderate rain",
+    65: "Heavy rain",
+    66: "Light freezing rain",
+    67: "Heavy freezing rain",
+    71: "Slight snow",
+    73: "Moderate snow",
+    75: "Heavy snow",
+    77: "Snow grains",
+    80: "Slight rain showers",
+    81: "Moderate rain showers",
+    82: "Violent rain showers",
+    85: "Slight snow showers",
+    86: "Heavy snow showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm with slight hail",
+    99: "Thunderstorm with heavy hail",
+  };
+  return map[Number(code)] || "Current conditions unavailable";
+}
+
+async function executeWeatherSource(text) {
+  const location = extractWeatherLocation(text);
+  if (!location) {
+    return {
+      success: true,
+      status: "needs_clarification",
+      message: "Which city or location should I check the weather for?",
+      resource_type: "weather_source",
+      source: "open_meteo",
+    };
+  }
+
+  const place = await geocodeWeatherLocation(location);
+  if (!place) {
+    return {
+      success: true,
+      status: "needs_clarification",
+      message: `I couldn't locate "${location}". Which city or location should I check?`,
+      resource_type: "weather_source",
+      source: "open_meteo",
+    };
+  }
+
+  const weatherResponse = await fetch(
+    `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(place.latitude)}&longitude=${encodeURIComponent(place.longitude)}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto`
+  );
+
+  if (!weatherResponse.ok) {
+    throw new Error(`Weather source failed (${weatherResponse.status})`);
+  }
+
+  const weather = await weatherResponse.json();
+  const current = weather?.current || {};
+  const units = weather?.current_units || {};
+
+  const temperature = current.temperature_2m;
+  const apparent = current.apparent_temperature;
+  const humidity = current.relative_humidity_2m;
+  const wind = current.wind_speed_10m;
+  const description = weatherDescription(current.weather_code);
+
+  const parts = [
+    `In ${place.name}, it is ${temperature}${units.temperature_2m || "°C"} and ${description.toLowerCase()}.`,
+    apparent != null ? `Feels like ${apparent}${units.apparent_temperature || "°C"}.` : "",
+    humidity != null ? `Humidity is ${humidity}${units.relative_humidity_2m || "%"}.` : "",
+    wind != null ? `Wind is ${wind} ${units.wind_speed_10m || "km/h"}.` : "",
+  ].filter(Boolean);
+
+  return {
+    success: true,
+    status: "completed",
+    message: parts.join(" "),
+    resource_type: "weather_source",
+    execution_type: "source_of_truth",
+    source: "open_meteo",
+    location: place,
+    current,
+    units,
+  };
+}
+
+
+function isTimeRequest(text = "") {
+  return /\b(current|local|present)\s+(time|date)|\bwhat(?:'s| is)\s+the\s+(?:current\s+)?time\b|\btime\s+in\s+[a-z]/i.test(
+    cleanText(text)
+  );
+}
+
+function extractTimeLocation(text = "") {
+  const match = cleanText(text).match(/\btime\s+(?:in|at)\s+([^,?.!]+?)(?:[,?.!]|$)/i);
+  return match?.[1] ? cleanText(match[1]) : null;
+}
+
+function timezoneForLocation(location = "") {
+  const value = cleanText(location).toLowerCase();
+  const map = [
+    [/\b(tokyo|japan)\b/i, "Asia/Tokyo"],
+    [/\b(delhi|new delhi|mumbai|trivandrum|thiruvananthapuram|kochi|bangalore|bengaluru|chennai|hyderabad|pune|kolkata|india)\b/i, "Asia/Kolkata"],
+    [/\b(london|uk|united kingdom)\b/i, "Europe/London"],
+    [/\b(dubai|uae|abu dhabi)\b/i, "Asia/Dubai"],
+    [/\b(singapore)\b/i, "Asia/Singapore"],
+    [/\b(sydney|melbourne|australia)\b/i, "Australia/Sydney"],
+    [/\b(new york|nyc)\b/i, "America/New_York"],
+    [/\b(los angeles|la|san francisco)\b/i, "America/Los_Angeles"],
+    [/\b(chicago)\b/i, "America/Chicago"],
+  ];
+  return map.find(([pattern]) => pattern.test(value))?.[1] || null;
+}
+
+function executeTimeSource(text) {
+  const location = extractTimeLocation(text);
+  const timezone = timezoneForLocation(location || "");
+
+  if (!location || !timezone) {
+    return {
+      success: true,
+      status: "needs_clarification",
+      message: "Which city or location should I check the time for?",
+      resource_type: "deterministic_clock",
+      execution_type: "source_of_truth",
+    };
+  }
+
+  const now = new Date();
+  const time = new Intl.DateTimeFormat("en-IN", {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(now);
+
+  const date = new Intl.DateTimeFormat("en-IN", {
+    timeZone: timezone,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(now);
+
+  return {
+    success: true,
+    status: "completed",
+    message: `The current time in ${location} is ${time} (${date}).`,
+    resource_type: "deterministic_clock",
+    execution_type: "source_of_truth",
+    timezone,
+  };
+}
+
+function isLiveResearchRequest(text = "") {
+  const value = cleanText(text);
+  return /\b(latest|today|tonight|current|currently|now|recent|happening|happened|news|event|events|odi|match|matches|score|scores|schedule|announcement|announced|price|prices|available|availability|deadline|official|research|investigate|look\s+up|verify|check)\b/i.test(value);
+}
+
+async function executeClaudeWebResearch(text, history = []) {
+  const apiKey = cleanText(process.env.ANTHROPIC_API_KEY);
+  if (!apiKey) return null;
+
+  const model = cleanText(process.env.FETCH_RESEARCH_MODEL) || "claude-sonnet-5";
+  const historyText = history
+    .slice(-8)
+    .map((message) => `${message.role}: ${message.content}`)
+    .join("\n");
+
+  const prompt = [
+    "You are Fetch's live research fallback.",
+    "Use web search for current or changing information.",
+    "Answer the user's request directly and concisely.",
+    "Do not claim something is current unless the web search supports it.",
+    "Include the most relevant source links at the end when available.",
+    historyText ? `Recent conversation:\n${historyText}` : "",
+    `User request:\n${cleanText(text)}`,
+  ].filter(Boolean).join("\n\n");
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1800,
+      messages: [{ role: "user", content: prompt }],
+      tools: [
+        {
+          type: "web_search_20260318",
+          name: "web_search",
+          max_uses: 4,
+          allowed_callers: ["direct"],
+          response_inclusion: "full",
+        },
+      ],
+    }),
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    console.error("FETCH CLAUDE RESEARCH ERROR:", response.status, raw.slice(0, 500));
+    return null;
+  }
+
+  const textParts = Array.isArray(data?.content)
+    ? data.content
+        .filter((part) => part?.type === "text" && part?.text)
+        .map((part) => part.text.trim())
+        .filter(Boolean)
+    : [];
+
+  const answer = textParts.join("\n\n").trim();
+  if (!answer) return null;
+
+  const citations = [];
+  for (const part of Array.isArray(data?.content) ? data.content : []) {
+    for (const citation of Array.isArray(part?.citations) ? part.citations : []) {
+      if (citation?.url && !citations.some((item) => item.url === citation.url)) {
+        citations.push({
+          title: citation.title || citation.url,
+          url: citation.url,
+        });
+      }
+    }
+  }
+
+  const sourceBlock = citations.length
+    ? `\n\nSources:\n${citations.slice(0, 5).map((item) => `• ${item.title} — ${item.url}`).join("\n")}`
+    : "";
+
+  return {
+    success: true,
+    status: "completed",
+    message: answer + sourceBlock,
+    resource_type: "browser_agent",
+    execution_type: "web_research_fallback",
+    provider: "anthropic_web_search",
+    model,
+    citations,
+  };
+}
+
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "");
 }
@@ -601,6 +960,8 @@ async function handlePost(req, res) {
 
   const latitude = body.latitude;
   const longitude = body.longitude;
+  const conversationHistory = getConversationHistory(body);
+  const effectiveText = buildEffectiveRequestText(text, conversationHistory);
 
   if (!text) {
     return sendJson(
@@ -788,13 +1149,68 @@ async function handlePost(req, res) {
   }
 
   /*
+   * SOURCE-OF-TRUTH WEATHER EXECUTION
+   *
+   * Weather is not a generic knowledge question. Resolve it against
+   * a live weather source so a model cannot invent current conditions.
+   * The effective text also carries a previous-turn location such as
+   * "what's the weather today" -> "in Trivandrum".
+   */
+  if (isWeatherRequest(effectiveText)) {
+    try {
+      const weatherExecution = await executeWeatherSource(effectiveText);
+
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: weatherExecution.status,
+          workflow_id: null,
+          message: weatherExecution.message,
+          fetch: { source_class: "weather" },
+          atc: { resource_type: "weather_source" },
+          execution: weatherExecution,
+        },
+        origin
+      );
+    } catch (weatherError) {
+      console.error("FETCH WEATHER SOURCE ERROR:", weatherError);
+      // Fall through to the existing intelligence stack if the source is unavailable.
+    }
+  }
+
+  if (isTimeRequest(effectiveText)) {
+    try {
+      const timeExecution = executeTimeSource(effectiveText);
+
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: timeExecution.status,
+          workflow_id: null,
+          message: timeExecution.message,
+          fetch: { source_class: "time" },
+          atc: { resource_type: "deterministic_clock" },
+          execution: timeExecution,
+        },
+        origin
+      );
+    } catch (timeError) {
+      console.error("FETCH TIME SOURCE ERROR:", timeError);
+    }
+  }
+
+  /*
    * IMPORTANT:
    * Always let the Universal Task Engine understand the request first.
    * The web bridge only takes over once the result identifies a physical
    * request. This keeps the web channel aligned with Fetch's core brain.
    */
   const result = await executeUniversalFetchRequest({
-    text,
+    text: effectiveText,
     customerId: null,
     conversationId,
     channel: "web",
@@ -813,17 +1229,7 @@ async function handlePost(req, res) {
        * This is used by the digital agent to understand follow-ups
        * such as "yes", "what do you mean?", "and tomorrow?", etc.
        */
-      conversation_history: Array.isArray(body.conversationHistory)
-        ? body.conversationHistory
-            .slice(-10)
-            .map((message) => ({
-              role:
-                message?.role === "assistant"
-                  ? "assistant"
-                  : "user",
-              content: String(message?.content || "").slice(0, 4000),
-            }))
-        : [],
+      conversation_history: conversationHistory,
     },
   });
 
@@ -961,6 +1367,38 @@ async function handlePost(req, res) {
       }
     }
 
+    if (!browserSuccess && isLiveResearchRequest(effectiveText)) {
+      try {
+        const researchExecution = await executeClaudeWebResearch(
+          effectiveText,
+          conversationHistory
+        );
+
+        if (researchExecution?.success && researchExecution?.message) {
+          return sendJson(
+            res,
+            200,
+            {
+              success: true,
+              status: "completed",
+              workflow_id: result?.workflow_id || null,
+              message: researchExecution.message,
+              fetch: result?.fetch || null,
+              atc: {
+                ...(result?.atc || {}),
+                resource_type: "browser_agent",
+                fallback_from: "browser_agent",
+              },
+              execution: researchExecution,
+            },
+            origin
+          );
+        }
+      } catch (researchError) {
+        console.error("FETCH BROWSER -> CLAUDE FALLBACK ERROR:", researchError);
+      }
+    }
+
     /*
      * If Browser Agent genuinely succeeded, return its result.
      * A successful connector result is already authoritative.
@@ -981,6 +1419,46 @@ async function handlePost(req, res) {
       },
       origin
     );
+  }
+
+  /*
+   * LIVE RESEARCH FALLBACK
+   *
+   * If Browser Agent did not produce the result, use the already-connected
+   * Claude web-search capability for current information before falling back
+   * to the normal conversational model. This keeps current-data requests
+   * grounded without making Browser Agent a single point of failure.
+   */
+  if (isLiveResearchRequest(effectiveText)) {
+    try {
+      const researchExecution = await executeClaudeWebResearch(
+        effectiveText,
+        conversationHistory
+      );
+
+      if (researchExecution?.success && researchExecution?.message) {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: "completed",
+            workflow_id: result?.workflow_id || null,
+            message: researchExecution.message,
+            fetch: result?.fetch || null,
+            atc: {
+              ...(result?.atc || {}),
+              resource_type: "browser_agent",
+              fallback_from: result?.atc?.resource_type || "digital_agent",
+            },
+            execution: researchExecution,
+          },
+          origin
+        );
+      }
+    } catch (researchError) {
+      console.error("FETCH LIVE RESEARCH FALLBACK ERROR:", researchError);
+    }
   }
 
   /*
@@ -1005,7 +1483,7 @@ async function handlePost(req, res) {
         result?.task?.task_id ||
         result?.workflow_id ||
         `web:${Date.now()}`,
-      source_text: text,
+      source_text: effectiveText,
       goal:
         result?.task?.goal ||
         result?.fetch?.decisions?.[0]?.plan?.source_text ||
@@ -1044,17 +1522,7 @@ async function handlePost(req, res) {
            * digital-agent bridge. This is critical for normal
            * multi-turn conversation on the web channel.
            */
-          conversation_history: Array.isArray(body.conversationHistory)
-            ? body.conversationHistory
-                .slice(-10)
-                .map((message) => ({
-                  role:
-                    message?.role === "assistant"
-                      ? "assistant"
-                      : "user",
-                  content: String(message?.content || "").slice(0, 4000),
-                }))
-            : [],
+          conversation_history: conversationHistory,
         },
       });
     } catch (error) {
