@@ -32,13 +32,6 @@ const ALLOWED_ORIGINS = new Set([
   "https://www.tryfetch.in",
 ]);
 
-const ANTHROPIC_API_KEY = String(process.env.ANTHROPIC_API_KEY || "").trim();
-const RESPONSE_COMPOSER_MODEL = String(
-  process.env.FETCH_RESPONSE_MODEL ||
-  process.env.FETCH_RESEARCH_MODEL ||
-  "claude-sonnet-5"
-).trim();
-
 function cleanText(value) {
   return String(value ?? "").trim();
 }
@@ -59,97 +52,6 @@ function corsHeaders(origin) {
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
-}
-
-async function composeConciseFetchAnswer({ text, rawAnswer, sourceType = "browser_agent" } = {}) {
-  const answer = cleanText(rawAnswer);
-
-  if (!answer) {
-    return "Fetch could not produce an answer.";
-  }
-
-  // If Claude is not configured, preserve the verified worker result.
-  if (!ANTHROPIC_API_KEY) {
-    return answer;
-  }
-
-  const prompt = `You are the final response editor for Fetch, a personal AI assistant.
-
-User request:
-${cleanText(text)}
-
-Verified worker result (${sourceType}):
-${answer.slice(0, 12000)}
-
-Rewrite ONLY the verified result above into a concise answer for the user.
-
-Rules:
-- Do not add facts, guesses, recommendations, or information not present in the verified result.
-- Keep the factual meaning unchanged.
-- Answer the user's actual question first.
-- Default to 2-5 short bullet points.
-- For a very simple answer, use 1-3 short sentences instead.
-- One fact per line.
-- Remove repetition, filler, long explanations, and internal reasoning.
-- Keep important dates, times, names, locations, prices, scores, and caveats when present.
-- If sources are present, keep at most 3 relevant sources in a compact final line.
-- Do not use headings unless they improve clarity.
-- Do not use Markdown bold, italics, tables, or decorative separators.
-- Never mention Browser Agent, Claude, ATC, connectors, prompts, or internal systems.
-- Return ONLY the final user-facing answer.`;
-
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: RESPONSE_COMPOSER_MODEL,
-        max_tokens: 650,
-        temperature: 0.1,
-        messages: [
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-
-    const raw = await response.text();
-    let data = null;
-
-    try {
-      data = raw ? JSON.parse(raw) : null;
-    } catch {
-      data = null;
-    }
-
-    if (!response.ok) {
-      console.error(
-        "FETCH RESPONSE COMPOSER ERROR:",
-        data?.error?.message || `HTTP ${response.status}`
-      );
-      return answer;
-    }
-
-    const composed = cleanText(
-      Array.isArray(data?.content)
-        ? data.content
-            .filter((block) => block?.type === "text")
-            .map((block) => block.text)
-            .join("\n")
-        : ""
-    );
-
-    return composed || answer;
-  } catch (error) {
-    console.error(
-      "FETCH RESPONSE COMPOSER NETWORK ERROR:",
-      error?.message || error
-    );
-    return answer;
-  }
 }
 
 function sendJson(res, status, payload, origin = "") {
@@ -371,34 +273,18 @@ function validCoordinates(latitude, longitude) {
 }
 
 function syntheticWebPhone(conversationId) {
+  const raw = cleanText(conversationId)
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(-12);
+
   /*
-   * IMPORTANT: getOrCreateCustomer() ultimately uses the shared physical
-   * engine's normalizePhone(), which keeps digits only. The old web identity
-   * returned values such as `web:<conversationId>`, so the letters/punctuation
-   * could be stripped and different web sessions could collapse onto the same
-   * customer record.
+   * The customers.phone column is used as the customer identity by the
+   * existing physical engine. A deterministic web-only identifier keeps
+   * repeat requests on the same browser conversation tied to one customer.
    *
-   * customers.current_order_id is the authoritative order pointer for the
-   * physical workflow. A web conversation therefore needs a deterministic,
-   * digits-only identity that is unique to that conversation.
-   *
-   * This is an internal identifier only. It is never presented as a real
-   * customer phone number.
+   * This is intentionally NOT presented as a real phone number.
    */
-  const raw = cleanText(conversationId);
-
-  let hash = 2166136261;
-
-  for (let index = 0; index < raw.length; index += 1) {
-    hash ^= raw.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  const suffix = String(hash >>> 0)
-    .padStart(10, "0")
-    .slice(-10);
-
-  return `99${suffix}`;
+  return `web${raw || "customer"}`;
 }
 
 async function handlePhysicalWebRequest({
@@ -997,33 +883,98 @@ async function handlePost(req, res) {
     const browserExecution =
       result?.execution?.execution || result?.execution || {};
 
-    const browserRawMessage =
+    const browserMessage =
       browserExecution?.result ||
       browserExecution?.message ||
       result?.task?.result ||
       "The Browser Agent completed the task.";
-
-    const browserMessage = await composeConciseFetchAnswer({
-      text,
-      rawAnswer: browserRawMessage,
-      sourceType: "browser_agent",
-    });
 
     const browserSuccess =
       result?.status === "completed" ||
       browserExecution?.success === true ||
       result?.task?.status === "completed";
 
+    /*
+     * Browser Agent is a preferred research resource, not a hard
+     * dependency. If it fails, hand the SAME user request to the existing
+     * Digital Agent. That agent already has current-research support and
+     * concise-answer formatting. Fetch must not expose connector errors
+     * such as "Application not found" to the customer.
+     */
+    if (!browserSuccess) {
+      try {
+        const fallbackExecution = await executeDigitalAgent({
+          task: {
+            id: result?.task?.task_id || result?.workflow_id || `web:${Date.now()}`,
+            source_text: text,
+            goal: text,
+            objective: text,
+            task_data: {
+              source_text: text,
+              text,
+              browser_fallback: true,
+              browser_error: String(browserMessage),
+            },
+          },
+          route: {
+            resource_type: "digital_agent",
+            fallback_from: "browser_agent",
+          },
+          resource: { resource_type: "digital_agent" },
+          context: {
+            channel: "web",
+            text,
+            conversation_id: conversationId,
+            workflow_id: result?.workflow_id || null,
+            use_web_search: true,
+            conversation_history: Array.isArray(body.conversationHistory)
+              ? body.conversationHistory.slice(-10).map((message) => ({
+                  role: message?.role === "assistant" ? "assistant" : "user",
+                  content: String(message?.content || "").slice(0, 4000),
+                }))
+              : [],
+          },
+        });
+
+        if (fallbackExecution?.success && fallbackExecution?.message) {
+          return sendJson(
+            res,
+            200,
+            {
+              success: true,
+              status: "completed",
+              workflow_id: result?.workflow_id || null,
+              message: String(fallbackExecution.message),
+              fetch: result?.fetch || null,
+              atc: {
+                ...(result?.atc || {}),
+                resource_type: "digital_agent",
+                fallback_from: "browser_agent",
+              },
+              execution: fallbackExecution,
+            },
+            origin
+          );
+        }
+      } catch (fallbackError) {
+        console.error("FETCH BROWSER FALLBACK ERROR:", fallbackError);
+      }
+    }
+
+    /*
+     * If Browser Agent genuinely succeeded, return its result.
+     * A successful connector result is already authoritative.
+     */
     return sendJson(
       res,
       200,
       {
         success: browserSuccess,
-        status: browserSuccess
-          ? "completed"
-          : "execution_failed",
+        status: browserSuccess ? "completed" : "execution_failed",
         workflow_id: result?.workflow_id || null,
-        message: String(browserMessage),
+        message: browserSuccess
+          ? String(browserMessage)
+          : "I couldn't complete that research right now. Please try again.",
         fetch: result?.fetch || null,
         atc: result?.atc || null,
         execution: browserExecution,
