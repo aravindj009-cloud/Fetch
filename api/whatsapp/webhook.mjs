@@ -813,6 +813,26 @@ async function clearCustomerAddress(customerId) {
    SHOPPERS
 ========================================================= */
 
+async function getShopperById(
+  shopperId
+) {
+  if (!shopperId) {
+    return null;
+  }
+
+  const data =
+    await supabaseRequest(
+      `shoppers?id=eq.${encodeURIComponent(
+        shopperId
+      )}&select=*&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
+}
+
 async function getShopperByPhone(
   phone
 ) {
@@ -13042,4 +13062,6 @@ export {
   getOrderById,
   dispatchOrderToPartnerStore,
   offerOrderToShopper,
+  getShopperById,
+  sendWhatsAppMessage,
 };
