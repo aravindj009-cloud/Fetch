@@ -25,8 +25,6 @@ import {
   getOrderById,
   dispatchOrderToPartnerStore,
   offerOrderToShopper,
-  getShopperById,
-  sendWhatsAppMessage,
 } from "../whatsapp/webhook.mjs";
 
 const ALLOWED_ORIGINS = new Set([
@@ -66,12 +64,29 @@ function sendJson(res, status, payload, origin = "") {
   return res.json(payload);
 }
 
-function isPhysicalResult(result) {
+function isLikelyPhysicalText(value) {
+  const text = cleanText(value).toLowerCase();
+  if (!text) return false;
+
+  const acquisitionVerb = /\b(buy|purchase|order|get|bring|send|deliver|delivery|shop|pick up|pickup|arrange|source|need)\b/i.test(text);
+  const physicalObject = /\b(item|product|goods?|grocery|groceries|medicine|medicines|food|drink|drinks|snack|snacks|pack|packs|box|boxes|bottle|bottles|piece|pieces|unit|units|supplies|stuff)\b/i.test(text);
+  const deliveryCue = /\b(deliver|delivery|delivered|my address|our address|near me|nearby|at home|to my home)\b/i.test(text);
+  const quantityObjectCue = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+[a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)?\b/i.test(text);
+
+  return Boolean(
+    acquisitionVerb &&
+    (physicalObject || deliveryCue || quantityObjectCue)
+  );
+}
+
+function isPhysicalResult(result, requestText = "") {
   const network =
     cleanText(
       result?.task?.execution_network ||
-      result?.task?.intent?.domain ||
-      result?.fetch?.decisions?.[0]?.decision?.network
+      result?.task?.intent?.execution_network ||
+      result?.fetch?.decisions?.[0]?.decision?.network ||
+      result?.atc?.execution_network ||
+      result?.execution?.network
     ).toLowerCase();
 
   const resourceType =
@@ -83,17 +98,27 @@ function isPhysicalResult(result) {
 
   const fetchDomain =
     cleanText(
-      result?.fetch?.decisions?.[0]?.intent?.domain
+      result?.fetch?.decisions?.[0]?.intent?.domain ||
+      result?.task?.domain ||
+      result?.task?.intent?.domain
     ).toLowerCase();
+
+  const sourceClass = cleanText(
+    result?.task?.metadata?.source_class ||
+    result?.task?.metadata?.source_policy?.source_class
+  ).toLowerCase();
 
   return (
     network === "physical_network" ||
     resourceType === "partner_store" ||
-    fetchDomain === "physical"
+    fetchDomain === "physical" ||
+    fetchDomain === "physical_commerce" ||
+    sourceClass === "physical_fulfilment" ||
+    isLikelyPhysicalText(requestText)
   );
 }
 
-function extractPhysicalItems(result, originalText = "") {
+function extractPhysicalItems(result) {
   /*
    * Physical entities can be preserved at several layers of the
    * Universal Task response. V9 normally exposes them under
@@ -170,110 +195,56 @@ function extractPhysicalItems(result, originalText = "") {
   }
 
   /*
-   * Generic last-resort parser.
+   * Last-resort parser for simple physical requests when structured
+   * entities are unexpectedly absent. This is intentionally generic.
+   * It never contains a hard-coded product catalogue.
    *
-   * IMPORTANT:
-   * The web API already receives the customer's original text as `text`.
-   * Do not depend on one exact Universal Task response shape here.
-   * If structured entities are absent, recover a simple shopping item from
-   * the original request instead of maintaining a hard-coded product list.
+   * Examples it can recover:
+   *   "get me two KitKats"
+   *   "I need 3 bottles of water"
+   *   "deliver 2 ice packs to my address"
    *
-   * Examples:
-   *   "I need two packets of ice pack delivered to my address"
-   *      -> quantity 2, name "ice pack"
-   *   "get 3 bottles of water"
-   *      -> quantity 3, name "water"
-   *   "buy bread"
-   *      -> quantity 1, name "bread"
+   * V9 structured entities remain the preferred source.
    */
   if (!items.length) {
     const rawText = cleanText(
-      originalText ||
       result?.task?.user_request ||
       result?.task?.source_text ||
-      result?.fetch?.received_text ||
-      result?.fetch?.input?.text
+      result?.fetch?.received_text
     );
 
-    if (rawText) {
-      let value = rawText
-        .replace(/[\u2018\u2019]/g, "'")
-        .replace(/[\u201C\u201D]/g, '"')
-        .replace(/\s+/g, " ")
+    const genericPatterns = [
+      /\b(?:get|buy|purchase|order|bring|send|deliver|find|source|need)\s+(?:me\s+|us\s+)?(\d+)\s+(.+?)(?:\s+(?:delivered|to\s+(?:my|our)\s+address|for\s+(?:me|us)))?$/i,
+      /\b(?:get|buy|purchase|order|bring|send|deliver|find|source|need)\s+(?:me\s+|us\s+)?(.+?)(?:\s+(?:delivered|to\s+(?:my|our)\s+address|for\s+(?:me|us)))?$/i,
+    ];
+
+    for (const pattern of genericPatterns) {
+      const match = rawText.match(pattern);
+      if (!match) continue;
+
+      const quantity = /^\d+$/.test(match[1] || '')
+        ? Number(match[1])
+        : 1;
+      const rawName = /^\d+$/.test(match[1] || '')
+        ? match[2]
+        : match[1];
+
+      const name = cleanText(rawName)
+        .replace(/\b(?:delivered|delivery|to\s+(?:my|our)\s+address|for\s+(?:me|us))\b.*$/i, '')
+        .replace(/\s+/g, ' ')
         .trim();
 
-      // Remove common request wrappers / fulfilment language.
-      value = value
-        .replace(/\b(i|we)\s+(need|want|would like|would love)\s+/i, "")
-        .replace(/\b(can you|could you|please)\s+/i, "")
-        .replace(/\b(fetch|get|buy|purchase|bring|find|source|pick up|pickup|deliver|delivery|order)\s+/i, "")
-        .replace(/\b(for me|for us)\b/gi, "")
-        .replace(/\b(delivered?|delivery)\s+(to|at)\s+(my|our)\s+(address|location)\b.*$/i, "")
-        .replace(/\b(to|at)\s+(my|our)\s+(address|location)\b.*$/i, "")
-        .replace(/[.!?]+$/g, "")
-        .trim();
-
-      // Capture a leading quantity, including words such as "two".
-      const numberWords = {
-        one: 1,
-        a: 1,
-        an: 1,
-        two: 2,
-        three: 3,
-        four: 4,
-        five: 5,
-        six: 6,
-        seven: 7,
-        eight: 8,
-        nine: 9,
-        ten: 10,
-      };
-
-      let quantity = 1;
-      let quantityMatched = false;
-
-      const numericMatch = value.match(/^([0-9]+)\s+/);
-      if (numericMatch) {
-        quantity = Math.max(1, Number(numericMatch[1]));
-        quantityMatched = true;
-        value = value.slice(numericMatch[0].length).trim();
-      } else {
-        const wordMatch = value.match(/^(one|a|an|two|three|four|five|six|seven|eight|nine|ten)\s+/i);
-        if (wordMatch) {
-          quantity = numberWords[wordMatch[1].toLowerCase()] || 1;
-          quantityMatched = true;
-          value = value.slice(wordMatch[0].length).trim();
-        }
-      }
-
-      // Strip packaging/unit words without stripping the actual product.
-      value = value
-        .replace(/^(packets?|packs?|pieces?|pcs?|units?|bottles?|cans?|boxes?|box|bags?|kg|kgs|kilograms?|g|grams?|litres?|liters?|l|ml)\s+(?:of\s+)?/i, "")
-        .replace(/^of\s+/i, "")
-        .trim();
-
-      // Remove trailing destination / polite clauses that survived above.
-      value = value
-        .replace(/\b(and|then)\s+(deliver|bring|send)\b.*$/i, "")
-        .replace(/\s+(to|at)\s+(my|our)\s+(address|location)\b.*$/i, "")
-        .trim();
-
-      // Reject text that is clearly not an item description.
-      const looksLikeItem =
-        value &&
-        value.length <= 120 &&
-        !/^(please|thanks|thank you|it|this|that|there|here)$/i.test(value) &&
-        !/\b(my address|my location|as soon as possible|urgent)\b/i.test(value);
-
-      if (looksLikeItem) {
+      if (name && name.length <= 120) {
         addItem({
-          name: value,
-          quantity: quantityMatched ? quantity : 1,
+          name,
+          quantity: Number.isFinite(quantity) && quantity > 0
+            ? Math.floor(quantity)
+            : 1,
         });
+        break;
       }
     }
   }
-
   return items;
 }
 
@@ -302,27 +273,18 @@ function validCoordinates(latitude, longitude) {
 }
 
 function syntheticWebPhone(conversationId) {
+  const raw = cleanText(conversationId)
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(-12);
+
   /*
-   * The shared physical engine normalizes customer phone identities to
-   * digits only. The old web identity ("webabc...") therefore collapsed
-   * different browser conversations into the same customer record.
+   * The customers.phone column is used as the customer identity by the
+   * existing physical engine. A deterministic web-only identifier keeps
+   * repeat requests on the same browser conversation tied to one customer.
    *
-   * Use a deterministic digits-only hash instead. It is an internal
-   * identifier and is never presented to the customer as a phone number.
+   * This is intentionally NOT presented as a real phone number.
    */
-  const raw = cleanText(conversationId);
-  let hash = 2166136261;
-
-  for (let index = 0; index < raw.length; index += 1) {
-    hash ^= raw.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  const suffix = String(hash >>> 0)
-    .padStart(10, "0")
-    .slice(-10);
-
-  return `99${suffix}`;
+  return `web${raw || "customer"}`;
 }
 
 async function handlePhysicalWebRequest({
@@ -344,7 +306,7 @@ async function handlePhysicalWebRequest({
     };
   }
 
-  const items = extractPhysicalItems(result, text);
+  const items = extractPhysicalItems(result);
 
   if (!items.length) {
     return {
@@ -505,55 +467,6 @@ async function handlePhysicalWebRequest({
   };
 }
 
-
-function formatRupees(value) {
-  const number = Number(value || 0);
-  return Number.isFinite(number) ? number.toFixed(2) : "0.00";
-}
-
-function normalizePaymentDestination(value) {
-  return cleanText(value).replace(/\s+/g, "");
-}
-
-function buildWebPaymentMessage(order, shopper) {
-  const total = Number(order?.total_amount || 0);
-  const destination = normalizePaymentDestination(
-    shopper?.upi_id || shopper?.phone
-  );
-
-  if (!destination) {
-    return (
-      `Approved 👍\n\n` +
-      `💰 Total: ₹${formatRupees(total)}\n\n` +
-      `Payment is pending. I’m waiting for your Fetch shopper to provide payment details.`
-    );
-  }
-
-  const shopperName = cleanText(shopper?.name);
-
-  return (
-    `Approved 👍\n\n` +
-    `💰 Total: ₹${formatRupees(total)}\n\n` +
-    `💳 Pay the shopper directly:\n` +
-    `${destination}\n\n` +
-    (shopperName ? `Shopper: ${shopperName}\n\n` : "") +
-    `After you complete the payment, reply **PAID** here.\n` +
-    `Fetch will ask the shopper to verify the payment before shopping continues.`
-  );
-}
-
-function isPaymentHelpText(text) {
-  return /^(pay|payment|payment details|upi|how do i pay|how can i pay|show payment|show payment details|pay now)$/i.test(
-    cleanText(text).replace(/[.!?]+$/g, "").trim()
-  );
-}
-
-function isPaymentReportedText(text) {
-  return /^(paid|i paid|payment done|payment sent|i have paid|paid the shopper|done paid)$/i.test(
-    cleanText(text).replace(/[.!?]+$/g, "").trim()
-  );
-}
-
 function buildWebOrderMessage(order) {
   const status = cleanText(order?.status).toLowerCase();
 
@@ -589,13 +502,8 @@ function buildWebOrderMessage(order) {
       parts.push(`Total: ₹${total.toFixed(2)}`);
     }
 
-    const sourceLabel = order?.shopper_id
-      ? "Your Fetch shopper has sourced the items and provided the real price."
-      : "The partner store has confirmed the order and provided the real price.";
-
     return (
-      sourceLabel +
-      "\n\n" +
+      "The partner store has confirmed the order and provided the real price.\n\n" +
       parts.join("\n") +
       "\n\nPlease approve the total to continue."
     );
@@ -619,10 +527,6 @@ function buildWebOrderMessage(order) {
 
   if (status === "out_for_delivery") {
     return "Your order is out for delivery.";
-  }
-
-  if (status === "payment_pending") {
-    return "Payment is pending. Fetch is waiting for the customer payment to be verified.";
   }
 
   if (status === "delivered") {
@@ -752,12 +656,7 @@ async function handlePost(req, res) {
    */
   let activeOrder = null;
 
-  if (
-    isWebApproval ||
-    isWebRejection ||
-    isPaymentHelpText(text) ||
-    isPaymentReportedText(text)
-  ) {
+  if (isWebApproval || isWebRejection) {
     const phone = syntheticWebPhone(conversationId);
     const customer = await getOrCreateCustomer(phone);
 
@@ -770,46 +669,9 @@ async function handlePost(req, res) {
 
     if (
       activeOrder &&
-      activeOrder.status === "payment_pending" &&
-      !isPaymentReportedText(text)
+      activeOrder.status ===
+        "awaiting_customer_price_confirmation"
     ) {
-      if (isWebRejection) {
-        return sendJson(
-          res,
-          200,
-          {
-            success: true,
-            status: activeOrder.status,
-            message: "Your payment is already pending for this approved order. If you want to stop the order, use CANCEL.",
-            orderId: activeOrder.id,
-            order: activeOrder,
-            terminal: false,
-          },
-          origin
-        );
-      }
-
-      let shopper = null;
-      if (activeOrder.shopper_id) {
-        shopper = await getShopperById(activeOrder.shopper_id);
-      }
-
-      return sendJson(
-        res,
-        200,
-        {
-          success: true,
-          status: activeOrder.status,
-          message: buildWebPaymentMessage(activeOrder, shopper),
-          orderId: activeOrder.id,
-          order: activeOrder,
-          terminal: false,
-        },
-        origin
-      );
-    }
-
-    if (activeOrder && activeOrder.status === "awaiting_customer_price_confirmation") {
       if (isWebRejection) {
         const cancelledOrder = await updateOrder(
           activeOrder.id,
@@ -872,41 +734,24 @@ async function handlePost(req, res) {
         );
       }
 
+      /*
+       * Match the existing WhatsApp customer-approval flow:
+       * only after the customer approves the real total do we
+       * offer the confirmed procurement job to a shopper.
+       */
+      const shopperDispatch =
+        await offerOrderToShopper(
+          approvedOrder
+        );
+
       const total = Number(
         approvedOrder.total_amount || 0
       );
 
-      /*
-       * IMPORTANT STATE-MACHINE RULE:
-       *
-       * If a shopper has already claimed this order, customer approval
-       * must NOT create a second shopper offer. The existing shopper is
-       * the owner of the order and remains bound through payment and
-       * fulfilment.
-       *
-       * Only orders without shopper_id are eligible for a new shopper
-       * dispatch after approval.
-       */
-      let shopperDispatch = null;
-
-      if (!approvedOrder.shopper_id) {
-        shopperDispatch =
-          await offerOrderToShopper(
-            approvedOrder
-          );
-      }
-
-      let shopper = null;
-      if (approvedOrder.shopper_id) {
-        shopper = await getShopperById(approvedOrder.shopper_id);
-      }
-
       const message =
-        approvedOrder.shopper_id
-          ? buildWebPaymentMessage(approvedOrder, shopper)
-          : shopperDispatch?.success
-            ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. Payment details will appear automatically as soon as the shopper accepts.`
-            : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
+        shopperDispatch?.success
+          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
+          : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
 
       return sendJson(
         res,
@@ -940,68 +785,6 @@ async function handlePost(req, res) {
      * conversation. This is what makes "yes", "no", "okay", etc.
      * work naturally after a Fetch answer.
      */
-  }
-
-  /* WEB PAYMENT HELP / PAYMENT REPORT */
-  if (activeOrder && activeOrder.status === "payment_pending" && isPaymentHelpText(text)) {
-    const shopper = activeOrder.shopper_id
-      ? await getShopperById(activeOrder.shopper_id)
-      : null;
-
-    return sendJson(res, 200, {
-      success: true,
-      status: activeOrder.status,
-      message: buildWebPaymentMessage(activeOrder, shopper),
-      orderId: activeOrder.id,
-      order: activeOrder,
-      terminal: false,
-    }, origin);
-  }
-
-  if (activeOrder && activeOrder.status === "payment_pending" && isPaymentReportedText(text)) {
-    const reported = await updateOrder(activeOrder.id, {
-      payment_status: "customer_reported_paid",
-    });
-
-    if (!reported) {
-      throw new Error("Could not record web customer payment report");
-    }
-
-    let shopper = null;
-    if (activeOrder.shopper_id) {
-      shopper = await getShopperById(activeOrder.shopper_id);
-    }
-
-    const paymentDestination = normalizePaymentDestination(
-      shopper?.upi_id || shopper?.phone
-    );
-
-    if (!paymentDestination) {
-      return sendJson(res, 200, {
-        success: true,
-        status: activeOrder.status,
-        message: "I’m still waiting for your Fetch shopper’s payment details. Please ask them to send their UPI ID in WhatsApp, then tap Payment details here.",
-        orderId: activeOrder.id,
-        order: activeOrder,
-        terminal: false,
-      }, origin);
-    }
-
-    if (shopper?.phone) {
-      await sendWhatsAppMessage(
-        shopper.phone,
-        `💳 The customer says they have paid ₹${formatRupees(activeOrder.total_amount)} directly to you.\n\nPlease check your UPI account. Reply RECEIVED only after the money is actually visible.`
-      );
-    }
-
-    return sendJson(res, 200, {
-      success: true,
-      status: "payment_pending",
-      message: "Thanks 👍 I’ve told your Fetch shopper to verify the payment. The order will continue only after the shopper confirms RECEIVED.",
-      orderId: activeOrder.id,
-      order: reported,
-      terminal: false,
-    }, origin);
   }
 
   /*
@@ -1061,7 +844,43 @@ async function handlePost(req, res) {
     })
   );
 
-  if (isPhysicalResult(result)) {
+  /*
+   * DETERMINISTIC CLOCK BRIDGE
+   *
+   * Time was resolved by the universal engine using the system clock.
+   * Expose that result directly instead of allowing the request to fall
+   * through to the Digital Agent.
+   */
+  const deterministicResourceType = cleanText(
+    result?.atc?.resource_type ||
+    result?.task?.resource?.type ||
+    result?.execution?.resource_type
+  ).toLowerCase();
+
+  if (deterministicResourceType === "deterministic_clock") {
+    const timeMessage =
+      result?.execution?.result ||
+      result?.task?.result ||
+      result?.completed_results?.[0]?.message ||
+      "Fetch resolved the current time.";
+
+    return sendJson(
+      res,
+      200,
+      {
+        success: true,
+        status: "completed",
+        workflow_id: result?.workflow_id || null,
+        message: String(timeMessage),
+        atc: result?.atc || null,
+        execution: result?.execution || null,
+        source: "deterministic_clock",
+      },
+      origin
+    );
+  }
+
+  if (isPhysicalResult(result, text)) {
     const physical = await handlePhysicalWebRequest({
       result,
       text,
