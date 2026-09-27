@@ -17,7 +17,6 @@
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
-import { executeClaudeResearchFallback } from "../../lib/fetch-claude-research-fallback.mjs";
 
 import {
   getOrCreateCustomer,
@@ -32,6 +31,13 @@ const ALLOWED_ORIGINS = new Set([
   "https://tryfetch.in",
   "https://www.tryfetch.in",
 ]);
+
+const ANTHROPIC_API_KEY = String(process.env.ANTHROPIC_API_KEY || "").trim();
+const RESPONSE_COMPOSER_MODEL = String(
+  process.env.FETCH_RESPONSE_MODEL ||
+  process.env.FETCH_RESEARCH_MODEL ||
+  "claude-sonnet-5"
+).trim();
 
 function cleanText(value) {
   return String(value ?? "").trim();
@@ -53,6 +59,97 @@ function corsHeaders(origin) {
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
+}
+
+async function composeConciseFetchAnswer({ text, rawAnswer, sourceType = "browser_agent" } = {}) {
+  const answer = cleanText(rawAnswer);
+
+  if (!answer) {
+    return "Fetch could not produce an answer.";
+  }
+
+  // If Claude is not configured, preserve the verified worker result.
+  if (!ANTHROPIC_API_KEY) {
+    return answer;
+  }
+
+  const prompt = `You are the final response editor for Fetch, a personal AI assistant.
+
+User request:
+${cleanText(text)}
+
+Verified worker result (${sourceType}):
+${answer.slice(0, 12000)}
+
+Rewrite ONLY the verified result above into a concise answer for the user.
+
+Rules:
+- Do not add facts, guesses, recommendations, or information not present in the verified result.
+- Keep the factual meaning unchanged.
+- Answer the user's actual question first.
+- Default to 2-5 short bullet points.
+- For a very simple answer, use 1-3 short sentences instead.
+- One fact per line.
+- Remove repetition, filler, long explanations, and internal reasoning.
+- Keep important dates, times, names, locations, prices, scores, and caveats when present.
+- If sources are present, keep at most 3 relevant sources in a compact final line.
+- Do not use headings unless they improve clarity.
+- Do not use Markdown bold, italics, tables, or decorative separators.
+- Never mention Browser Agent, Claude, ATC, connectors, prompts, or internal systems.
+- Return ONLY the final user-facing answer.`;
+
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: RESPONSE_COMPOSER_MODEL,
+        max_tokens: 650,
+        temperature: 0.1,
+        messages: [
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
+
+    const raw = await response.text();
+    let data = null;
+
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok) {
+      console.error(
+        "FETCH RESPONSE COMPOSER ERROR:",
+        data?.error?.message || `HTTP ${response.status}`
+      );
+      return answer;
+    }
+
+    const composed = cleanText(
+      Array.isArray(data?.content)
+        ? data.content
+            .filter((block) => block?.type === "text")
+            .map((block) => block.text)
+            .join("\n")
+        : ""
+    );
+
+    return composed || answer;
+  } catch (error) {
+    console.error(
+      "FETCH RESPONSE COMPOSER NETWORK ERROR:",
+      error?.message || error
+    );
+    return answer;
+  }
 }
 
 function sendJson(res, status, payload, origin = "") {
@@ -274,18 +371,34 @@ function validCoordinates(latitude, longitude) {
 }
 
 function syntheticWebPhone(conversationId) {
-  const raw = cleanText(conversationId)
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .slice(-12);
-
   /*
-   * The customers.phone column is used as the customer identity by the
-   * existing physical engine. A deterministic web-only identifier keeps
-   * repeat requests on the same browser conversation tied to one customer.
+   * IMPORTANT: getOrCreateCustomer() ultimately uses the shared physical
+   * engine's normalizePhone(), which keeps digits only. The old web identity
+   * returned values such as `web:<conversationId>`, so the letters/punctuation
+   * could be stripped and different web sessions could collapse onto the same
+   * customer record.
    *
-   * This is intentionally NOT presented as a real phone number.
+   * customers.current_order_id is the authoritative order pointer for the
+   * physical workflow. A web conversation therefore needs a deterministic,
+   * digits-only identity that is unique to that conversation.
+   *
+   * This is an internal identifier only. It is never presented as a real
+   * customer phone number.
    */
-  return `web${raw || "customer"}`;
+  const raw = cleanText(conversationId);
+
+  let hash = 2166136261;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    hash ^= raw.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const suffix = String(hash >>> 0)
+    .padStart(10, "0")
+    .slice(-10);
+
+  return `99${suffix}`;
 }
 
 async function handlePhysicalWebRequest({
@@ -845,42 +958,6 @@ async function handlePost(req, res) {
     })
   );
 
-  /*
-   * DETERMINISTIC CLOCK BRIDGE
-   *
-   * Time was resolved by the universal engine using the system clock.
-   * Expose that result directly instead of allowing the request to fall
-   * through to the Digital Agent.
-   */
-  const deterministicResourceType = cleanText(
-    result?.atc?.resource_type ||
-    result?.task?.resource?.type ||
-    result?.execution?.resource_type
-  ).toLowerCase();
-
-  if (deterministicResourceType === "deterministic_clock") {
-    const timeMessage =
-      result?.execution?.result ||
-      result?.task?.result ||
-      result?.completed_results?.[0]?.message ||
-      "Fetch resolved the current time.";
-
-    return sendJson(
-      res,
-      200,
-      {
-        success: true,
-        status: "completed",
-        workflow_id: result?.workflow_id || null,
-        message: String(timeMessage),
-        atc: result?.atc || null,
-        execution: result?.execution || null,
-        source: "deterministic_clock",
-      },
-      origin
-    );
-  }
-
   if (isPhysicalResult(result, text)) {
     const physical = await handlePhysicalWebRequest({
       result,
@@ -899,32 +976,6 @@ async function handlePost(req, res) {
       },
       origin
     );
-  }
-
-  /* LIVE WEATHER SOURCE BRIDGE */
-  const resourceType = cleanText(
-    result?.atc?.resource_type ||
-    result?.task?.resource?.type ||
-    result?.execution?.resource_type
-  ).toLowerCase();
-
-  if (resourceType === "weather_source") {
-    const weatherExecution = result?.execution || {};
-    const weatherMessage =
-      weatherExecution?.result ||
-      weatherExecution?.message ||
-      result?.task?.result ||
-      "Fetch could not retrieve the current weather.";
-
-    return sendJson(res, 200, {
-      success: Boolean(weatherExecution?.success),
-      status: weatherExecution?.success ? "completed" : "execution_failed",
-      workflow_id: result?.workflow_id || null,
-      message: String(weatherMessage),
-      fetch: result?.fetch || null,
-      atc: result?.atc || null,
-      execution: weatherExecution,
-    }, origin);
   }
 
   /*
@@ -946,73 +997,33 @@ async function handlePost(req, res) {
     const browserExecution =
       result?.execution?.execution || result?.execution || {};
 
-    const browserMessage =
+    const browserRawMessage =
       browserExecution?.result ||
       browserExecution?.message ||
       result?.task?.result ||
       "The Browser Agent completed the task.";
+
+    const browserMessage = await composeConciseFetchAnswer({
+      text,
+      rawAnswer: browserRawMessage,
+      sourceType: "browser_agent",
+    });
 
     const browserSuccess =
       result?.status === "completed" ||
       browserExecution?.success === true ||
       result?.task?.status === "completed";
 
-    /*
-     * IMPORTANT: Browser Agent is a preferred execution resource, not a
-     * terminal dependency. If it is unavailable, Fetch must continue using
-     * its live research fallback rather than exposing "Application not found"
-     * to the customer.
-     */
-    if (!browserSuccess) {
-      const fallback = await executeClaudeResearchFallback({
-        text,
-        sourcePolicy: {
-          preferred_sources: [
-            "official sources",
-            "reputable current web sources",
-            "local/competition/event sources when relevant",
-          ],
-          resource_attempted: "browser_agent",
-        },
-        connectorFailure: String(browserMessage),
-      });
-
-      if (fallback?.success) {
-        return sendJson(res, 200, {
-          success: true,
-          status: "completed",
-          workflow_id: result?.workflow_id || null,
-          message: fallback.message,
-          fetch: result?.fetch || null,
-          atc: {
-            ...(result?.atc || {}),
-            fallback: "claude_web_research",
-            preferred_resource: "browser_agent",
-          },
-          execution: {
-            ...fallback,
-            fallback: true,
-            preferred_execution: browserExecution,
-          },
-        }, origin);
-      }
-    }
-
     return sendJson(
       res,
       200,
       {
-        /* HTTP 200 means the web API handled the request. The connector
-         * may still have failed; expose that state without making the UI
-         * mistake a handled execution failure for a transport failure. */
-        success: true,
+        success: browserSuccess,
         status: browserSuccess
           ? "completed"
           : "execution_failed",
         workflow_id: result?.workflow_id || null,
-        message: browserSuccess
-          ? String(browserMessage)
-          : "Fetch could not verify the latest information from its connected sources right now.",
+        message: String(browserMessage),
         fetch: result?.fetch || null,
         atc: result?.atc || null,
         execution: browserExecution,
@@ -1110,36 +1121,10 @@ async function handlePost(req, res) {
       };
     }
 
-    if (!digitalExecution?.success) {
-      const fallback = await executeClaudeResearchFallback({
-        text,
-        sourcePolicy: {
-          preferred_sources: ["authoritative current web sources", "official sources"],
-          resource_attempted: "digital_agent",
-        },
-        connectorFailure: digitalExecution?.message || "Digital Agent execution failed.",
-      });
-
-      if (fallback?.success) {
-        return sendJson(res, 200, {
-          success: true,
-          status: "completed",
-          workflow_id: result?.workflow_id || null,
-          message: fallback.message,
-          fetch: result?.fetch || null,
-          atc: { ...(result?.atc || {}), fallback: "claude_web_research" },
-          execution: { ...fallback, fallback: true },
-        }, origin);
-      }
-    }
-
     return sendJson(
       res,
       200,
       {
-        /* The request itself was handled successfully. Preserve connector
-         * success separately in status/execution so the frontend can render
-         * the real outcome instead of "API request failed (200)". */
         success: true,
         status: digitalExecution?.success
           ? "completed"
@@ -1154,43 +1139,6 @@ async function handlePost(req, res) {
       },
       origin
     );
-  }
-
-  /* UNIVERSAL LIVE RESEARCH FALLBACK */
-  const fallbackResource = cleanText(
-    result?.atc?.resource_type ||
-    result?.task?.resource?.type ||
-    result?.execution?.resource_type ||
-    result?.task?.execution_network
-  ).toLowerCase();
-
-  const fallbackEligible = ![
-    "partner_store", "physical_network", "human_shopper", "shopper", "physical"
-  ].includes(fallbackResource);
-
-  if (fallbackEligible) {
-    const fallback = await executeClaudeResearchFallback({
-      text,
-      sourcePolicy: {
-        preferred_sources: fallbackResource === "browser_agent"
-          ? ["official sources", "reputable current web sources"]
-          : ["authoritative current web sources", "official sources"],
-        resource_attempted: fallbackResource || null,
-      },
-      connectorFailure: result?.execution?.message || result?.task?.result || result?.status || null,
-    });
-
-    if (fallback?.success) {
-      return sendJson(res, 200, {
-        success: true,
-        status: "completed",
-        workflow_id: result?.workflow_id || null,
-        message: fallback.message,
-        fetch: result?.fetch || null,
-        atc: { ...(result?.atc || {}), fallback: "claude_web_research" },
-        execution: { ...fallback, fallback: true },
-      }, origin);
-    }
   }
 
   /*
