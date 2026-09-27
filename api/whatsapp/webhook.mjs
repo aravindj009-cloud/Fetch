@@ -7917,45 +7917,61 @@ async function handleCustomerMessage({
     return;
   }
 
-  /*
-    CUSTOMER LOCATION IDEMPOTENCY
+  /* -----------------------------------------
+     SIMPLE MVP: LOCATION AFTER PRODUCT PRICE
+  ----------------------------------------- */
 
-    WhatsApp can deliver the same location more than once, and customers
-    may intentionally resend their current location after the order has
-    already reached pricing/approval.
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_customer_price_confirmation" &&
+    location &&
+    Number.isFinite(
+      Number(location.latitude)
+    ) &&
+    Number.isFinite(
+      Number(location.longitude)
+    )
+  ) {
+    const locationLabel =
+      [
+        location.name,
+        location.address,
+      ]
+        .map(
+          (value) =>
+            String(value || "").trim()
+        )
+        .filter(Boolean)
+        .join(", ");
 
-    The old flow handled every location as a fresh location event. That
-    could re-notify the shopper and, more importantly, make an already
-    priced order look as though it still needed location processing.
+    const updatedOrder =
+      await updateOrder(
+        activeOrder.id,
+        {
+          delivery_address:
+            locationLabel ||
+            activeOrder.delivery_address ||
+            "WhatsApp location",
+        }
+      );
 
-    Treat an identical location as an idempotent acknowledgement.
-    A materially different location is still allowed through the normal
-    location path below.
-  */
-  function customerLocationMatchesOrder(order, latitude, longitude) {
-    if (!order) return false;
-
-    const existingLatitude = Number(order.customer_latitude);
-    const existingLongitude = Number(order.customer_longitude);
-
-    if (
-      !Number.isFinite(existingLatitude) ||
-      !Number.isFinite(existingLongitude) ||
-      existingLatitude === 0 ||
-      existingLongitude === 0
-    ) {
-      return false;
+    if (!updatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location, but I couldn’t update the order. Please send it again."
+      );
+      return;
     }
 
-    // ~1 metre tolerance. WhatsApp normally returns the same coordinates
-    // for a repeated location pin, while still allowing a real move.
-    const tolerance = 0.00001;
-
-    return (
-      Math.abs(existingLatitude - latitude) <= tolerance &&
-      Math.abs(existingLongitude - longitude) <= tolerance
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Location saved 📍. Fetch will calculate the delivery fee from the road distance once the store is known."
     );
+
+    return;
   }
+
 
   function buildCustomerMapsLink(latitude, longitude) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
@@ -8025,59 +8041,6 @@ async function handleCustomerMessage({
     const latitude = locationLatitude;
     const longitude = locationLongitude;
 
-    /*
-      Idempotent repeat-location handling.
-
-      Do this before writing the message or notifying the shopper. This
-      prevents a second identical location pin from looking like a new
-      fulfillment event.
-    */
-    if (
-      activeOrder &&
-      customerLocationMatchesOrder(
-        activeOrder,
-        latitude,
-        longitude
-      ) &&
-      activeOrder.status !== "collecting_details"
-    ) {
-      console.log(
-        "FETCH CUSTOMER LOCATION IDEMPOTENT:",
-        JSON.stringify({
-          orderId: activeOrder.id,
-          status: activeOrder.status,
-          latitude,
-          longitude,
-        })
-      );
-
-      if (
-        activeOrder.status ===
-        "awaiting_customer_price_confirmation"
-      ) {
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          `I already have this delivery location 📍\n\nYour current Fetch total is ₹${formatRupees(
-            activeOrder.total_amount
-          )}. Please use the approval option in the pricing message to continue.`
-        );
-      } else if (
-        activeOrder.status === "payment_pending"
-      ) {
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          "I already have your delivery location 📍. Your order is now waiting for payment."
-        );
-      } else {
-        await sendWhatsAppMessage(
-          normalizedPhone,
-          "I already have this delivery location 📍. No action is needed."
-        );
-      }
-
-      return;
-    }
-
     const locationLabel =
       [
         location.name,
@@ -8135,9 +8098,6 @@ async function handleCustomerMessage({
 
       customer_location_shared_at:
         new Date().toISOString(),
-
-      customer_location_source:
-        "whatsapp_location",
     };
 
     /*
@@ -10814,10 +10774,13 @@ async function handleShopperMessage({
     const storeName = String(locationOrder.store_name || "").trim();
     const itemTotal = Number(locationOrder.item_total);
 
-    if (!Number.isFinite(itemTotal) || itemTotal < 0) {
+    // A newly dispatched shopper order intentionally starts with item_total = 0.
+    // Zero is therefore NOT a valid product price. The shopper must report the
+    // actual product price before Fetch can calculate the customer total.
+    if (!Number.isFinite(itemTotal) || itemTotal <= 0) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "Please send the actual product price first, for example: PRICE: 35"
+        "Please send the actual product price first, for example: PRICE: 35\n\nThen share the source/store’s WhatsApp location 📍"
       );
       return;
     }
@@ -10897,17 +10860,33 @@ async function handleShopperMessage({
         `Source location received 📍\n\n${sourceLabel}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(itemTotal)}\n🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n💰 Customer total: ₹${formatRupees(total)}\n\nI’ve sent the final amount to the customer for approval. Do not enter a delivery fee yourself.`
       );
 
-      await notifyCustomerForOrder(
-        updatedOrder.id,
-        buildCustomerPriceApprovalMessage(updatedOrder)
-      );
+      // Customer notification is a separate side effect. It must NOT be part
+      // of the pricing transaction's catch block: if notification fails after
+      // the order was priced successfully, never tell the shopper that the
+      // delivery calculation failed and never ask them to resend the location.
+      try {
+        await notifyCustomerForOrder(
+          updatedOrder.id,
+          buildCustomerPriceApprovalMessage(updatedOrder)
+        );
+      } catch (notificationError) {
+        console.error(
+          "FETCH SHOPPER CUSTOMER PRICE NOTIFICATION ERROR:",
+          notificationError
+        );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Pricing calculated and saved successfully ✅\n\n🛒 Product price: ₹${formatRupees(itemTotal)}\n🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n💰 Customer total: ₹${formatRupees(total)}\n\nThe customer notification could not be delivered yet. Do not resend the store location; the pricing is already saved.`
+        );
+      }
 
       return;
     } catch (error) {
       console.error("FETCH SHOPPER STORE LOCATION PRICING ERROR:", error);
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I received the store location, but couldn’t calculate the delivery charge. Please send the store’s WhatsApp location again. 📍"
+        "I received the store location, but couldn’t calculate the delivery charge. Please verify the store/customer locations and try again. 📍"
       );
       return;
     }
@@ -12022,7 +12001,7 @@ async function handleShopperMessage({
    */
   const itemOnlyPrice = parseShopperProductPrice(rawText);
 
-  if (itemOnlyPrice != null) {
+  if (itemOnlyPrice != null && itemOnlyPrice > 0) {
     const updatedOrder = await updateOrder(order.id, {
       item_total: itemOnlyPrice,
       fetch_fee: FETCH_FEE,
@@ -12079,7 +12058,7 @@ async function handleShopperMessage({
   if (/^price\b/i.test(rawText)) {
     await sendWhatsAppMessage(
       normalizedPhone,
-      "Please send only the product price like this: PRICE: 35\n\nThen share the source/store’s WhatsApp location 📍"
+      "Please send a valid product price greater than ₹0, like this: PRICE: 35\n\nThen share the source/store’s WhatsApp location 📍"
     );
     return;
   }
