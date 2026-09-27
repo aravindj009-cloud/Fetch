@@ -934,7 +934,10 @@ async function handlePost(req, res) {
       res,
       200,
       {
-        success: browserSuccess,
+        /* HTTP 200 means the web API handled the request. The connector
+         * may still have failed; expose that state without making the UI
+         * mistake a handled execution failure for a transport failure. */
+        success: true,
         status: browserSuccess
           ? "completed"
           : "execution_failed",
@@ -1041,6 +1044,9 @@ async function handlePost(req, res) {
       res,
       200,
       {
+        /* The request itself was handled successfully. Preserve connector
+         * success separately in status/execution so the frontend can render
+         * the real outcome instead of "API request failed (200)". */
         success: true,
         status: digitalExecution?.success
           ? "completed"
