@@ -91,7 +91,7 @@ function isPhysicalResult(result) {
   );
 }
 
-function extractPhysicalItems(result) {
+function extractPhysicalItems(result, originalText = "") {
   /*
    * Physical entities can be preserved at several layers of the
    * Universal Task response. V9 normally exposes them under
@@ -168,44 +168,107 @@ function extractPhysicalItems(result) {
   }
 
   /*
-   * Last-resort parser for simple physical requests when structured
-   * entities are unexpectedly absent. This is intentionally limited and
-   * does not replace V9's entity extraction.
+   * Generic last-resort parser.
+   *
+   * IMPORTANT:
+   * The web API already receives the customer's original text as `text`.
+   * Do not depend on one exact Universal Task response shape here.
+   * If structured entities are absent, recover a simple shopping item from
+   * the original request instead of maintaining a hard-coded product list.
+   *
+   * Examples:
+   *   "I need two packets of ice pack delivered to my address"
+   *      -> quantity 2, name "ice pack"
+   *   "get 3 bottles of water"
+   *      -> quantity 3, name "water"
+   *   "buy bread"
+   *      -> quantity 1, name "bread"
    */
   if (!items.length) {
     const rawText = cleanText(
+      originalText ||
       result?.task?.user_request ||
       result?.task?.source_text ||
-      result?.fetch?.received_text
+      result?.fetch?.received_text ||
+      result?.fetch?.input?.text
     );
 
-    const knownProducts = [
-      {
-        pattern: /\bkit\s*kats?\b/i,
-        quantityPattern: /(\d+)\s+kit\s*kats?/i,
-        name: "KitKat",
-      },
-      {
-        pattern: /\bmilk\b/i,
-        quantityPattern: /(\d+)\s+milk/i,
-        name: "milk",
-      },
-      {
-        pattern: /\bbread\b/i,
-        quantityPattern: /(\d+)\s+bread/i,
-        name: "bread",
-      },
-    ];
+    if (rawText) {
+      let value = rawText
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/\s+/g, " ")
+        .trim();
 
-    for (const product of knownProducts) {
-      if (!product.pattern.test(rawText)) continue;
+      // Remove common request wrappers / fulfilment language.
+      value = value
+        .replace(/\b(i|we)\s+(need|want|would like|would love)\s+/i, "")
+        .replace(/\b(can you|could you|please)\s+/i, "")
+        .replace(/\b(fetch|get|buy|purchase|bring|find|source|pick up|pickup|deliver|delivery|order)\s+/i, "")
+        .replace(/\b(for me|for us)\b/gi, "")
+        .replace(/\b(delivered?|delivery)\s+(to|at)\s+(my|our)\s+(address|location)\b.*$/i, "")
+        .replace(/\b(to|at)\s+(my|our)\s+(address|location)\b.*$/i, "")
+        .replace(/[.!?]+$/g, "")
+        .trim();
 
-      const match = rawText.match(product.quantityPattern);
+      // Capture a leading quantity, including words such as "two".
+      const numberWords = {
+        one: 1,
+        a: 1,
+        an: 1,
+        two: 2,
+        three: 3,
+        four: 4,
+        five: 5,
+        six: 6,
+        seven: 7,
+        eight: 8,
+        nine: 9,
+        ten: 10,
+      };
 
-      addItem({
-        name: product.name,
-        quantity: match ? Number(match[1]) : 1,
-      });
+      let quantity = 1;
+      let quantityMatched = false;
+
+      const numericMatch = value.match(/^([0-9]+)\s+/);
+      if (numericMatch) {
+        quantity = Math.max(1, Number(numericMatch[1]));
+        quantityMatched = true;
+        value = value.slice(numericMatch[0].length).trim();
+      } else {
+        const wordMatch = value.match(/^(one|a|an|two|three|four|five|six|seven|eight|nine|ten)\s+/i);
+        if (wordMatch) {
+          quantity = numberWords[wordMatch[1].toLowerCase()] || 1;
+          quantityMatched = true;
+          value = value.slice(wordMatch[0].length).trim();
+        }
+      }
+
+      // Strip packaging/unit words without stripping the actual product.
+      value = value
+        .replace(/^(packets?|packs?|pieces?|pcs?|units?|bottles?|cans?|boxes?|box|bags?|kg|kgs|kilograms?|g|grams?|litres?|liters?|l|ml)\s+(?:of\s+)?/i, "")
+        .replace(/^of\s+/i, "")
+        .trim();
+
+      // Remove trailing destination / polite clauses that survived above.
+      value = value
+        .replace(/\b(and|then)\s+(deliver|bring|send)\b.*$/i, "")
+        .replace(/\s+(to|at)\s+(my|our)\s+(address|location)\b.*$/i, "")
+        .trim();
+
+      // Reject text that is clearly not an item description.
+      const looksLikeItem =
+        value &&
+        value.length <= 120 &&
+        !/^(please|thanks|thank you|it|this|that|there|here)$/i.test(value) &&
+        !/\b(my address|my location|as soon as possible|urgent)\b/i.test(value);
+
+      if (looksLikeItem) {
+        addItem({
+          name: value,
+          quantity: quantityMatched ? quantity : 1,
+        });
+      }
     }
   }
 
@@ -279,7 +342,7 @@ async function handlePhysicalWebRequest({
     };
   }
 
-  const items = extractPhysicalItems(result);
+  const items = extractPhysicalItems(result, text);
 
   if (!items.length) {
     return {
