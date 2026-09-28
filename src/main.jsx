@@ -240,6 +240,20 @@ function parseResearchResults(text) {
     title = title.replace(/\s+/g, " ").trim();
     summary = summary.replace(/\s+/g, " ").trim();
 
+    // Google News commonly appends the publisher to the headline itself.
+    // Keep publisher only in the metadata row.
+    if (source) {
+      const lowerTitleValue = title.toLowerCase();
+      const lowerSourceValue = source.toLowerCase();
+      for (const separator of [" - ", " – ", " — "]) {
+        const suffix = separator + lowerSourceValue;
+        if (lowerTitleValue.endsWith(suffix)) {
+          title = title.slice(0, title.length - suffix.length).trim();
+          break;
+        }
+      }
+    }
+
     // RSS feeds often contain several related headlines in one item.
     // Do not dump that noisy feed text into the customer chat.
     if (summary.length > 160) {
