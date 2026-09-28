@@ -526,7 +526,7 @@ export default function App() {
 
       if (resolvedOrderId) {
         localStorage.setItem(ACTIVE_ORDER_KEY, resolvedOrderId);
-        watchOrder(resolvedOrderId, text);
+        watchOrder(resolvedOrderId, text, extractApiMessage(data) || "");
       }
     } catch (error) {
       console.error("FETCH UI ERROR", error);
@@ -561,7 +561,7 @@ export default function App() {
     }
   }
 
-  async function watchOrder(orderId, originalText = "") {
+  async function watchOrder(orderId, originalText = "", initialMessage = "") {
     if (!orderId) return;
 
     // Never create two polling loops for the same order.
@@ -570,6 +570,9 @@ export default function App() {
     }
 
     activeWatchRef.current = orderId;
+    if (initialMessage) {
+      lastOrderMessageRef.current.set(orderId, "initial::" + normalizeAssistantText(initialMessage).trim());
+    }
 
     for (let check = 0; check < MAX_ORDER_CHECKS; check += 1) {
       if (check > 0) {
