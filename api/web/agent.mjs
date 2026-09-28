@@ -18,16 +18,16 @@
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
 
-import {
-  getOrCreateCustomer,
-  createOrder,
-  updateOrder,
-  getOrderById,
-  dispatchOrderToPartnerStore,
-  offerOrderToShopper,
-} from "../whatsapp/webhook.mjs";
+let physicalOrderModulePromise = null;
 
-const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V6";
+async function getPhysicalOrderModule() {
+  if (!physicalOrderModulePromise) {
+    physicalOrderModulePromise = import("../whatsapp/webhook.mjs");
+  }
+  return physicalOrderModulePromise;
+}
+
+const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V7";
 const ALLOWED_ORIGINS = new Set([
   "https://tryfetch.in",
   "https://www.tryfetch.in",
