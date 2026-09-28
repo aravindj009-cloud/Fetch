@@ -491,6 +491,94 @@ async function executeGeminiWebResearch(text, history = []) {
   };
 }
 
+
+/* =========================================================
+   GEMINI LEGACY SEARCH FALLBACK
+   Some deployments can reject the Interactions endpoint while the
+   GenerateContent endpoint is available. Use the same Gemini model and
+   Google Search grounding through the stable GenerateContent REST API.
+========================================================= */
+async function executeGeminiGenerateContentResearch(text, history = []) {
+  const apiKey = cleanText(process.env.GEMINI_API_KEY);
+  if (!apiKey) return null;
+
+  const model = cleanText(process.env.FETCH_GEMINI_RESEARCH_MODEL) || "gemini-3.8-flash";
+  const historyText = history
+    .slice(-8)
+    .map((message) => `${message.role}: ${message.content}`)
+    .join("\n");
+
+  const prompt = [
+    "You are Fetch, a personal AI assistant with live web research.",
+    "Use Google Search grounding and current web evidence.",
+    "Answer the user's exact request directly.",
+    "Prefer official or primary sources when available.",
+    "For schedules, timings, prices, events, scores, availability, and other changing facts, include the relevant date/time and never guess.",
+    "If evidence is insufficient, say so clearly.",
+    "Do not mention internal tools, browser agents, CAPTCHAs, or implementation details.",
+    historyText ? `Recent conversation:\n${historyText}` : "",
+    `User request:\n${cleanText(text)}`,
+  ].filter(Boolean).join("\n\n");
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": apiKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ googleSearch: {} }],
+      }),
+    }
+  );
+
+  const raw = await response.text();
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+
+  if (!response.ok) {
+    console.error("FETCH GEMINI GENERATE CONTENT ERROR:", response.status, raw.slice(0, 1000));
+    return null;
+  }
+
+  const parts = data?.candidates?.[0]?.content?.parts;
+  const answer = Array.isArray(parts)
+    ? parts.map((part) => cleanText(part?.text)).filter(Boolean).join("\n\n").trim()
+    : "";
+
+  if (!answer) return null;
+
+  const citations = [];
+  const chunks = data?.candidates?.[0]?.groundingMetadata?.groundingChunks;
+  for (const chunk of Array.isArray(chunks) ? chunks : []) {
+    const web = chunk?.web;
+    if (web?.uri && !citations.some((item) => item.url === web.uri)) {
+      citations.push({
+        title: cleanText(web.title) || web.uri,
+        url: web.uri,
+      });
+    }
+  }
+
+  const sourceBlock = citations.length
+    ? `\n\nSources:\n${citations.slice(0, 6).map((item) => `• ${item.title} — ${item.url}`).join("\n")}`
+    : "";
+
+  return {
+    success: true,
+    status: "completed",
+    message: answer + sourceBlock,
+    resource_type: "research_engine",
+    execution_type: "google_search_grounded",
+    provider: "gemini_generate_content",
+    model,
+    citations,
+  };
+}
+
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "");
 }
@@ -1312,10 +1400,17 @@ async function handlePost(req, res) {
    */
   if (!isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText)) {
     try {
-      const researchExecution = await executeGeminiWebResearch(
+      let researchExecution = await executeGeminiWebResearch(
         effectiveText,
         conversationHistory
       );
+
+      if (!researchExecution?.success) {
+        researchExecution = await executeGeminiGenerateContentResearch(
+          effectiveText,
+          conversationHistory
+        );
+      }
 
       if (researchExecution?.success && researchExecution?.message) {
         return sendJson(
@@ -1440,6 +1535,30 @@ async function handlePost(req, res) {
    * the worker's actual result instead of falling through to the generic
    * "no execution connector" message.
    */
+  /*
+   * HARD LIVE-RESEARCH ISOLATION
+   *
+   * A research request that reaches this point has already failed both
+   * server-side research providers. Never send it to Browser Agent: that
+   * would reintroduce CAPTCHA/bot-verification failures into the MVP.
+   */
+  if (!isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText)) {
+    return sendJson(
+      res,
+      200,
+      {
+        success: false,
+        status: "research_unavailable",
+        workflow_id: null,
+        message: "I couldn't retrieve reliable live web information for that request right now. I did not use an unverified browser result.",
+        fetch: { source_class: "live_research" },
+        atc: { resource_type: "research_engine" },
+        execution: { success: false, status: "provider_unavailable" },
+      },
+      origin
+    );
+  }
+
   const browserResourceType = cleanText(
     result?.atc?.resource_type ||
     result?.task?.resource?.type ||
