@@ -11,7 +11,9 @@ const SUPABASE_URL =
   Never expose this value in browser code.
 */
 const SUPABASE_KEY =
-  process.env.SUPABASE_SECRET_KEY;
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE;
 
 if (!SUPABASE_KEY) {
   throw new Error(
