@@ -154,6 +154,39 @@ function parseRetryDelayMs(raw) {
    must come from an actual source rather than model memory.
 ========================================================= */
 
+function normalizeCitations(value) {
+  const items = Array.isArray(value) ? value : [];
+  const seen = new Set();
+
+  return items
+    .map((item) => {
+      if (typeof item === "string") {
+        return { title: item, url: item };
+      }
+
+      if (!item || typeof item !== "object") return null;
+
+      const url =
+        cleanText(item.url) ||
+        cleanText(item.link) ||
+        cleanText(item.source_url) ||
+        cleanText(item.uri);
+
+      if (!url || !/^https?:\\/\\//i.test(url) || seen.has(url)) return null;
+      seen.add(url);
+
+      return {
+        title:
+          cleanText(item.title) ||
+          cleanText(item.name) ||
+          url,
+        url,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
 function getConversationHistory(body) {
   return Array.isArray(body?.conversationHistory)
     ? body.conversationHistory
@@ -1593,11 +1626,7 @@ async function handlePost(req, res) {
               fetch: { source_class: "live_research" },
               atc: { resource_type: "research_engine" },
               execution: researchExecution,
-              citations:
-                researchExecution?.citations ||
-                researchExecution?.sources ||
-                researchExecution?.groundingMetadata?.groundingChunks ||
-                [],
+              citations: normalizeCitations(researchExecution?.citations),
             },
             origin
           );
@@ -1717,16 +1746,14 @@ async function handlePost(req, res) {
             status: "completed",
             provider: "public_search_synthesis",
             citations:
-              Array.isArray(result?.sources) ? result.sources :
-              Array.isArray(result?.execution?.sources) ? result.execution.sources :
-              Array.isArray(result?.task?.sources) ? result.task.sources :
-              [],
+              normalizeCitations(
+                result?.sources || result?.execution?.sources || result?.task?.sources
+              ),
           },
           citations:
-            Array.isArray(result?.sources) ? result.sources :
-            Array.isArray(result?.execution?.sources) ? result.execution.sources :
-            Array.isArray(result?.task?.sources) ? result.task.sources :
-            [],
+            normalizeCitations(
+              result?.sources || result?.execution?.sources || result?.task?.sources
+            ),
         },
         origin
       );
