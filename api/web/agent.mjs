@@ -1236,6 +1236,9 @@ function buildWebOrderMessage(order) {
 
 async function handleGet(req, res) {
   const origin = req.headers.origin || "";
+
+  const { getOrderById } = await getPhysicalOrderModule();
+
   const orderId = cleanText(req.query?.orderId);
 
   if (!orderId) {
