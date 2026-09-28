@@ -1593,7 +1593,17 @@ async function handlePost(req, res) {
               fetch: { source_class: "live_research" },
               atc: { resource_type: "research_engine" },
               execution: researchExecution,
+              citations:
+                researchExecution?.citations ||
+                researchExecution?.sources ||
+                researchExecution?.groundingMetadata?.groundingChunks ||
+                [],
             },
+            citations:
+              researchExecution?.citations ||
+              researchExecution?.sources ||
+              researchExecution?.groundingMetadata?.groundingChunks ||
+              [],
             origin
           );
         }
@@ -1711,9 +1721,17 @@ async function handlePost(req, res) {
             success: true,
             status: "completed",
             provider: "public_search_synthesis",
-            citations: Array.isArray(result?.sources) ? result.sources : [],
+            citations:
+              Array.isArray(result?.sources) ? result.sources :
+              Array.isArray(result?.execution?.sources) ? result.execution.sources :
+              Array.isArray(result?.task?.sources) ? result.task.sources :
+              [],
           },
-          citations: Array.isArray(result?.sources) ? result.sources : [],
+          citations:
+            Array.isArray(result?.sources) ? result.sources :
+            Array.isArray(result?.execution?.sources) ? result.execution.sources :
+            Array.isArray(result?.task?.sources) ? result.task.sources :
+            [],
         },
         origin
       );
