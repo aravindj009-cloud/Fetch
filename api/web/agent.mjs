@@ -1395,6 +1395,16 @@ async function handlePost(req, res) {
       normalizedApproval
     );
 
+  const isWebPaymentHelp =
+    /^(pay|payment|pay now|make payment|how do i pay|how can i pay|payment details|upi|show payment|show me payment|send payment details|pay the shopper)$/.test(
+      normalizedApproval
+    );
+
+  const isWebPaid =
+    /^(paid|paid it|paid now|i paid|i've paid|i have paid|payment done|payment completed|payment sent|sent the payment|done with payment|paid the shopper|payment successful|payment success|paid successfully)$/.test(
+      normalizedApproval
+    );
+
   /*
    * IMPORTANT CONVERSATION RULE:
    *
@@ -1411,7 +1421,7 @@ async function handlePost(req, res) {
    */
   let activeOrder = null;
 
-  if (isWebApproval || isWebRejection) {
+  if (isWebApproval || isWebRejection || isWebPaymentHelp || isWebPaid) {
     // Reuse the same physical-order state machine as WhatsApp for web approvals.
     // These functions live in the physical order module and must be loaded before
     // reading the synthetic web customer's current order.
@@ -1431,6 +1441,131 @@ async function handlePost(req, res) {
     activeOrder = currentOrderId
       ? await getOrderById(currentOrderId)
       : null;
+
+    if (
+      activeOrder &&
+      activeOrder.status === "payment_pending" &&
+      (isWebPaymentHelp || isWebPaid)
+    ) {
+      if (isWebPaymentHelp) {
+        const shopper = activeOrder.shopper_id
+          ? await getPhysicalOrderModule().then((module) =>
+              module.getShopperById(activeOrder.shopper_id)
+            )
+          : null;
+
+        const destination =
+          cleanText(shopper?.upi_id) ||
+          cleanText(shopper?.phone);
+
+        if (!destination) {
+          return sendJson(
+            res,
+            200,
+            {
+              success: true,
+              status: activeOrder.status,
+              message: "Your order is approved, but your shopper’s payment details are not available yet.",
+              orderId: activeOrder.id,
+              order: activeOrder,
+              terminal: false,
+            },
+            origin
+          );
+        }
+
+        const total = Number(activeOrder.total_amount || 0);
+        const totalText = Number.isFinite(total)
+          ? `₹${total.toFixed(2)}`
+          : "the approved amount";
+
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: activeOrder.status,
+            message:
+              `Please pay ${totalText} directly to your Fetch shopper via UPI.\n\nUPI / mobile: ${destination}\n\nAfter paying, reply “I have paid”. The shopper will verify the payment before shopping starts.`,
+            orderId: activeOrder.id,
+            order: activeOrder,
+            terminal: false,
+          },
+          origin
+        );
+      }
+
+      if (activeOrder.payment_status === "paid") {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: activeOrder.status,
+            message: "Payment is already verified ✅ Your Fetch shopper can continue.",
+            orderId: activeOrder.id,
+            order: activeOrder,
+            terminal: false,
+          },
+          origin
+        );
+      }
+
+      if (!activeOrder.shopper_id) {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: activeOrder.status,
+            message: "I’m still waiting for a shopper to accept the confirmed order. Payment details will appear as soon as one is assigned.",
+            orderId: activeOrder.id,
+            order: activeOrder,
+            terminal: false,
+          },
+          origin
+        );
+      }
+
+      const reported = await updateOrder(
+        activeOrder.id,
+        {
+          payment_status: "customer_reported_paid",
+        }
+      );
+
+      if (!reported) {
+        throw new Error("Could not record web customer payment report");
+      }
+
+      const shopper = await getPhysicalOrderModule().then((module) =>
+        module.getShopperById(activeOrder.shopper_id)
+      );
+
+      if (shopper?.phone) {
+        const total = Number(activeOrder.total_amount || 0);
+        await getPhysicalOrderModule().then((module) =>
+          module.sendWhatsAppMessage(
+            shopper.phone,
+            `💳 The web customer says they have paid ${Number.isFinite(total) ? `₹${total.toFixed(2)}` : "the approved amount"} directly to you.\n\nPlease check your UPI account and reply RECEIVED only after the money is actually visible. Reply NOT RECEIVED if it has not arrived.`
+          )
+        );
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: activeOrder.status,
+          message: "Thanks 👍 I’ve told your shopper to verify the payment. The order will continue only after the shopper confirms RECEIVED.",
+          orderId: activeOrder.id,
+          order: reported,
+          terminal: false,
+        },
+        origin
+      );
+    }
 
     if (
       activeOrder &&
