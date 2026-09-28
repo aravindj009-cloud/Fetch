@@ -27,7 +27,7 @@ import {
   offerOrderToShopper,
 } from "../whatsapp/webhook.mjs";
 
-const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V5";
+const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V6";
 const ALLOWED_ORIGINS = new Set([
   "https://tryfetch.in",
   "https://www.tryfetch.in",
@@ -1530,6 +1530,7 @@ async function handlePost(req, res) {
       network: result?.task?.execution_network || null,
       resource_type: result?.atc?.resource_type || null,
       answered_by: result?.task?.resource?.type || null,
+      universal_version: result?.version || null,
       decision_status:
         result?.fetch?.decisions?.[0]?.decision?.status ||
         null,
@@ -1585,7 +1586,7 @@ async function handlePost(req, res) {
           status: "completed",
           workflow_id: result?.workflow_id || null,
           message: answer,
-          fetch: { source_class: "live_research" },
+          fetch: { source_class: "live_research", build: FETCH_BUILD, universal_version: result?.version || null },
           atc: { resource_type: "research_engine" },
           execution: {
             success: true,
