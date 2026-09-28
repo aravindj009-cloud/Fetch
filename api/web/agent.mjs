@@ -34,7 +34,41 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 
 function cleanText(value) {
-  return String(value ?? "").trim();
+  if (value == null) return "";
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => cleanText(item))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+
+  if (typeof value === "object") {
+    const preferred =
+      value.text ??
+      value.content ??
+      value.message ??
+      value.result ??
+      value.answer ??
+      value.output;
+
+    if (preferred !== undefined && preferred !== value) {
+      return cleanText(preferred);
+    }
+
+    try {
+      return JSON.stringify(value, null, 2).trim();
+    } catch {
+      return "";
+    }
+  }
+
+  return String(value).trim();
 }
 
 /* =========================================================
