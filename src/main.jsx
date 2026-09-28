@@ -181,6 +181,11 @@ function parseResearchResults(text) {
       content = content.replace(urlMatch[0], " ").trim();
     }
 
+    // The backend may include a human-readable "Link:" label before
+    // the URL. The URL is rendered separately as the Read source button,
+    // so remove that label from the metadata text.
+    content = content.replace(/\s*\bLink:\s*$/i, "").trim();
+
     let published = "";
     let source = "";
 
