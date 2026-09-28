@@ -2884,24 +2884,42 @@ async function offerOrderToShopper(
       }
     } catch (error) {
       console.error(
-        "FETCH DISPATCH SHOPPER ERROR:",
+        "FETCH DISPATCH SHOPPER NOTIFICATION ERROR:",
         error
       );
 
+      /*
+        IMPORTANT:
+        Creating the shopper_job is the actual assignment offer.
+        A WhatsApp notification failure must NEVER cancel that job,
+        otherwise the customer remains stuck in finding_shopper even
+        though an eligible shopper exists.
+
+        Keep the offer open and try a simple text notification as a
+        fallback. The AVAILABLE recovery path can resend the offer too.
+      */
       if (createdJob?.id) {
         try {
-          await updateShopperJob(
-            createdJob.id,
-            {
-              status: "cancelled",
-            }
+          await sendWhatsAppMessage(
+            shopper.phone,
+            `🛍️ New Fetch job: ${order.items || "requested items"}
+
+Reply ACCEPT to take this job.
+Reply DECLINE to skip it.`
           );
-        } catch (cleanupError) {
+        } catch (fallbackError) {
           console.error(
-            "FETCH DISPATCH CLEANUP ERROR:",
-            cleanupError
+            "FETCH SHOPPER TEXT FALLBACK ERROR:",
+            fallbackError
           );
         }
+
+        if (!firstShopper) {
+          firstShopper = shopper;
+          firstJob = createdJob;
+        }
+
+        offeredCount += 1;
       }
     }
   }
