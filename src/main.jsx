@@ -619,13 +619,16 @@ export default function App() {
             "out_for_delivery"
           ].includes(status)
             ? "shopper"
-            : [
-                "finding_partner",
-                "partner_offered",
-                "awaiting_customer_price_confirmation"
-              ].includes(status)
-              ? "partner_store"
-              : "agent";
+            : status === "awaiting_customer_price_confirmation"
+              ? order?.shopper_id
+                ? "shopper"
+                : "partner_store"
+              : [
+                  "finding_partner",
+                  "partner_offered"
+                ].includes(status)
+                ? "partner_store"
+                : "agent";
 
         let stage = "coordinating";
 
