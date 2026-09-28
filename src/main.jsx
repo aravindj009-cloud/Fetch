@@ -444,9 +444,12 @@ export default function App() {
       const data = await readApiJson(response);
 
       if (!response.ok || !data?.success) {
+        // For backend failures, prefer the explicit error field over
+        // generic status values such as "server_error".
         const apiError =
-          extractApiMessage(data) ||
           normalizeAssistantText(data?.error) ||
+          normalizeAssistantText(data?.details) ||
+          extractApiMessage(data) ||
           "Fetch request failed";
 
         throw new Error(apiError);
