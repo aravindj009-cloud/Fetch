@@ -570,7 +570,6 @@ export default function App() {
     }
 
     activeWatchRef.current = orderId;
-    lastOrderMessageRef.current.delete(orderId);
 
     for (let check = 0; check < MAX_ORDER_CHECKS; check += 1) {
       if (check > 0) {
