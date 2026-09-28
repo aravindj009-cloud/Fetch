@@ -395,6 +395,102 @@ async function executeClaudeWebResearch(text, history = []) {
   };
 }
 
+
+async function executeGeminiWebResearch(text, history = []) {
+  const apiKey = cleanText(process.env.GEMINI_API_KEY);
+  if (!apiKey) return null;
+
+  const model = cleanText(process.env.FETCH_GEMINI_RESEARCH_MODEL) || "gemini-3.8-flash";
+  const historyText = history
+    .slice(-8)
+    .map((message) => `${message.role}: ${message.content}`)
+    .join("\n");
+
+  const prompt = [
+    "You are Fetch, a personal AI assistant with live web research.",
+    "Use Google Search grounding for this request.",
+    "Answer the user's exact request using current web evidence.",
+    "Prefer primary/official sources when available.",
+    "For schedules, timings, prices, events, scores, availability, and other changing facts, state the relevant date/time and do not guess.",
+    "If sources disagree, explain the disagreement briefly instead of inventing a value.",
+    "Be concise and user-friendly. Do not mention internal tools, browser agents, bot detection, or implementation details.",
+    historyText ? `Recent conversation:\n${historyText}` : "",
+    `User request:\n${cleanText(text)}`,
+  ].filter(Boolean).join("\n\n");
+
+  const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": apiKey,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: prompt,
+      tools: [{ type: "google_search" }],
+    }),
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    console.error("FETCH GEMINI RESEARCH ERROR:", response.status, raw.slice(0, 1000));
+    return null;
+  }
+
+  const textParts = [];
+  const citations = [];
+
+  if (cleanText(data?.output_text)) {
+    textParts.push(cleanText(data.output_text));
+  }
+
+  for (const step of Array.isArray(data?.steps) ? data.steps : []) {
+    if (step?.type !== "model_output") continue;
+
+    for (const block of Array.isArray(step?.content) ? step.content : []) {
+      if (block?.type === "text" && cleanText(block?.text)) {
+        textParts.push(cleanText(block.text));
+      }
+
+      for (const annotation of Array.isArray(block?.annotations) ? block.annotations : []) {
+        if (annotation?.type === "url_citation" && annotation?.url) {
+          if (!citations.some((item) => item.url === annotation.url)) {
+            citations.push({
+              title: cleanText(annotation.title) || annotation.url,
+              url: annotation.url,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  const answer = textParts.join("\n\n").trim();
+  if (!answer) return null;
+
+  const sourceBlock = citations.length
+    ? `\n\nSources:\n${citations.slice(0, 6).map((item) => `• ${item.title} — ${item.url}`).join("\n")}`
+    : "";
+
+  return {
+    success: true,
+    status: "completed",
+    message: answer + sourceBlock,
+    resource_type: "research_engine",
+    execution_type: "google_search_grounded",
+    provider: "gemini",
+    model,
+    citations,
+  };
+}
+
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "");
 }
@@ -1200,6 +1296,72 @@ async function handlePost(req, res) {
       );
     } catch (timeError) {
       console.error("FETCH TIME SOURCE ERROR:", timeError);
+    }
+  }
+
+  /*
+   * LIVE RESEARCH FIRST
+   *
+   * Current information must not depend on Browser Use/Chromium. Those
+   * sites can return bot-verification pages even when the browser itself
+   * started successfully. Gemini's Google Search grounding gives Fetch a
+   * server-side research path with source citations.
+   *
+   * Physical commerce is deliberately excluded: those requests continue
+   * through the existing Universal -> ATC -> partner-store -> shopper flow.
+   */
+  if (!isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText)) {
+    try {
+      const researchExecution = await executeGeminiWebResearch(
+        effectiveText,
+        conversationHistory
+      );
+
+      if (researchExecution?.success && researchExecution?.message) {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: "completed",
+            workflow_id: null,
+            message: researchExecution.message,
+            fetch: { source_class: "live_research" },
+            atc: { resource_type: "research_engine" },
+            execution: researchExecution,
+          },
+          origin
+        );
+      }
+    } catch (researchError) {
+      console.error("FETCH GEMINI LIVE RESEARCH ERROR:", researchError);
+    }
+
+    /* Claude remains a secondary research provider, not the primary path. */
+    try {
+      const researchExecution = await executeClaudeWebResearch(
+        effectiveText,
+        conversationHistory
+      );
+
+      if (researchExecution?.success && researchExecution?.message) {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: "completed",
+            workflow_id: null,
+            message: researchExecution.message,
+            fetch: { source_class: "live_research" },
+            atc: { resource_type: "research_engine", provider: "anthropic" },
+            execution: researchExecution,
+          },
+          origin
+        );
+      }
+    } catch (researchError) {
+      console.error("FETCH CLAUDE LIVE RESEARCH ERROR:", researchError);
     }
   }
 
