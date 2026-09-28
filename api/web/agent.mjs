@@ -1753,9 +1753,11 @@ async function handlePost(req, res) {
               ]),
           },
           citations:
-            normalizeCitations(
-              result?.sources || result?.execution?.sources || result?.task?.sources
-            ),
+            normalizeCitations([
+              ...(Array.isArray(result?.sources) ? result.sources : []),
+              ...(Array.isArray(result?.execution?.sources) ? result.execution.sources : []),
+              ...(Array.isArray(result?.task?.sources) ? result.task.sources : []),
+            ]),
         },
         origin
       );
