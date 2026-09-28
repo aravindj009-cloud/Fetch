@@ -395,7 +395,7 @@ export default function App() {
           id: makeId(),
           role: "assistant",
           text:
-            data.message ||
+            normalizeAssistantText(data.message) ||
             "I’m working on that.",
           meta: {
             status: data.status,
