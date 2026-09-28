@@ -1002,6 +1002,18 @@ async function handlePhysicalWebRequest({
     };
   }
 
+  // Load the physical-order/WhatsApp module only when a physical
+  // request actually reaches this path. This keeps digital research
+  // independent of WhatsApp/Supabase server-only configuration.
+  const {
+    getOrCreateCustomer,
+    createOrder,
+    updateOrder,
+    getOrderById,
+    dispatchOrderToPartnerStore,
+    offerOrderToShopper,
+  } = await getPhysicalOrderModule();
+
   const phone = syntheticWebPhone(conversationId);
 
   const customer = await getOrCreateCustomer(phone);
