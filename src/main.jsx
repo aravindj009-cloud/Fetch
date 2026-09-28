@@ -82,6 +82,60 @@ function normalizeAssistantText(value) {
   return String(value);
 }
 
+function isObjectString(value) {
+  return typeof value === "string" && /^\[object Object\]$/i.test(value.trim());
+}
+
+function extractApiMessage(payload) {
+  const seen = new Set();
+
+  function visit(value, depth = 0) {
+    if (depth > 8 || value == null) return "";
+
+    if (typeof value === "string") {
+      const text = value.trim();
+      return isObjectString(text) ? "" : text;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item, depth + 1);
+        if (found) return found;
+      }
+      return "";
+    }
+
+    if (typeof value === "object") {
+      if (seen.has(value)) return "";
+      seen.add(value);
+
+      const preferredKeys = [
+        "message",
+        "text",
+        "content",
+        "answer",
+        "result",
+        "output",
+      ];
+
+      for (const key of preferredKeys) {
+        const found = visit(value[key], depth + 1);
+        if (found) return found;
+      }
+
+      for (const key of Object.keys(value)) {
+        if (preferredKeys.includes(key)) continue;
+        const found = visit(value[key], depth + 1);
+        if (found) return found;
+      }
+    }
+
+    return "";
+  }
+
+  return visit(payload);
+}
+
 function decodeEntities(value) {
   return String(value || "")
     .replace(/&nbsp;|&#160;/gi, " ")
@@ -395,7 +449,7 @@ export default function App() {
           id: makeId(),
           role: "assistant",
           text:
-            normalizeAssistantText(data.message) ||
+            extractApiMessage(data) ||
             "I’m working on that.",
           meta: {
             status: data.status,
