@@ -27,7 +27,7 @@ import {
   offerOrderToShopper,
 } from "../whatsapp/webhook.mjs";
 
-const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V3";
+const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V5";
 const ALLOWED_ORIGINS = new Set([
   "https://tryfetch.in",
   "https://www.tryfetch.in",
@@ -35,6 +35,29 @@ const ALLOWED_ORIGINS = new Set([
 
 function cleanText(value) {
   return String(value ?? "").trim();
+}
+
+/* =========================================================
+   GEMINI QUOTA HANDLING
+
+   Google Search grounding is not available on the Gemini API free
+   tier. When Gemini answers 429 we remember it for a while (per warm
+   serverless instance) and stop sending doomed requests on every
+   message.
+========================================================= */
+class QuotaError extends Error {
+  constructor(message, retryAfterMs = null) {
+    super(message);
+    this.name = "QuotaError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+let geminiGroundingBlockedUntil = 0;
+
+function parseRetryDelayMs(raw) {
+  const match = String(raw).match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+  return match ? Math.ceil(Number(match[1]) * 1000) : null;
 }
 
 
@@ -299,7 +322,7 @@ function executeTimeSource(text) {
 
 function isLiveResearchRequest(text = "") {
   const value = cleanText(text);
-  return /\b(latest|today|tonight|current|currently|now|recent|happening|happened|news|event|events|odi|match|matches|score|scores|schedule|announcement|announced|price|prices|available|availability|deadline|official|research|investigate|look\s+up|verify|check)\b/i.test(value);
+  return /\b(latest|today|tonight|current|currently|now|recent|happening|happened|news|event|events|odi|match|matches|score|scores|schedule|schedules|timing|timings|departure|departures|arrival|arrivals|route|routes|platform|platforms|fare|fares|duration|running|status|train|trains|railway|rail|express|bus|buses|flight|flights|airport|metro|cab|taxi|hotel|hotels|travel|trip|ticket|tickets|pnr|announcement|announced|price|prices|available|availability|deadline|official|research|investigate|look\s+up|verify|check)\b/i.test(value);
 }
 
 async function executeClaudeWebResearch(text, history = []) {
@@ -440,6 +463,11 @@ async function executeGeminiWebResearch(text, history = []) {
     data = null;
   }
 
+  if (response.status === 429) {
+    console.error("FETCH GEMINI QUOTA (429):", raw.slice(0, 500));
+    throw new QuotaError("gemini_quota_exceeded", parseRetryDelayMs(raw));
+  }
+
   if (!response.ok) {
     console.error("FETCH GEMINI RESEARCH ERROR:", response.status, raw.slice(0, 1000));
     return null;
@@ -539,6 +567,11 @@ async function executeGeminiGenerateContentResearch(text, history = []) {
   const raw = await response.text();
   let data = null;
   try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+
+  if (response.status === 429) {
+    console.error("FETCH GEMINI QUOTA (429):", raw.slice(0, 500));
+    throw new QuotaError("gemini_quota_exceeded", parseRetryDelayMs(raw));
+  }
 
   if (!response.ok) {
     console.error("FETCH GEMINI GENERATE CONTENT ERROR:", response.status, raw.slice(0, 1000));
@@ -1397,48 +1430,64 @@ async function handlePost(req, res) {
    * started successfully. Gemini's Google Search grounding gives Fetch a
    * server-side research path with source citations.
    *
+   * NOTE: Google Search grounding is not available on the Gemini API
+   * free tier. On a 429 we remember it for a while and fall through to
+   * the Universal engine's search-results path (see below).
+   *
    * Physical commerce is deliberately excluded: those requests continue
    * through the existing Universal -> ATC -> partner-store -> shopper flow.
    */
-  if (!isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText)) {
-    try {
-      // PRIMARY: Gemini GenerateContent + Google Search grounding.
-      // This is the current documented REST shape and avoids Browser Use/Chromium.
-      let researchExecution = await executeGeminiGenerateContentResearch(
-        effectiveText,
-        conversationHistory
-      );
+  let researchQuotaHit = false;
+  const researchRequest =
+    !isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText);
 
-      // FALLBACK: Gemini Interactions API, also with Google Search grounding.
-      if (!researchExecution?.success) {
-        researchExecution = await executeGeminiWebResearch(
+  if (researchRequest) {
+    if (Date.now() < geminiGroundingBlockedUntil) {
+      // Grounded Gemini was refused recently: go straight to the free path.
+      researchQuotaHit = true;
+    } else {
+      try {
+        // PRIMARY: Gemini GenerateContent + Google Search grounding.
+        let researchExecution = await executeGeminiGenerateContentResearch(
           effectiveText,
           conversationHistory
         );
-      }
 
-      if (researchExecution?.success && researchExecution?.message) {
-        return sendJson(
-          res,
-          200,
-          {
-            success: true,
-            status: "completed",
-            workflow_id: null,
-            message: researchExecution.message,
-            fetch: { source_class: "live_research" },
-            atc: { resource_type: "research_engine" },
-            execution: researchExecution,
-          },
-          origin
-        );
+        // FALLBACK: Interactions API (skipped automatically on a 429,
+        // because the QuotaError jumps straight to the catch below).
+        if (!researchExecution?.success) {
+          researchExecution = await executeGeminiWebResearch(
+            effectiveText,
+            conversationHistory
+          );
+        }
+
+        if (researchExecution?.success && researchExecution?.message) {
+          return sendJson(
+            res,
+            200,
+            {
+              success: true,
+              status: "completed",
+              workflow_id: null,
+              message: researchExecution.message,
+              fetch: { source_class: "live_research" },
+              atc: { resource_type: "research_engine" },
+              execution: researchExecution,
+            },
+            origin
+          );
+        }
+      } catch (researchError) {
+        if (researchError instanceof QuotaError) {
+          researchQuotaHit = true;
+          const wait = researchError.retryAfterMs ?? 15 * 60 * 1000;
+          geminiGroundingBlockedUntil =
+            Date.now() + Math.min(Math.max(wait, 60 * 1000), 60 * 60 * 1000);
+        }
+        console.error("FETCH GEMINI LIVE RESEARCH ERROR:", researchError);
       }
-    } catch (researchError) {
-      console.error("FETCH GEMINI LIVE RESEARCH ERROR:", researchError);
     }
-
-    /* Claude is disabled for the MVP launch. Gemini is the only live research provider. */
-
   }
 
   /*
@@ -1455,6 +1504,7 @@ async function handlePost(req, res) {
     activeTaskId: null,
     suppliedContext: {
       source: "fetch_web",
+      skip_browser_for_research: researchRequest,
       web_location: validCoordinates(latitude, longitude)
         ? {
             latitude: Number(latitude),
@@ -1479,6 +1529,7 @@ async function handlePost(req, res) {
       task_status: result?.task?.status || null,
       network: result?.task?.execution_network || null,
       resource_type: result?.atc?.resource_type || null,
+      answered_by: result?.task?.resource?.type || null,
       decision_status:
         result?.fetch?.decisions?.[0]?.decision?.status ||
         null,
@@ -1509,6 +1560,75 @@ async function handlePost(req, res) {
   }
 
   /*
+   * LIVE-RESEARCH RESULT HANDLING
+   *
+   * A research request that reaches this point has either failed the
+   * Gemini grounded search or been refused by quota. The Universal engine
+   * has then tried its search-results path. Accept that answer ONLY when it
+   * was built from real search results (evidence_source === "public_search").
+   * Raw Browser Agent and Claude results stay blocked here, so CAPTCHA or
+   * bot-verification pages can never reach the customer.
+   */
+  if (researchRequest) {
+    const answer = cleanText(result?.task?.result);
+
+    if (
+      result?.status === "completed" &&
+      result?.evidence_source === "public_search" &&
+      answer
+    ) {
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: "completed",
+          workflow_id: result?.workflow_id || null,
+          message: answer,
+          fetch: { source_class: "live_research" },
+          atc: { resource_type: "research_engine" },
+          execution: {
+            success: true,
+            status: "completed",
+            provider: "public_search_synthesis",
+          },
+        },
+        origin
+      );
+    }
+
+    console.warn(
+      "FETCH RESEARCH ANSWER NOT USED:",
+      JSON.stringify({
+        status: result?.status || null,
+        answered_by: cleanText(result?.task?.resource?.type) || null,
+        evidence_source: result?.evidence_source || null,
+        had_answer: Boolean(answer),
+      })
+    );
+
+    return sendJson(
+      res,
+      200,
+      {
+        success: true,
+        status: "research_unavailable",
+        workflow_id: null,
+        message: researchQuotaHit
+          ? "Live research is temporarily unavailable. Please try again in a few minutes."
+          : "I couldn't retrieve reliable live web information for that request right now.",
+        fetch: { source_class: "live_research", build: FETCH_BUILD },
+        atc: { resource_type: "research_engine" },
+        execution: {
+          success: false,
+          status: researchQuotaHit ? "provider_quota_exceeded" : "provider_unavailable",
+        },
+      },
+      origin
+    );
+  }
+
+  /*
    * BROWSER AGENT BRIDGE
    *
    * The Universal Task Engine has already routed the request to the
@@ -1516,30 +1636,6 @@ async function handlePost(req, res) {
    * the worker's actual result instead of falling through to the generic
    * "no execution connector" message.
    */
-  /*
-   * HARD LIVE-RESEARCH ISOLATION
-   *
-   * A research request that reaches this point has already failed both
-   * server-side research providers. Never send it to Browser Agent: that
-   * would reintroduce CAPTCHA/bot-verification failures into the MVP.
-   */
-  if (!isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText)) {
-    return sendJson(
-      res,
-      200,
-      {
-        success: false,
-        status: "research_unavailable",
-        workflow_id: null,
-        message: "I couldn't retrieve reliable live web information for that request right now. I did not use an unverified browser result.",
-        fetch: { source_class: "live_research", build: FETCH_BUILD },
-        atc: { resource_type: "research_engine" },
-        execution: { success: false, status: "provider_unavailable" },
-      },
-      origin
-    );
-  }
-
   const browserResourceType = cleanText(
     result?.atc?.resource_type ||
     result?.task?.resource?.type ||
