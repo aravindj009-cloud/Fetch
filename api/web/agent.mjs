@@ -172,7 +172,7 @@ function normalizeCitations(value) {
         cleanText(item.source_url) ||
         cleanText(item.uri);
 
-      if (!url || !/^https?:\\/\\//i.test(url) || seen.has(url)) return null;
+      if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) return null;
       seen.add(url);
 
       return {
