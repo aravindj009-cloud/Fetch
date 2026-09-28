@@ -680,21 +680,27 @@ export default function App() {
           initialStatus &&
           String(initialStatus).toLowerCase() === status;
 
-        if (message && !sameInitialState && messageKey !== previousMessageKey) {
+        if (messageKey !== previousMessageKey) {
+          // The POST response and the first GET poll can legitimately
+          // describe the same state using different wording. Seed the
+          // polling key with the GET response without rendering a second
+          // assistant bubble on that first poll.
           lastOrderMessageRef.current.set(orderId, messageKey);
 
-          setMessages((current) => [
-            ...current,
-            {
-              id: makeId(),
-              role: "assistant",
-              text: message,
-              meta: {
-                status: order.status,
-                network: route
+          if (message && !sameInitialState) {
+            setMessages((current) => [
+              ...current,
+              {
+                id: makeId(),
+                role: "assistant",
+                text: message,
+                meta: {
+                  status: order.status,
+                  network: route
+                }
               }
-            }
-          ]);
+            ]);
+          }
         }
 
         if (data.terminal) {
