@@ -27,6 +27,7 @@ import {
   offerOrderToShopper,
 } from "../whatsapp/webhook.mjs";
 
+const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V3";
 const ALLOWED_ORIGINS = new Set([
   "https://tryfetch.in",
   "https://www.tryfetch.in",
@@ -530,7 +531,7 @@ async function executeGeminiGenerateContentResearch(text, history = []) {
       },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ googleSearch: {} }],
+        tools: [{ google_search: {} }],
       }),
     }
   );
@@ -599,6 +600,7 @@ function corsHeaders(origin) {
 
 function sendJson(res, status, payload, origin = "") {
   res.status(status);
+  res.setHeader("X-Fetch-Build", FETCH_BUILD);
 
   for (const [key, value] of Object.entries(corsHeaders(origin))) {
     res.setHeader(key, value);
@@ -1400,13 +1402,16 @@ async function handlePost(req, res) {
    */
   if (!isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText)) {
     try {
-      let researchExecution = await executeGeminiWebResearch(
+      // PRIMARY: Gemini GenerateContent + Google Search grounding.
+      // This is the current documented REST shape and avoids Browser Use/Chromium.
+      let researchExecution = await executeGeminiGenerateContentResearch(
         effectiveText,
         conversationHistory
       );
 
+      // FALLBACK: Gemini Interactions API, also with Google Search grounding.
       if (!researchExecution?.success) {
-        researchExecution = await executeGeminiGenerateContentResearch(
+        researchExecution = await executeGeminiWebResearch(
           effectiveText,
           conversationHistory
         );
@@ -1432,32 +1437,8 @@ async function handlePost(req, res) {
       console.error("FETCH GEMINI LIVE RESEARCH ERROR:", researchError);
     }
 
-    /* Claude remains a secondary research provider, not the primary path. */
-    try {
-      const researchExecution = await executeClaudeWebResearch(
-        effectiveText,
-        conversationHistory
-      );
+    /* Claude is disabled for the MVP launch. Gemini is the only live research provider. */
 
-      if (researchExecution?.success && researchExecution?.message) {
-        return sendJson(
-          res,
-          200,
-          {
-            success: true,
-            status: "completed",
-            workflow_id: null,
-            message: researchExecution.message,
-            fetch: { source_class: "live_research" },
-            atc: { resource_type: "research_engine", provider: "anthropic" },
-            execution: researchExecution,
-          },
-          origin
-        );
-      }
-    } catch (researchError) {
-      console.error("FETCH CLAUDE LIVE RESEARCH ERROR:", researchError);
-    }
   }
 
   /*
@@ -1551,7 +1532,7 @@ async function handlePost(req, res) {
         status: "research_unavailable",
         workflow_id: null,
         message: "I couldn't retrieve reliable live web information for that request right now. I did not use an unverified browser result.",
-        fetch: { source_class: "live_research" },
+        fetch: { source_class: "live_research", build: FETCH_BUILD },
         atc: { resource_type: "research_engine" },
         execution: { success: false, status: "provider_unavailable" },
       },
@@ -1648,7 +1629,7 @@ async function handlePost(req, res) {
       }
     }
 
-    if (!browserSuccess && isLiveResearchRequest(effectiveText)) {
+    if (false && !browserSuccess && isLiveResearchRequest(effectiveText)) {
       try {
         const researchExecution = await executeClaudeWebResearch(
           effectiveText,
@@ -1710,7 +1691,7 @@ async function handlePost(req, res) {
    * to the normal conversational model. This keeps current-data requests
    * grounded without making Browser Agent a single point of failure.
    */
-  if (isLiveResearchRequest(effectiveText)) {
+  if (false && isLiveResearchRequest(effectiveText)) {
     try {
       const researchExecution = await executeClaudeWebResearch(
         effectiveText,
