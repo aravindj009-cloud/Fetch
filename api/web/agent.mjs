@@ -37,7 +37,8 @@ function cleanText(value) {
   if (value == null) return "";
 
   if (typeof value === "string") {
-    return value.trim();
+    const text = value.trim();
+    return /^\[object Object\]$/i.test(text) ? "" : text;
   }
 
   if (Array.isArray(value)) {
@@ -49,16 +50,21 @@ function cleanText(value) {
   }
 
   if (typeof value === "object") {
-    const preferred =
-      value.text ??
-      value.content ??
-      value.message ??
-      value.result ??
-      value.answer ??
-      value.output;
+    const preferredKeys = [
+      "text",
+      "content",
+      "message",
+      "result",
+      "answer",
+      "output",
+      "response",
+      "summary",
+    ];
 
-    if (preferred !== undefined && preferred !== value) {
-      return cleanText(preferred);
+    for (const key of preferredKeys) {
+      if (value[key] === value) continue;
+      const preferred = cleanText(value[key]);
+      if (preferred) return preferred;
     }
 
     try {
@@ -69,6 +75,51 @@ function cleanText(value) {
   }
 
   return String(value).trim();
+}
+
+function findResponseText(payload) {
+  const seen = new Set();
+  const preferredKeys = [
+    "message",
+    "text",
+    "answer",
+    "result",
+    "output",
+    "response",
+    "summary",
+    "content",
+  ];
+
+  function visit(value, depth = 0) {
+    if (value == null || depth > 10) return "";
+
+    if (typeof value === "string") {
+      const text = value.trim();
+      return /^\[object Object\]$/i.test(text) ? "" : text;
+    }
+
+    if (typeof value !== "object") return "";
+
+    if (seen.has(value)) return "";
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item, depth + 1);
+        if (found) return found;
+      }
+      return "";
+    }
+
+    for (const key of preferredKeys) {
+      const found = visit(value[key], depth + 1);
+      if (found) return found;
+    }
+
+    return "";
+  }
+
+  return visit(payload);
 }
 
 /* =========================================================
@@ -672,9 +723,15 @@ function sendJson(res, status, payload, origin = "") {
       : payload;
 
   if (safePayload && typeof safePayload === "object") {
-    safePayload.message = cleanText(safePayload.message);
+    const directMessage = cleanText(safePayload.message);
+    const recoveredMessage = directMessage || findResponseText(safePayload);
 
-    if (!safePayload.message) {
+    safePayload.message =
+      recoveredMessage ||
+      "I’m working on that.";
+
+    // Never expose the poisoned JavaScript object conversion.
+    if (/^\[object Object\]$/i.test(safePayload.message)) {
       safePayload.message = "I’m working on that.";
     }
   }
