@@ -159,7 +159,10 @@ function getHost(url) {
 function parseResearchResults(text) {
   const raw = decodeEntities(text);
 
-  if (!/here[’']s what i found for/i.test(raw)) {
+  if (
+    !/here[’']s what i found/i.test(raw) &&
+    !/i found these recent results/i.test(raw)
+  ) {
     return null;
   }
 
@@ -181,26 +184,41 @@ function parseResearchResults(text) {
     let published = "";
     let source = "";
 
-    const sourceDateMatch = content.match(
-      /\s+Source:\s*(.*?)\s*[·|-]\s*(\d{1,2}\s+[A-Za-z]{3,4}\s+\d{4})\s*$/i
+    // Support the current Fetch research format:
+    // "Title Source: Publisher Published: Tue, 22 Sep 2026 ..."
+    const publishedMatch = content.match(
+      /\s+Published:\s*(.+?)\s*$/i
     );
 
-    if (sourceDateMatch) {
-      source = sourceDateMatch[1].trim();
-      published = sourceDateMatch[2].trim();
-      content = content.slice(0, sourceDateMatch.index).trim();
-    } else {
-      const dateMatch = content.match(/(\d{1,2}\s+[A-Za-z]{3,4}\s+\d{4})\s*$/i);
-      if (dateMatch) {
-        published = dateMatch[1];
-        content = content.slice(0, dateMatch.index).trim();
-      }
+    if (publishedMatch) {
+      published = publishedMatch[1].trim();
+      content = content.slice(0, publishedMatch.index).trim();
+    }
 
-      const sourceMatch = content.match(/\s+Source:\s*(.+)$/i);
-      if (sourceMatch) {
-        source = sourceMatch[1].trim();
-        content = content.slice(0, sourceMatch.index).trim();
+    const sourceMatch = content.match(
+      /\s+Source:\s*(.+?)\s*$/i
+    );
+
+    if (sourceMatch) {
+      source = sourceMatch[1].trim();
+      content = content.slice(0, sourceMatch.index).trim();
+    }
+
+    // Older research responses used "Source: X · 22 Sep 2026".
+    if (!source || !published) {
+      const sourceDateMatch = content.match(
+        /\s+Source:\s*(.*?)\s*[·|-]\s*(\d{1,2}\s+[A-Za-z]{3,4}\s+\d{4})\s*$/i
+      );
+
+      if (sourceDateMatch) {
+        source = source || sourceDateMatch[1].trim();
+        published = published || sourceDateMatch[2].trim();
+        content = content.slice(0, sourceDateMatch.index).trim();
       }
+    }
+
+    if (!source && url) {
+      source = getHost(url);
     }
 
     if (!source && url) {
