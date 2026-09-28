@@ -32,7 +32,7 @@ async function readApiJson(response) {
 
 const ACTIVE_ORDER_KEY = "fetch_active_order_id";
 const ORDER_POLL_INTERVAL_MS = 3000;
-const MAX_ORDER_CHECKS = 100;
+const MAX_ORDER_CHECKS = 600;
 
 function getConversationId() {
   const existing = localStorage.getItem("fetch_conversation_id");
@@ -911,7 +911,8 @@ export default function App() {
                       message.text
                     )}
 
-                    {message.meta?.status === "awaiting_customer_price_confirmation" && (
+                    {message.meta?.status === "awaiting_customer_price_confirmation" &&
+                      task?.status === "awaiting_customer_price_confirmation" && (
                       <button
                         type="button"
                         className="approvalButton"
