@@ -1430,6 +1430,7 @@ async function handlePost(req, res) {
       getOrderById,
       updateOrder,
       offerOrderToShopper,
+      getShopperById,
     } = await getPhysicalOrderModule();
 
     const phone = syntheticWebPhone(conversationId);
@@ -1652,11 +1653,26 @@ async function handlePost(req, res) {
         approvedOrder.total_amount || 0
       );
 
+      let paymentDestination = "";
+      let shopperName = "";
+
+      if (approvedOrder.shopper_id) {
+        const shopper = await getShopperById(approvedOrder.shopper_id);
+        paymentDestination =
+          cleanText(shopper?.upi_id) ||
+          cleanText(shopper?.phone);
+        shopperName = cleanText(shopper?.name);
+      }
+
+      const paymentLine = paymentDestination
+        ? `\n\n💳 Pay ${Number.isFinite(total) ? `₹${total.toFixed(2)}` : "the approved amount"} directly to${shopperName ? ` ${shopperName}` : " your Fetch shopper"} via UPI:\n${paymentDestination}\n\nAfter paying, reply “I have paid”. The shopper will verify the payment before shopping starts.`
+        : "\n\nPayment details will appear as soon as the shopper’s UPI details are available.";
+
       const message =
         approvedOrder.shopper_id
-          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nYour Fetch shopper is already assigned and can continue with the order.`
+          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}${paymentLine}`
           : shopperDispatch?.success
-            ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
+            ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. Payment details will appear automatically as soon as they accept.`
             : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
 
       return sendJson(
