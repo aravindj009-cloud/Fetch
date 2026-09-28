@@ -571,7 +571,7 @@ export default function App() {
 
     activeWatchRef.current = orderId;
     if (initialMessage) {
-      lastOrderMessageRef.current.set(orderId, "initial::" + normalizeAssistantText(initialMessage).trim());
+      lastOrderMessageRef.current.set(orderId, "pending-initial::" + normalizeAssistantText(initialMessage).trim());
     }
 
     for (let check = 0; check < MAX_ORDER_CHECKS; check += 1) {
