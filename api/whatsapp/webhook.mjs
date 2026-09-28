@@ -2287,9 +2287,7 @@ async function getOpenShopperJob(
     if (
       !order ||
       order.shopper_id ||
-      !["finding_shopper", "payment_pending"].includes(
-        String(order.status || "").toLowerCase()
-      )
+      String(order.status || "").toLowerCase() !== "finding_shopper"
     ) {
       if (job?.id) {
         await updateShopperJob(
@@ -2512,6 +2510,22 @@ async function offerOrderToShopper(
       shopper: null,
       job: null,
       reason: "missing_order",
+      offeredCount: 0,
+    };
+  }
+
+  // Only unassigned orders that are actively looking for a shopper may
+  // create a new shopper offer. Never re-offer an order that already has
+  // a shopper or has moved into payment/shopping/fulfilment.
+  if (
+    String(order.status || "").toLowerCase() !== "finding_shopper" ||
+    order.shopper_id
+  ) {
+    return {
+      success: false,
+      shopper: null,
+      job: null,
+      reason: "order_not_eligible_for_shopper_offer",
       offeredCount: 0,
     };
   }
@@ -10281,7 +10295,11 @@ async function resendOpenShopperOffer(
       job.order_id
     );
 
-  if (!order) {
+  if (
+    !order ||
+    String(order.status || "").toLowerCase() !== "finding_shopper" ||
+    order.shopper_id
+  ) {
     await updateShopperJob(
       job.id,
       {
