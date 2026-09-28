@@ -3345,6 +3345,17 @@ async function notifyCustomerForOrder(
     message,
   });
 
+  /*
+    Web customers use a synthetic customer identity such as
+    "web<conversationId>". The website reads order state through
+    the web API/polling, so there is no WhatsApp recipient to notify.
+    Saving the message is useful for history; attempting a Meta send
+    only creates a false notification failure.
+  */
+  if (/^web[a-zA-Z0-9]+$/i.test(String(customer.phone || ""))) {
+    return;
+  }
+
   if (
     /Your Fetch total/i.test(message) &&
     /Product:/i.test(message) &&
