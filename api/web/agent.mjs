@@ -1599,11 +1599,6 @@ async function handlePost(req, res) {
                 researchExecution?.groundingMetadata?.groundingChunks ||
                 [],
             },
-            citations:
-              researchExecution?.citations ||
-              researchExecution?.sources ||
-              researchExecution?.groundingMetadata?.groundingChunks ||
-              [],
             origin
           );
         }
