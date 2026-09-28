@@ -2076,21 +2076,43 @@ export default async function handler(req, res) {
       origin
     );
   } catch (error) {
-    console.error(
-      "FETCH WEB AGENT ERROR:",
-      error
-    );
+    console.error("FETCH WEB AGENT ERROR:", error);
 
-    return sendJson(
-      res,
-      500,
-      {
-        success: false,
-        error:
-          error?.message ||
-          "Fetch web request failed",
-      },
-      origin
-    );
+    const errorMessage =
+      cleanText(error?.message) ||
+      cleanText(error?.error) ||
+      "Fetch web request failed";
+
+    // Keep the error boundary independent from sendJson().
+    // This prevents a secondary serialization error from masking
+    // the original backend exception.
+    try {
+      res.status(500);
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+
+      for (const [key, value] of Object.entries(corsHeaders(origin))) {
+        res.setHeader(key, value);
+      }
+
+      return res.end(
+        JSON.stringify({
+          success: false,
+          status: "server_error",
+          error: errorMessage,
+          error_type: error?.name || "Error",
+          build: FETCH_BUILD,
+        })
+      );
+    } catch (responseError) {
+      console.error("FETCH WEB ERROR RESPONSE FAILED:", responseError);
+      return res.end(
+        JSON.stringify({
+          success: false,
+          status: "server_error",
+          error: "Fetch backend failed before it could serialize the error.",
+          build: FETCH_BUILD,
+        })
+      );
+    }
   }
 }
