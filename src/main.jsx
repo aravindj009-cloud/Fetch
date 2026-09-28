@@ -197,7 +197,7 @@ function ResearchResults({ text }) {
   const results = parseResearchResults(text);
 
   if (!results) {
-    return <>{text}</>;
+    return <>{safeText}</>;
   }
 
   return (
