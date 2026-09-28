@@ -310,16 +310,27 @@ function ResearchResults({ text, citations = [] }) {
                 {result.published && <span>· {result.published}</span>}
               </div>
 
-              {(result.url || citations[result.number - 1]?.url) && (
-                <a
-                  href={result.url || citations[result.number - 1]?.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="researchLink"
-                >
-                  Read source ↗
-                </a>
-              )}
+              {(() => {
+                const citation =
+                  citations.find((item) => Number(item?.number) === result.number) ||
+                  citations[result.number - 1] ||
+                  citations.find((item) =>
+                    String(item?.title || "").toLowerCase().includes(result.title.toLowerCase().slice(0, 40))
+                  );
+                const sourceUrl = result.url || citation?.url || citation?.link || citation?.source_url || "";
+                if (!sourceUrl) return null;
+                return (
+                  <a
+                    href={sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="researchLink"
+                    aria-label={`Read source: ${result.title}`}
+                  >
+                    Read source ↗
+                  </a>
+                );
+              })()}
             </div>
           </article>
         ))}
@@ -484,7 +495,11 @@ export default function App() {
             "I’m working on that.",
           citations:
             data.citations ||
+            data.sources ||
             data.execution?.citations ||
+            data.execution?.sources ||
+            data.task?.sources ||
+            data.fetch?.sources ||
             [],
           meta: {
             status: data.status,
