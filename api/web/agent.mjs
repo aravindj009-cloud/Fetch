@@ -1545,12 +1545,25 @@ async function handlePost(req, res) {
 
       if (shopper?.phone) {
         const total = Number(activeOrder.total_amount || 0);
-        await getPhysicalOrderModule().then((module) =>
-          module.sendWhatsAppMessage(
-            shopper.phone,
-            `💳 The web customer says they have paid ${Number.isFinite(total) ? `₹${total.toFixed(2)}` : "the approved amount"} directly to you.\n\nPlease check your UPI account and reply RECEIVED only after the money is actually visible. Reply NOT RECEIVED if it has not arrived.`
-          )
-        );
+
+        /*
+          Payment notification is a side effect. Never turn a successful
+          customer payment report into an API failure just because Meta/
+          WhatsApp is temporarily unavailable.
+        */
+        try {
+          await getPhysicalOrderModule().then((module) =>
+            module.sendWhatsAppMessage(
+              shopper.phone,
+              `💳 The web customer says they have paid ${Number.isFinite(total) ? `₹${total.toFixed(2)}` : "the approved amount"} directly to you.\n\nPlease check your UPI account and reply RECEIVED only after the money is actually visible. Reply NOT RECEIVED if it has not arrived.`
+            )
+          );
+        } catch (notificationError) {
+          console.error(
+            "FETCH WEB PAYMENT SHOPPER NOTIFICATION ERROR:",
+            notificationError
+          );
+        }
       }
 
       return sendJson(
