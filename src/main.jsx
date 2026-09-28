@@ -528,7 +528,7 @@ export default function App() {
 
       if (resolvedOrderId) {
         localStorage.setItem(ACTIVE_ORDER_KEY, resolvedOrderId);
-        watchOrder(resolvedOrderId, text, extractApiMessage(data) || "");
+        watchOrder(resolvedOrderId, text, extractApiMessage(data) || "", data.status || "");
       }
     } catch (error) {
       console.error("FETCH UI ERROR", error);
@@ -563,7 +563,7 @@ export default function App() {
     }
   }
 
-  async function watchOrder(orderId, originalText = "", initialMessage = "") {
+  async function watchOrder(orderId, originalText = "", initialMessage = "", initialStatus = "") {
     if (!orderId) return;
 
     // Never create two polling loops for the same order.
@@ -573,7 +573,7 @@ export default function App() {
 
     activeWatchRef.current = orderId;
     if (initialMessage) {
-      lastOrderMessageRef.current.set(orderId, "pending-initial::" + normalizeAssistantText(initialMessage).trim());
+      lastOrderMessageRef.current.set(orderId, String(initialStatus || "unknown") + "::" + normalizeAssistantText(initialMessage).trim());
     }
 
     for (let check = 0; check < MAX_ORDER_CHECKS; check += 1) {
