@@ -1813,7 +1813,7 @@ async function handlePost(req, res) {
               success: true,
               status: "completed",
               workflow_id: result?.workflow_id || null,
-              message: String(fallbackExecution.message),
+              message: cleanText(fallbackExecution.message),
               fetch: result?.fetch || null,
               atc: {
                 ...(result?.atc || {}),
@@ -1874,7 +1874,7 @@ async function handlePost(req, res) {
         status: browserSuccess ? "completed" : "execution_failed",
         workflow_id: result?.workflow_id || null,
         message: browserSuccess
-          ? String(browserMessage)
+          ? cleanText(browserMessage)
           : "I couldn't complete that research right now. Please try again.",
         fetch: result?.fetch || null,
         atc: result?.atc || null,
