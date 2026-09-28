@@ -400,9 +400,12 @@ export default function App() {
       const data = await readApiJson(response);
 
       if (!response.ok || !data?.success) {
-        throw new Error(
-          data?.message || data?.error || "Fetch request failed"
-        );
+        const apiError =
+          extractApiMessage(data) ||
+          normalizeAssistantText(data?.error) ||
+          "Fetch request failed";
+
+        throw new Error(apiError);
       }
 
       const route =
@@ -480,8 +483,10 @@ export default function App() {
           id: makeId(),
           role: "assistant",
           text:
-            error?.message ||
-            "I couldn’t process that right now.",
+            isObjectString(error?.message)
+              ? "Fetch received an unexpected response from the agent. Please try again."
+              : error?.message ||
+                "I couldn’t process that right now.",
           meta: {
             status: "error"
           }
