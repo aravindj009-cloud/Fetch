@@ -617,16 +617,23 @@ aside > p {
 }
 
 .researchLink {
-  display: inline-block;
-  margin-top: 7px;
-  color: #111;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: #111;
+  color: #fff;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 650;
   text-decoration: none;
+  transition: opacity .15s ease, transform .15s ease;
 }
 
 .researchLink:hover {
-  text-decoration: underline;
+  opacity: .82;
+  transform: translateY(-1px);
 }
 
 .researchDisclaimer {
