@@ -1229,8 +1229,13 @@ function buildWebOrderMessage(order) {
       parts.push(`Total: ₹${total.toFixed(2)}`);
     }
 
+    const shopperSourced =
+      Boolean(order?.shopper_id);
+
     return (
-      "The partner store has confirmed the order and provided the real price.\n\n" +
+      (shopperSourced
+        ? "Your Fetch shopper has sourced the items and sent the real price.\n\n"
+        : "The partner store has confirmed the order and provided the real price.\n\n") +
       parts.join("\n") +
       "\n\nPlease approve the total to continue."
     );
@@ -1467,23 +1472,29 @@ async function handlePost(req, res) {
       }
 
       /*
-       * Match the existing WhatsApp customer-approval flow:
-       * only after the customer approves the real total do we
-       * offer the confirmed procurement job to a shopper.
+       * If a human shopper already sourced the order, keep that same
+       * shopper attached. Only partner-store orders need a shopper offer
+       * after customer approval.
        */
-      const shopperDispatch =
-        await offerOrderToShopper(
-          approvedOrder
-        );
+      let shopperDispatch = null;
+
+      if (!approvedOrder.shopper_id) {
+        shopperDispatch =
+          await offerOrderToShopper(
+            approvedOrder
+          );
+      }
 
       const total = Number(
         approvedOrder.total_amount || 0
       );
 
       const message =
-        shopperDispatch?.success
-          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
-          : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
+        approvedOrder.shopper_id
+          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nYour Fetch shopper is already assigned and can continue with the order.`
+          : shopperDispatch?.success
+            ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
+            : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
 
       return sendJson(
         res,
