@@ -194,7 +194,8 @@ function parseResearchResults(text) {
 }
 
 function ResearchResults({ text }) {
-  const results = parseResearchResults(text);
+  const safeText = normalizeAssistantText(text);
+  const results = parseResearchResults(safeText);
 
   if (!results) {
     return <>{safeText}</>;
