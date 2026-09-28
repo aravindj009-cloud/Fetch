@@ -62,6 +62,10 @@ const DISTANCE_DECIMAL_PLACES = 2;
 // Automatic shopper recovery: an accepted shopper must show activity within 7 minutes.
 const STALE_ACCEPTED_SHOPPER_MINUTES = 7;
 
+// A shopper offer is temporary. Never allow an old WhatsApp offer to be
+// accepted days later after the customer/order has moved on.
+const STALE_OFFERED_SHOPPER_JOB_MINUTES = 15;
+
 // Free MVP distance routing. This can be replaced by Google Routes later.
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
@@ -2246,13 +2250,60 @@ async function getOpenShopperJob(
     await supabaseRequest(
       `shopper_jobs?shopper_id=eq.${encodeURIComponent(
         shopperId
-      )}&status=eq.offered&select=*&order=offered_at.desc&limit=1`
+      )}&status=eq.offered&select=*&order=offered_at.desc&limit=20`
     );
 
-  return Array.isArray(data) &&
-    data.length
-    ? data[0]
-    : null;
+  if (!Array.isArray(data) || !data.length) {
+    return null;
+  }
+
+  const cutoff =
+    Date.now() -
+    STALE_OFFERED_SHOPPER_JOB_MINUTES * 60 * 1000;
+
+  for (const job of data) {
+    const offeredAt =
+      Date.parse(String(job?.offered_at || ""));
+
+    // Invalid or expired offers are no longer actionable.
+    if (
+      !Number.isFinite(offeredAt) ||
+      offeredAt < cutoff
+    ) {
+      if (job?.id) {
+        await updateShopperJob(
+          job.id,
+          { status: "cancelled" }
+        );
+      }
+      continue;
+    }
+
+    const order =
+      await getOrderById(job.order_id);
+
+    // An offer is only valid while the order is still waiting for a shopper.
+    // This prevents an old button/message from claiming an already-routed job.
+    if (
+      !order ||
+      order.shopper_id ||
+      !["finding_shopper", "payment_pending"].includes(
+        String(order.status || "").toLowerCase()
+      )
+    ) {
+      if (job?.id) {
+        await updateShopperJob(
+          job.id,
+          { status: "cancelled" }
+        );
+      }
+      continue;
+    }
+
+    return job;
+  }
+
+  return null;
 }
 
 async function getAcceptedShopperJob(
@@ -2476,12 +2527,52 @@ async function offerOrderToShopper(
     order, then cancels all other outstanding offers.
   */
 
-  const existingJobs =
+  const rawExistingJobs =
     await supabaseRequest(
       `shopper_jobs?order_id=eq.${encodeURIComponent(
         order.id
-      )}&select=shopper_id,status&limit=100`
+      )}&select=shopper_id,status,offered_at&limit=100`
     );
+
+  // Expire old offers before deciding whether a shopper is already
+  // participating in this order. Otherwise a 20-minute-old offer can
+  // permanently block re-dispatch to that shopper.
+  const existingJobs =
+    Array.isArray(rawExistingJobs)
+      ? rawExistingJobs.filter((job) => {
+          if (
+            String(job?.status || "").toLowerCase() !==
+            "offered"
+          ) {
+            return true;
+          }
+
+          const offeredAt =
+            Date.parse(String(job?.offered_at || ""));
+
+          if (
+            !Number.isFinite(offeredAt) ||
+            offeredAt <
+              Date.now() -
+                STALE_OFFERED_SHOPPER_JOB_MINUTES * 60 * 1000
+          ) {
+            if (job?.id) {
+              updateShopperJob(
+                job.id,
+                { status: "cancelled" }
+              ).catch((error) =>
+                console.error(
+                  "FETCH STALE OFFER CLEANUP ERROR:",
+                  error
+                )
+              );
+            }
+            return false;
+          }
+
+          return true;
+        })
+      : [];
 
   const previouslyDeclinedShopperIds =
     Array.isArray(existingJobs)
@@ -10343,21 +10434,12 @@ async function dispatchNextQueuedOrder(
     and lets AVAILABLE act as a safe recovery mechanism if the original
     WhatsApp notification was missed or not visible.
   */
-  const shopperOpenOffers =
-    await supabaseRequest(
-      `shopper_jobs?shopper_id=eq.${encodeURIComponent(
-        shopper.id
-      )}&status=eq.offered&select=*&order=offered_at.desc&limit=1`
+  const existingJob =
+    await getOpenShopperJob(
+      shopper.id
     );
 
-  if (
-    Array.isArray(
-      shopperOpenOffers
-    ) &&
-    shopperOpenOffers.length
-  ) {
-    const existingJob =
-      shopperOpenOffers[0];
+  if (existingJob) {
 
     try {
       const resent =
