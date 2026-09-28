@@ -1249,6 +1249,24 @@ function buildWebOrderMessage(order) {
     return "Your Fetch shopper has accepted the order and will start shopping soon.";
   }
 
+  if (status === "payment_pending") {
+    const total = Number(order?.total_amount);
+    const totalLine = Number.isFinite(total)
+      ? `Total: ₹${total.toFixed(2)}`
+      : "Your approved total is ready.";
+    const paymentStatus = cleanText(order?.payment_status).toLowerCase();
+
+    if (paymentStatus === "customer_reported_paid") {
+      return `Payment reported. ${totalLine} I’m waiting for your Fetch shopper to verify the payment.`;
+    }
+
+    if (paymentStatus === "paid") {
+      return `Payment confirmed ✅ ${totalLine} Your Fetch shopper can continue shopping.`;
+    }
+
+    return `Your order is approved. ${totalLine} Payment is now pending. Ask Fetch for payment details when you’re ready to pay.`;
+  }
+
   if (status === "shopping") {
     return "Your Fetch shopper is shopping for your order now.";
   }
