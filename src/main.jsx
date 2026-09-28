@@ -275,7 +275,7 @@ function parseResearchResults(text) {
   return results.length ? results : null;
 }
 
-function ResearchResults({ text }) {
+function ResearchResults({ text, citations = [] }) {
   const safeText = normalizeAssistantText(text);
   const results = parseResearchResults(safeText);
 
@@ -310,14 +310,14 @@ function ResearchResults({ text }) {
                 {result.published && <span>· {result.published}</span>}
               </div>
 
-              {result.url && (
+              {(result.url || citations[result.number - 1]?.url) && (
                 <a
-                  href={result.url}
+                  href={result.url || citations[result.number - 1]?.url}
                   target="_blank"
                   rel="noreferrer"
                   className="researchLink"
                 >
-                  Open source ↗
+                  Read source ↗
                 </a>
               )}
             </div>
@@ -482,6 +482,10 @@ export default function App() {
           text:
             extractApiMessage(data) ||
             "I’m working on that.",
+          citations:
+            data.citations ||
+            data.execution?.citations ||
+            [],
           meta: {
             status: data.status,
             network: route
@@ -866,7 +870,10 @@ export default function App() {
                   >
 
                     {message.role === "assistant" ? (
-                      <ResearchResults text={message.text} />
+                      <ResearchResults
+                        text={message.text}
+                        citations={message.citations || []}
+                      />
                     ) : (
                       message.text
                     )}
