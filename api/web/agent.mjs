@@ -1711,7 +1711,9 @@ async function handlePost(req, res) {
             success: true,
             status: "completed",
             provider: "public_search_synthesis",
+            citations: Array.isArray(result?.sources) ? result.sources : [],
           },
+          citations: Array.isArray(result?.sources) ? result.sources : [],
         },
         origin
       );
