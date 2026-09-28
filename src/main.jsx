@@ -493,14 +493,19 @@ export default function App() {
           text:
             extractApiMessage(data) ||
             "I’m working on that.",
-          citations:
-            data.citations ||
-            data.sources ||
-            data.execution?.citations ||
-            data.execution?.sources ||
-            data.task?.sources ||
-            data.fetch?.sources ||
-            [],
+          citations: [
+            ...(Array.isArray(data.citations) ? data.citations : []),
+            ...(Array.isArray(data.sources) ? data.sources : []),
+            ...(Array.isArray(data.execution?.citations) ? data.execution.citations : []),
+            ...(Array.isArray(data.execution?.sources) ? data.execution.sources : []),
+            ...(Array.isArray(data.task?.sources) ? data.task.sources : []),
+            ...(Array.isArray(data.fetch?.sources) ? data.fetch.sources : []),
+          ].filter((item, index, array) => {
+            const url = item?.url || item?.link || item?.source_url || item?.uri;
+            return url && array.findIndex((candidate) =>
+              (candidate?.url || candidate?.link || candidate?.source_url || candidate?.uri) === url
+            ) === index;
+          }),
           meta: {
             status: data.status,
             network: route
