@@ -27,7 +27,7 @@ import {
   offerOrderToShopper,
 } from "../whatsapp/webhook.mjs";
 
-const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V3";
+const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V4";
 const ALLOWED_ORIGINS = new Set([
   "https://tryfetch.in",
   "https://www.tryfetch.in",
@@ -299,7 +299,7 @@ function executeTimeSource(text) {
 
 function isLiveResearchRequest(text = "") {
   const value = cleanText(text);
-  return /\b(latest|today|tonight|current|currently|now|recent|happening|happened|news|event|events|odi|match|matches|score|scores|schedule|announcement|announced|price|prices|available|availability|deadline|official|research|investigate|look\s+up|verify|check)\b/i.test(value);
+  return /\b(latest|today|tonight|current|currently|now|recent|happening|happened|news|event|events|odi|match|matches|score|scores|schedule|schedules|timing|timings|departure|departures|arrival|arrivals|route|routes|platform|platforms|fare|fares|duration|running|status|train|trains|railway|rail|express|bus|buses|flight|flights|airport|metro|cab|taxi|hotel|hotels|travel|trip|ticket|tickets|pnr|announcement|announced|price|prices|available|availability|deadline|official|research|investigate|look\s+up|verify|check)\b/i.test(value);
 }
 
 async function executeClaudeWebResearch(text, history = []) {
@@ -1528,7 +1528,7 @@ async function handlePost(req, res) {
       res,
       200,
       {
-        success: false,
+        success: true,
         status: "research_unavailable",
         workflow_id: null,
         message: "I couldn't retrieve reliable live web information for that request right now. I did not use an unverified browser result.",
