@@ -221,10 +221,6 @@ function parseResearchResults(text) {
       source = getHost(url);
     }
 
-    if (!source && url) {
-      source = getHost(url);
-    }
-
     // RSS titles often contain the headline followed by the publisher's
     // repeated headline/context. Use the first clean headline and retain
     // only a short context sentence when available.
