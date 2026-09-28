@@ -675,7 +675,12 @@ export default function App() {
         const previousMessageKey =
           lastOrderMessageRef.current.get(orderId);
 
-        if (message && messageKey !== previousMessageKey) {
+        const sameInitialState =
+          check === 0 &&
+          initialStatus &&
+          String(initialStatus).toLowerCase() === status;
+
+        if (message && !sameInitialState && messageKey !== previousMessageKey) {
           lastOrderMessageRef.current.set(orderId, messageKey);
 
           setMessages((current) => [
