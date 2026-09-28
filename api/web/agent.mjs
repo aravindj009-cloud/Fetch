@@ -1394,6 +1394,16 @@ async function handlePost(req, res) {
   let activeOrder = null;
 
   if (isWebApproval || isWebRejection) {
+    // Reuse the same physical-order state machine as WhatsApp for web approvals.
+    // These functions live in the physical order module and must be loaded before
+    // reading the synthetic web customer's current order.
+    const {
+      getOrCreateCustomer,
+      getOrderById,
+      updateOrder,
+      offerOrderToShopper,
+    } = await getPhysicalOrderModule();
+
     const phone = syntheticWebPhone(conversationId);
     const customer = await getOrCreateCustomer(phone);
 
