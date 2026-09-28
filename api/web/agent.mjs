@@ -666,6 +666,19 @@ function corsHeaders(origin) {
 }
 
 function sendJson(res, status, payload, origin = "") {
+  const safePayload =
+    payload && typeof payload === "object"
+      ? { ...payload }
+      : payload;
+
+  if (safePayload && typeof safePayload === "object") {
+    safePayload.message = cleanText(safePayload.message);
+
+    if (!safePayload.message) {
+      safePayload.message = "I’m working on that.";
+    }
+  }
+
   res.status(status);
   res.setHeader("X-Fetch-Build", FETCH_BUILD);
 
@@ -673,7 +686,7 @@ function sendJson(res, status, payload, origin = "") {
     res.setHeader(key, value);
   }
 
-  return res.json(payload);
+  return res.json(safePayload);
 }
 
 function isLikelyPhysicalText(value) {
