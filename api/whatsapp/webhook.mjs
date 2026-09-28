@@ -2531,7 +2531,7 @@ async function offerOrderToShopper(
     await supabaseRequest(
       `shopper_jobs?order_id=eq.${encodeURIComponent(
         order.id
-      )}&select=shopper_id,status,offered_at&limit=100`
+      )}&select=id,shopper_id,status,offered_at&limit=100`
     );
 
   // Expire old offers before deciding whether a shopper is already
