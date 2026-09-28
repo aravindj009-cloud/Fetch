@@ -48,6 +48,40 @@ function getConversationId() {
 }
 
 
+function normalizeAssistantText(value) {
+  if (typeof value === "string") return value;
+
+  if (value == null) return "";
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeAssistantText(item))
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (typeof value === "object") {
+    const preferred =
+      value.text ??
+      value.content ??
+      value.message ??
+      value.result ??
+      value.answer;
+
+    if (preferred !== undefined) {
+      return normalizeAssistantText(preferred);
+    }
+
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
 function decodeEntities(value) {
   return String(value || "")
     .replace(/&nbsp;|&#160;/gi, " ")
@@ -509,7 +543,7 @@ export default function App() {
           orderId
         }));
 
-        const message = String(data.message || "").trim();
+        const message = normalizeAssistantText(data.message).trim();
         const messageKey = `${status}::${message}`;
         const previousMessageKey =
           lastOrderMessageRef.current.get(orderId);
