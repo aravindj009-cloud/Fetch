@@ -387,6 +387,21 @@ export default function App() {
     }
   }
 
+  async function refreshWorkflow(workflowId) {
+    if (!workflowId) return null;
+    try {
+      const response = await fetch(
+        `/api/fetch/workflows?workflow_id=${encodeURIComponent(workflowId)}`,
+        { cache: "no-store", headers: { Accept: "application/json" } }
+      );
+      const data = await readApiJson(response);
+      if (response.ok && data?.success && data.workflow) return data.workflow;
+    } catch (error) {
+      console.error("FETCH WORKFLOW ERROR", error);
+    }
+    return null;
+  }
+
   async function refreshAgentTask(taskId) {
     if (!taskId) return;
     try {
@@ -495,6 +510,9 @@ export default function App() {
       if (data?.agent_task_id) {
         setAgentTaskId(data.agent_task_id);
         refreshAgentTask(data.agent_task_id);
+      }
+      if (data?.workflow_id) {
+        refreshWorkflow(data.workflow_id);
       }
 
       const route =
