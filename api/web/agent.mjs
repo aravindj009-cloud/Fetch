@@ -1932,8 +1932,21 @@ async function handlePost(req, res) {
    * through the existing Universal -> ATC -> partner-store -> shopper flow.
    */
   let researchQuotaHit = false;
+
+  /*
+   * ACTIONABLE TRAVEL / WEB TASKS must reach the Universal engine.
+   * It already classifies these as Browser Agent work. If we intercept
+   * them here as generic research, "find the cheapest flight" becomes a
+   * news-search answer instead of an executable travel task.
+   */
+  const browserExecutionRequest =
+    /\b(flight|flights|train|trains|hotel|hotels|restaurant|restaurants|ticket|tickets|travel|trip)\b/i.test(effectiveText) &&
+    /\b(cheapest|best|find|compare|search|book|booking|reserve|reservation|available|availability|options|fare|fares|price|prices|tomorrow|today|tonight|next\s+week)\b/i.test(effectiveText);
+
   const researchRequest =
-    !isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText);
+    !isLikelyPhysicalText(effectiveText) &&
+    isLiveResearchRequest(effectiveText) &&
+    !browserExecutionRequest;
 
   if (researchRequest) {
     if (Date.now() < geminiGroundingBlockedUntil) {
