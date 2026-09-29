@@ -1,1 +1,16 @@
-{}
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/ops",
+      "destination": "/admin.html"
+    },
+    {
+      "source": "/ops/",
+      "destination": "/admin.html"
+    }
+  ]
+}

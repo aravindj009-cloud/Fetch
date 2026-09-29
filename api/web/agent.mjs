@@ -17,24 +17,110 @@
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
+import { updateAgentTask, listAgentTasks, addAgentEvent } from "../../lib/fetch-agent-runtime.mjs";
 
-import {
-  getOrCreateCustomer,
-  createOrder,
-  updateOrder,
-  getOrderById,
-  dispatchOrderToPartnerStore,
-  offerOrderToShopper,
-} from "../whatsapp/webhook.mjs";
+let physicalOrderModulePromise = null;
 
-const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V6";
+async function getPhysicalOrderModule() {
+  if (!physicalOrderModulePromise) {
+    physicalOrderModulePromise = import("../whatsapp/webhook.mjs");
+  }
+  return physicalOrderModulePromise;
+}
+
+const FETCH_BUILD = "2026-09-28-LIVE-RESEARCH-V7";
 const ALLOWED_ORIGINS = new Set([
   "https://tryfetch.in",
   "https://www.tryfetch.in",
 ]);
 
 function cleanText(value) {
-  return String(value ?? "").trim();
+  if (value == null) return "";
+
+  if (typeof value === "string") {
+    const text = value.trim();
+    return /^\[object Object\]$/i.test(text) ? "" : text;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => cleanText(item))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+
+  if (typeof value === "object") {
+    const preferredKeys = [
+      "text",
+      "content",
+      "message",
+      "result",
+      "answer",
+      "output",
+      "response",
+      "summary",
+    ];
+
+    for (const key of preferredKeys) {
+      if (value[key] === value) continue;
+      const preferred = cleanText(value[key]);
+      if (preferred) return preferred;
+    }
+
+    try {
+      return JSON.stringify(value, null, 2).trim();
+    } catch {
+      return "";
+    }
+  }
+
+  return String(value).trim();
+}
+
+function findResponseText(payload) {
+  const seen = new Set();
+  const preferredKeys = [
+    "message",
+    "text",
+    "answer",
+    "result",
+    "output",
+    "response",
+    "summary",
+    "content",
+  ];
+
+  function visit(value, depth = 0) {
+    if (value == null || depth > 10) return "";
+
+    if (typeof value === "string") {
+      const text = value.trim();
+      return /^\[object Object\]$/i.test(text) ? "" : text;
+    }
+
+    if (typeof value !== "object") return "";
+
+    if (seen.has(value)) return "";
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item, depth + 1);
+        if (found) return found;
+      }
+      return "";
+    }
+
+    for (const key of preferredKeys) {
+      const found = visit(value[key], depth + 1);
+      if (found) return found;
+    }
+
+    return "";
+  }
+
+  return visit(payload);
 }
 
 /* =========================================================
@@ -68,6 +154,39 @@ function parseRetryDelayMs(raw) {
    generic conversational agent for domains where "current" data
    must come from an actual source rather than model memory.
 ========================================================= */
+
+function normalizeCitations(value) {
+  const items = Array.isArray(value) ? value : [];
+  const seen = new Set();
+
+  return items
+    .map((item) => {
+      if (typeof item === "string") {
+        return { title: item, url: item };
+      }
+
+      if (!item || typeof item !== "object") return null;
+
+      const url =
+        cleanText(item.url) ||
+        cleanText(item.link) ||
+        cleanText(item.source_url) ||
+        cleanText(item.uri);
+
+      if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) return null;
+      seen.add(url);
+
+      return {
+        title:
+          cleanText(item.title) ||
+          cleanText(item.name) ||
+          url,
+        url,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 10);
+}
 
 function getConversationHistory(body) {
   return Array.isArray(body?.conversationHistory)
@@ -632,6 +751,25 @@ function corsHeaders(origin) {
 }
 
 function sendJson(res, status, payload, origin = "") {
+  const safePayload =
+    payload && typeof payload === "object"
+      ? { ...payload }
+      : payload;
+
+  if (safePayload && typeof safePayload === "object") {
+    const directMessage = cleanText(safePayload.message);
+    const recoveredMessage = directMessage || findResponseText(safePayload);
+
+    safePayload.message =
+      recoveredMessage ||
+      "I’m working on that.";
+
+    // Never expose the poisoned JavaScript object conversion.
+    if (/^\[object Object\]$/i.test(safePayload.message)) {
+      safePayload.message = "I’m working on that.";
+    }
+  }
+
   res.status(status);
   res.setHeader("X-Fetch-Build", FETCH_BUILD);
 
@@ -639,7 +777,7 @@ function sendJson(res, status, payload, origin = "") {
     res.setHeader(key, value);
   }
 
-  return res.json(payload);
+  return res.json(safePayload);
 }
 
 function isLikelyPhysicalText(value) {
@@ -878,6 +1016,7 @@ async function handlePhysicalWebRequest({
       message:
         "Please allow location access so Fetch can find the right nearby store and calculate delivery.",
       workflow_id: result?.workflow_id || null,
+      agent_task_id: result?.agent_task_id || null,
       fetch: result?.fetch || null,
       atc: result?.atc || null,
       execution: result?.execution || null,
@@ -897,6 +1036,18 @@ async function handlePhysicalWebRequest({
       execution: result?.execution || null,
     };
   }
+
+  // Load the physical-order/WhatsApp module only when a physical
+  // request actually reaches this path. This keeps digital research
+  // independent of WhatsApp/Supabase server-only configuration.
+  const {
+    getOrCreateCustomer,
+    createOrder,
+    updateOrder,
+    getOrderById,
+    dispatchOrderToPartnerStore,
+    offerOrderToShopper,
+  } = await getPhysicalOrderModule();
 
   const phone = syntheticWebPhone(conversationId);
 
@@ -925,6 +1076,22 @@ async function handlePhysicalWebRequest({
 
   if (!order?.id) {
     throw new Error("Could not create Fetch order");
+  }
+
+  if (result?.agent_task_id) {
+    try {
+      await updateAgentTask(result.agent_task_id, {
+        task_data: {
+          source: "universal_task_engine",
+          conversation_id: conversationId,
+          order_id: order.id,
+          workflow_id: result?.workflow_id || null,
+          execution_network: "physical_network"
+        }
+      });
+    } catch (error) {
+      console.error("FETCH AGENT ORDER LINK ERROR:", error);
+    }
   }
 
   const locatedOrder = await updateOrder(order.id, {
@@ -1080,8 +1247,13 @@ function buildWebOrderMessage(order) {
       parts.push(`Total: ₹${total.toFixed(2)}`);
     }
 
+    const shopperSourced =
+      Boolean(order?.shopper_id);
+
     return (
-      "The partner store has confirmed the order and provided the real price.\n\n" +
+      (shopperSourced
+        ? "Your Fetch shopper has sourced the items and sent the real price.\n\n"
+        : "The partner store has confirmed the order and provided the real price.\n\n") +
       parts.join("\n") +
       "\n\nPlease approve the total to continue."
     );
@@ -1093,6 +1265,24 @@ function buildWebOrderMessage(order) {
 
   if (status === "shopper_assigned") {
     return "Your Fetch shopper has accepted the order and will start shopping soon.";
+  }
+
+  if (status === "payment_pending") {
+    const total = Number(order?.total_amount);
+    const totalLine = Number.isFinite(total)
+      ? `Total: ₹${total.toFixed(2)}`
+      : "Your approved total is ready.";
+    const paymentStatus = cleanText(order?.payment_status).toLowerCase();
+
+    if (paymentStatus === "customer_reported_paid") {
+      return `Payment reported. ${totalLine} I’m waiting for your Fetch shopper to verify the payment.`;
+    }
+
+    if (paymentStatus === "paid") {
+      return `Payment confirmed ✅ ${totalLine} Your Fetch shopper can continue shopping.`;
+    }
+
+    return `Your order is approved. ${totalLine} Payment is now pending. Ask Fetch for payment details when you’re ready to pay.`;
   }
 
   if (status === "shopping") {
@@ -1120,6 +1310,9 @@ function buildWebOrderMessage(order) {
 
 async function handleGet(req, res) {
   const origin = req.headers.origin || "";
+
+  const { getOrderById } = await getPhysicalOrderModule();
+
   const orderId = cleanText(req.query?.orderId);
 
   if (!orderId) {
@@ -1220,6 +1413,16 @@ async function handlePost(req, res) {
       normalizedApproval
     );
 
+  const isWebPaymentHelp =
+    /^(pay|payment|pay now|make payment|how do i pay|how can i pay|payment details|upi|show payment|show me payment|send payment details|pay the shopper)$/.test(
+      normalizedApproval
+    );
+
+  const isWebPaid =
+    /^(paid|paid it|paid now|i paid|i've paid|i have paid|payment done|payment completed|payment sent|sent the payment|done with payment|paid the shopper|payment successful|payment success|paid successfully)$/.test(
+      normalizedApproval
+    );
+
   /*
    * IMPORTANT CONVERSATION RULE:
    *
@@ -1236,7 +1439,18 @@ async function handlePost(req, res) {
    */
   let activeOrder = null;
 
-  if (isWebApproval || isWebRejection) {
+  if (isWebApproval || isWebRejection || isWebPaymentHelp || isWebPaid) {
+    // Reuse the same physical-order state machine as WhatsApp for web approvals.
+    // These functions live in the physical order module and must be loaded before
+    // reading the synthetic web customer's current order.
+    const {
+      getOrCreateCustomer,
+      getOrderById,
+      updateOrder,
+      offerOrderToShopper,
+      getShopperById,
+    } = await getPhysicalOrderModule();
+
     const phone = syntheticWebPhone(conversationId);
     const customer = await getOrCreateCustomer(phone);
 
@@ -1246,6 +1460,144 @@ async function handlePost(req, res) {
     activeOrder = currentOrderId
       ? await getOrderById(currentOrderId)
       : null;
+
+    if (
+      activeOrder &&
+      activeOrder.status === "payment_pending" &&
+      (isWebPaymentHelp || isWebPaid)
+    ) {
+      if (isWebPaymentHelp) {
+        const shopper = activeOrder.shopper_id
+          ? await getPhysicalOrderModule().then((module) =>
+              module.getShopperById(activeOrder.shopper_id)
+            )
+          : null;
+
+        const destination =
+          cleanText(shopper?.upi_id) ||
+          cleanText(shopper?.phone);
+
+        if (!destination) {
+          return sendJson(
+            res,
+            200,
+            {
+              success: true,
+              status: activeOrder.status,
+              message: "Your order is approved, but your shopper’s payment details are not available yet.",
+              orderId: activeOrder.id,
+              order: activeOrder,
+              terminal: false,
+            },
+            origin
+          );
+        }
+
+        const total = Number(activeOrder.total_amount || 0);
+        const totalText = Number.isFinite(total)
+          ? `₹${total.toFixed(2)}`
+          : "the approved amount";
+
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: activeOrder.status,
+            message:
+              `Please pay ${totalText} directly to your Fetch shopper via UPI.\n\nUPI / mobile: ${destination}\n\nAfter paying, reply “I have paid”. The shopper will verify the payment before shopping starts.`,
+            orderId: activeOrder.id,
+            order: activeOrder,
+            terminal: false,
+          },
+          origin
+        );
+      }
+
+      if (activeOrder.payment_status === "paid") {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: activeOrder.status,
+            message: "Payment is already verified ✅ Your Fetch shopper can continue.",
+            orderId: activeOrder.id,
+            order: activeOrder,
+            terminal: false,
+          },
+          origin
+        );
+      }
+
+      if (!activeOrder.shopper_id) {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: activeOrder.status,
+            message: "I’m still waiting for a shopper to accept the confirmed order. Payment details will appear as soon as one is assigned.",
+            orderId: activeOrder.id,
+            order: activeOrder,
+            terminal: false,
+          },
+          origin
+        );
+      }
+
+      const reported = await updateOrder(
+        activeOrder.id,
+        {
+          payment_status: "customer_reported_paid",
+        }
+      );
+
+      if (!reported) {
+        throw new Error("Could not record web customer payment report");
+      }
+
+      const shopper = await getPhysicalOrderModule().then((module) =>
+        module.getShopperById(activeOrder.shopper_id)
+      );
+
+      if (shopper?.phone) {
+        const total = Number(activeOrder.total_amount || 0);
+
+        /*
+          Payment notification is a side effect. Never turn a successful
+          customer payment report into an API failure just because Meta/
+          WhatsApp is temporarily unavailable.
+        */
+        try {
+          await getPhysicalOrderModule().then((module) =>
+            module.sendWhatsAppMessage(
+              shopper.phone,
+              `💳 The web customer says they have paid ${Number.isFinite(total) ? `₹${total.toFixed(2)}` : "the approved amount"} directly to you.\n\nPlease check your UPI account and reply RECEIVED only after the money is actually visible. Reply NOT RECEIVED if it has not arrived.`
+            )
+          );
+        } catch (notificationError) {
+          console.error(
+            "FETCH WEB PAYMENT SHOPPER NOTIFICATION ERROR:",
+            notificationError
+          );
+        }
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          success: true,
+          status: activeOrder.status,
+          message: "Thanks 👍 I’ve told your shopper to verify the payment. The order will continue only after the shopper confirms RECEIVED.",
+          orderId: activeOrder.id,
+          order: reported,
+          terminal: false,
+        },
+        origin
+      );
+    }
 
     if (
       activeOrder &&
@@ -1315,23 +1667,44 @@ async function handlePost(req, res) {
       }
 
       /*
-       * Match the existing WhatsApp customer-approval flow:
-       * only after the customer approves the real total do we
-       * offer the confirmed procurement job to a shopper.
+       * If a human shopper already sourced the order, keep that same
+       * shopper attached. Only partner-store orders need a shopper offer
+       * after customer approval.
        */
-      const shopperDispatch =
-        await offerOrderToShopper(
-          approvedOrder
-        );
+      let shopperDispatch = null;
+
+      if (!approvedOrder.shopper_id) {
+        shopperDispatch =
+          await offerOrderToShopper(
+            approvedOrder
+          );
+      }
 
       const total = Number(
         approvedOrder.total_amount || 0
       );
 
+      let paymentDestination = "";
+      let shopperName = "";
+
+      if (approvedOrder.shopper_id) {
+        const shopper = await getShopperById(approvedOrder.shopper_id);
+        paymentDestination =
+          cleanText(shopper?.upi_id) ||
+          cleanText(shopper?.phone);
+        shopperName = cleanText(shopper?.name);
+      }
+
+      const paymentLine = paymentDestination
+        ? `\n\n💳 Pay ${Number.isFinite(total) ? `₹${total.toFixed(2)}` : "the approved amount"} directly to${shopperName ? ` ${shopperName}` : " your Fetch shopper"} via UPI:\n${paymentDestination}\n\nAfter paying, reply “I have paid”. The shopper will verify the payment before shopping starts.`
+        : "\n\nPayment details will appear as soon as the shopper’s UPI details are available.";
+
       const message =
-        shopperDispatch?.success
-          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
-          : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
+        approvedOrder.shopper_id
+          ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}${paymentLine}`
+          : shopperDispatch?.success
+            ? `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nA shopper has been offered the confirmed job. Payment details will appear automatically as soon as they accept.`
+            : `Approved 👍\n\n💰 Total: ₹${total.toFixed(2)}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`;
 
       return sendJson(
         res,
@@ -1355,6 +1728,127 @@ async function handlePost(req, res) {
         },
         origin
       );
+    }
+
+    /*
+     * GENERIC AGENT APPROVAL
+     *
+     * If there is no physical order waiting for price approval, an
+     * "approve" reply can release a consequential digital task that
+     * Fetch previously paused at the trust gate.
+     */
+    if (isWebApproval || isWebRejection) {
+      const waitingTasks = await listAgentTasks({
+        channel: "web",
+        conversationId,
+        status: "waiting",
+        limit: 10,
+      });
+
+      const waitingTask = (Array.isArray(waitingTasks) ? waitingTasks : [])
+        .find((item) => item?.status === "waiting");
+
+      const isPhysicalWaitingTask =
+        /physical_purchase/i.test(
+          String(waitingTask?.result?.risk?.reason || "")
+        ) ||
+        /shopping|physical/i.test(
+          String(waitingTask?.task_type || "")
+        );
+
+      if (waitingTask && !isPhysicalWaitingTask) {
+        if (isWebRejection) {
+          const rejected = await updateAgentTask(waitingTask.id, {
+            status: "cancelled",
+            confirmation_status: "rejected",
+            completed_at: new Date().toISOString(),
+          });
+
+          await addAgentEvent({
+            taskId: waitingTask.id,
+            customerId: waitingTask.customer_id,
+            eventType: "customer_rejected",
+            status: "cancelled",
+            actorType: "customer",
+            payload: { source: "web" },
+          });
+
+          return sendJson(
+            res,
+            200,
+            {
+              success: true,
+              status: "cancelled",
+              message: "Okay. I stopped that Fetch task.",
+              agent_task_id: waitingTask.id,
+              terminal: true,
+            },
+            origin
+          );
+        }
+
+        const rerun = await executeUniversalFetchRequest({
+          text: waitingTask.raw_request,
+          customerId: waitingTask.customer_id || null,
+          conversationId,
+          channel: "web",
+          activeTaskId: waitingTask.id,
+          suppliedContext: {
+            source: "fetch_web_customer_approval",
+            approval_granted: true,
+            conversation_history: conversationHistory,
+          },
+        });
+
+        await updateAgentTask(waitingTask.id, {
+          status:
+            rerun?.status === "completed"
+              ? "completed"
+              : rerun?.status === "execution_failed"
+                ? "failed"
+                : "running",
+          confirmation_status: "approved",
+          result: rerun || null,
+          completed_at:
+            ["completed", "execution_failed"].includes(String(rerun?.status || ""))
+              ? new Date().toISOString()
+              : null,
+        });
+
+        await addAgentEvent({
+          taskId: waitingTask.id,
+          customerId: waitingTask.customer_id,
+          eventType: "customer_approved",
+          status: rerun?.status || "running",
+          actorType: "customer",
+          payload: {
+            source: "web",
+            released_task_id: rerun?.agent_task_id || null,
+          },
+        });
+
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: rerun?.status || "running",
+            message:
+              extractResponseText(rerun) ||
+              rerun?.execution?.message ||
+              "Approved. Fetch is executing the task now.",
+            workflow_id: rerun?.workflow_id || null,
+            agent_task_id:
+              rerun?.agent_task_id ||
+              waitingTask.id,
+            fetch: rerun?.fetch || null,
+            atc: rerun?.atc || null,
+            execution: rerun?.execution || null,
+            terminal: rerun?.status === "completed",
+          },
+          origin
+        );
+      }
     }
 
     /*
@@ -1438,8 +1932,21 @@ async function handlePost(req, res) {
    * through the existing Universal -> ATC -> partner-store -> shopper flow.
    */
   let researchQuotaHit = false;
+
+  /*
+   * ACTIONABLE TRAVEL / WEB TASKS must reach the Universal engine.
+   * It already classifies these as Browser Agent work. If we intercept
+   * them here as generic research, "find the cheapest flight" becomes a
+   * news-search answer instead of an executable travel task.
+   */
+  const browserExecutionRequest =
+    /\b(flight|flights|train|trains|hotel|hotels|restaurant|restaurants|ticket|tickets|travel|trip)\b/i.test(effectiveText) &&
+    /\b(cheapest|best|find|compare|search|book|booking|reserve|reservation|available|availability|options|fare|fares|price|prices|tomorrow|today|tonight|next\s+week)\b/i.test(effectiveText);
+
   const researchRequest =
-    !isLikelyPhysicalText(effectiveText) && isLiveResearchRequest(effectiveText);
+    !isLikelyPhysicalText(effectiveText) &&
+    isLiveResearchRequest(effectiveText) &&
+    !browserExecutionRequest;
 
   if (researchRequest) {
     if (Date.now() < geminiGroundingBlockedUntil) {
@@ -1474,6 +1981,7 @@ async function handlePost(req, res) {
               fetch: { source_class: "live_research" },
               atc: { resource_type: "research_engine" },
               execution: researchExecution,
+              citations: normalizeCitations(researchExecution?.citations),
             },
             origin
           );
@@ -1592,7 +2100,19 @@ async function handlePost(req, res) {
             success: true,
             status: "completed",
             provider: "public_search_synthesis",
+            citations:
+              normalizeCitations([
+                ...(Array.isArray(result?.sources) ? result.sources : []),
+                ...(Array.isArray(result?.execution?.sources) ? result.execution.sources : []),
+                ...(Array.isArray(result?.task?.sources) ? result.task.sources : []),
+              ]),
           },
+          citations:
+            normalizeCitations([
+              ...(Array.isArray(result?.sources) ? result.sources : []),
+              ...(Array.isArray(result?.execution?.sources) ? result.execution.sources : []),
+              ...(Array.isArray(result?.task?.sources) ? result.task.sources : []),
+            ]),
         },
         origin
       );
@@ -1709,7 +2229,7 @@ async function handlePost(req, res) {
               success: true,
               status: "completed",
               workflow_id: result?.workflow_id || null,
-              message: String(fallbackExecution.message),
+              message: cleanText(fallbackExecution.message),
               fetch: result?.fetch || null,
               atc: {
                 ...(result?.atc || {}),
@@ -1770,7 +2290,7 @@ async function handlePost(req, res) {
         status: browserSuccess ? "completed" : "execution_failed",
         workflow_id: result?.workflow_id || null,
         message: browserSuccess
-          ? String(browserMessage)
+          ? cleanText(browserMessage)
           : "I couldn't complete that research right now. Please try again.",
         fetch: result?.fetch || null,
         atc: result?.atc || null,
@@ -1972,21 +2492,43 @@ export default async function handler(req, res) {
       origin
     );
   } catch (error) {
-    console.error(
-      "FETCH WEB AGENT ERROR:",
-      error
-    );
+    console.error("FETCH WEB AGENT ERROR:", error);
 
-    return sendJson(
-      res,
-      500,
-      {
-        success: false,
-        error:
-          error?.message ||
-          "Fetch web request failed",
-      },
-      origin
-    );
+    const errorMessage =
+      cleanText(error?.message) ||
+      cleanText(error?.error) ||
+      "Fetch web request failed";
+
+    // Keep the error boundary independent from sendJson().
+    // This prevents a secondary serialization error from masking
+    // the original backend exception.
+    try {
+      res.status(500);
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+
+      for (const [key, value] of Object.entries(corsHeaders(origin))) {
+        res.setHeader(key, value);
+      }
+
+      return res.end(
+        JSON.stringify({
+          success: false,
+          status: "server_error",
+          error: errorMessage,
+          error_type: error?.name || "Error",
+          build: FETCH_BUILD,
+        })
+      );
+    } catch (responseError) {
+      console.error("FETCH WEB ERROR RESPONSE FAILED:", responseError);
+      return res.end(
+        JSON.stringify({
+          success: false,
+          status: "server_error",
+          error: "Fetch backend failed before it could serialize the error.",
+          build: FETCH_BUILD,
+        })
+      );
+    }
   }
 }
