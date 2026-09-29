@@ -520,6 +520,8 @@ export default function App() {
                       ? "shopper assigned"
                       : data.status === "payment_pending"
                         ? "payment pending"
+                        : data.status === "awaiting_agent_approval"
+                          ? "waiting for your approval"
                         : data.status === "shopping"
                         ? "shopping"
                         : data.status === "out_for_delivery"
@@ -971,8 +973,10 @@ export default function App() {
                       message.text
                     )}
 
-                    {message.meta?.status === "awaiting_customer_price_confirmation" &&
-                      task?.status === "awaiting_customer_price_confirmation" && (
+                    {(
+                      message.meta?.status === "awaiting_customer_price_confirmation" &&
+                      task?.status === "awaiting_customer_price_confirmation"
+                    ) && (
                       <button
                         type="button"
                         className="approvalButton"
@@ -980,6 +984,20 @@ export default function App() {
                         disabled={busy}
                       >
                         Approve order
+                      </button>
+                    )}
+
+                    {(
+                      message.meta?.status === "awaiting_agent_approval" &&
+                      task?.status === "awaiting_agent_approval"
+                    ) && (
+                      <button
+                        type="button"
+                        className="approvalButton"
+                        onClick={() => send("approve")}
+                        disabled={busy}
+                      >
+                        Approve action
                       </button>
                     )}
 
