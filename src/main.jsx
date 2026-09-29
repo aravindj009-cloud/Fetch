@@ -909,6 +909,7 @@ export default function App() {
   );
 
   return (
+    <div className="app">
     {taskCenterOpen && selectedAgentTask && (
       <div className="taskCenterOverlay" role="dialog" aria-modal="true">
         <div className="taskCenterPanel">
@@ -960,7 +961,6 @@ export default function App() {
       </div>
     )}
 
-    <div className="app">
 
       <style>{`
         .approvalButton {
