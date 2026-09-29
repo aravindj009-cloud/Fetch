@@ -907,6 +907,57 @@ export default function App() {
   );
 
   return (
+    {taskCenterOpen && selectedAgentTask && (
+      <div className="taskCenterOverlay" role="dialog" aria-modal="true">
+        <div className="taskCenterPanel">
+          <div className="taskCenterHeader">
+            <div>
+              <small>FETCH TASK CENTER</small>
+              <h2>{selectedAgentTask.goal || selectedAgentTask.raw_request || "Fetch task"}</h2>
+            </div>
+            <button className="taskCenterClose" onClick={() => setTaskCenterOpen(false)}>×</button>
+          </div>
+          <div className="taskCenterStatus">
+            <strong>{String(selectedAgentTask.status || "unknown").replace(/_/g, " ")}</strong>
+            <span>{selectedAgentTask.task_type || "agent task"}</span>
+          </div>
+          <div className="taskTimeline">
+            {(Array.isArray(selectedAgentTask.steps) ? selectedAgentTask.steps : []).map((step,index) => (
+              <div className={`taskTimelineStep ${step.status || "pending"}`} key={step.id || index}>
+                <div className="timelineDot">{step.status === "completed" ? "✓" : String(index + 1).padStart(2,"0")}</div>
+                <div className="timelineBody">
+                  <strong>{step.input?.purpose || step.input?.goal || step.capability || "Fetch step"}</strong>
+                  <span>{step.capability || "agent"} · {step.status || "pending"}</span>
+                  {step.output?.message && <p>{normalizeAssistantText(step.output.message)}</p>}
+                  {step.error?.message && <p>{step.error.message}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="taskCenterActions">
+            {(selectedAgentTask.status === "waiting" || selectedAgentTask.confirmation_status === "pending") &&
+              <button onClick={() => taskAction(selectedAgentTask.id,"approve")}>Approve</button>}
+            {!["completed","cancelled","failed"].includes(selectedAgentTask.status) &&
+              <button className="secondary" onClick={() => taskAction(selectedAgentTask.id,"cancel")}>Stop task</button>}
+            {selectedAgentTask.status === "failed" &&
+              <button onClick={() => taskAction(selectedAgentTask.id,"retry")}>Retry</button>}
+            <button className="secondary" onClick={refreshSelectedTask}>Refresh</button>
+          </div>
+          {Array.isArray(selectedAgentTask.events) && selectedAgentTask.events.length > 0 && (
+            <details className="taskEvents">
+              <summary>Execution history</summary>
+              {selectedAgentTask.events.slice().reverse().map((event,index) => (
+                <div key={event.id || index}>
+                  <strong>{String(event.event_type || "event").replace(/_/g," ")}</strong>
+                  <span>{event.status || ""}</span>
+                </div>
+              ))}
+            </details>
+          )}
+        </div>
+      </div>
+    )}
+
     <div className="app">
 
       <style>{`
@@ -1274,7 +1325,7 @@ export default function App() {
                       key={item.id}
                       type="button"
                       className={`ledgerItem ${agentTaskId === item.id ? "selected" : ""}`}
-                      onClick={() => refreshAgentTask(item.id)}
+                      onClick={() => openAgentTask(item.id)}
                     >
                       <span className="ledgerDot" />
                       <span className="ledgerText">
