@@ -364,7 +364,6 @@ export default function App() {
   const [task, setTask] = useState(null);
   const [agentTasks, setAgentTasks] = useState([]);
   const [agentTaskId, setAgentTaskId] = useState(null);
-  const [workflow, setWorkflow] = useState(null);
 
   const activeWatchRef = useRef(null);
   const lastOrderMessageRef = useRef(new Map());
@@ -386,24 +385,6 @@ export default function App() {
     } catch (error) {
       console.error("FETCH TASK LEDGER ERROR", error);
     }
-  }
-
-  async function refreshWorkflow(workflowId) {
-    if (!workflowId) return null;
-    try {
-      const response = await fetch(
-        `/api/fetch/workflows?workflow_id=${encodeURIComponent(workflowId)}`,
-        { cache: "no-store", headers: { Accept: "application/json" } }
-      );
-      const data = await readApiJson(response);
-      if (response.ok && data?.success && data.workflow) {
-        setWorkflow(data.workflow);
-        return data.workflow;
-      }
-    } catch (error) {
-      console.error("FETCH WORKFLOW ERROR", error);
-    }
-    return null;
   }
 
   async function refreshAgentTask(taskId) {
@@ -514,9 +495,6 @@ export default function App() {
       if (data?.agent_task_id) {
         setAgentTaskId(data.agent_task_id);
         refreshAgentTask(data.agent_task_id);
-      }
-      if (data?.workflow_id) {
-        refreshWorkflow(data.workflow_id);
       }
 
       const route =
@@ -875,7 +853,6 @@ export default function App() {
     setTask(null);
     setAgentTaskId(null);
     setAgentTasks([]);
-    setWorkflow(null);
     setInput("");
 
     setTimeout(() => {
@@ -1244,23 +1221,6 @@ export default function App() {
 
               </div>
 
-            )}
-
-            {workflow?.steps?.length > 0 && (
-              <div className="workflowPlan">
-                <small>LIVE PLAN</small>
-                <div className="workflowPlanList">
-                  {workflow.steps.map((step, index) => (
-                    <div className={`workflowStep ${step.status || "pending"}`} key={step.id || step.step_index || index}>
-                      <span>{String(index + 1).padStart(2, "0")}</span>
-                      <div>
-                        <strong>{step.purpose || step.step_key || "Fetch step"}</strong>
-                        <small>{step.status || "pending"} · {step.domain || "agent"}</small>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             )}
 
             {agentTasks.length > 0 && (
