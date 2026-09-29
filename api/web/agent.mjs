@@ -17,7 +17,7 @@
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
-import { updateAgentTask } from "../../lib/fetch-agent-runtime.mjs";
+import { updateAgentTask, listAgentTasks, addAgentEvent } from "../../lib/fetch-agent-runtime.mjs";
 
 let physicalOrderModulePromise = null;
 
@@ -1728,6 +1728,119 @@ async function handlePost(req, res) {
         },
         origin
       );
+    }
+
+    /*
+     * GENERIC AGENT APPROVAL
+     *
+     * If there is no physical order waiting for price approval, an
+     * "approve" reply can release a consequential digital task that
+     * Fetch previously paused at the trust gate.
+     */
+    if (isWebApproval || isWebRejection) {
+      const waitingTasks = await listAgentTasks({
+        channel: "web",
+        conversationId,
+        status: "waiting",
+        limit: 10,
+      });
+
+      const waitingTask = (Array.isArray(waitingTasks) ? waitingTasks : [])
+        .find((item) => item?.status === "waiting");
+
+      if (waitingTask) {
+        if (isWebRejection) {
+          const rejected = await updateAgentTask(waitingTask.id, {
+            status: "cancelled",
+            confirmation_status: "rejected",
+            completed_at: new Date().toISOString(),
+          });
+
+          await addAgentEvent({
+            taskId: waitingTask.id,
+            customerId: waitingTask.customer_id,
+            eventType: "customer_rejected",
+            status: "cancelled",
+            actorType: "customer",
+            payload: { source: "web" },
+          });
+
+          return sendJson(
+            res,
+            200,
+            {
+              success: true,
+              status: "cancelled",
+              message: "Okay. I stopped that Fetch task.",
+              agent_task_id: waitingTask.id,
+              terminal: true,
+            },
+            origin
+          );
+        }
+
+        const rerun = await executeUniversalFetchRequest({
+          text: waitingTask.raw_request,
+          customerId: waitingTask.customer_id || null,
+          conversationId,
+          channel: "web",
+          activeTaskId: waitingTask.id,
+          suppliedContext: {
+            source: "fetch_web_customer_approval",
+            approval_granted: true,
+            conversation_history: conversationHistory,
+          },
+        });
+
+        await updateAgentTask(waitingTask.id, {
+          status:
+            rerun?.status === "completed"
+              ? "completed"
+              : rerun?.status === "execution_failed"
+                ? "failed"
+                : "running",
+          confirmation_status: "approved",
+          result: rerun || null,
+          completed_at:
+            ["completed", "execution_failed"].includes(String(rerun?.status || ""))
+              ? new Date().toISOString()
+              : null,
+        });
+
+        await addAgentEvent({
+          taskId: waitingTask.id,
+          customerId: waitingTask.customer_id,
+          eventType: "customer_approved",
+          status: rerun?.status || "running",
+          actorType: "customer",
+          payload: {
+            source: "web",
+            released_task_id: rerun?.agent_task_id || null,
+          },
+        });
+
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: rerun?.status || "running",
+            message:
+              extractResponseText(rerun) ||
+              rerun?.execution?.message ||
+              "Approved. Fetch is executing the task now.",
+            workflow_id: rerun?.workflow_id || null,
+            agent_task_id:
+              rerun?.agent_task_id ||
+              waitingTask.id,
+            fetch: rerun?.fetch || null,
+            atc: rerun?.atc || null,
+            execution: rerun?.execution || null,
+            terminal: rerun?.status === "completed",
+          },
+          origin
+        );
+      }
     }
 
     /*
