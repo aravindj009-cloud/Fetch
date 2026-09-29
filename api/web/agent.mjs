@@ -1748,7 +1748,15 @@ async function handlePost(req, res) {
       const waitingTask = (Array.isArray(waitingTasks) ? waitingTasks : [])
         .find((item) => item?.status === "waiting");
 
-      if (waitingTask) {
+      const isPhysicalWaitingTask =
+        /physical_purchase/i.test(
+          String(waitingTask?.result?.risk?.reason || "")
+        ) ||
+        /shopping|physical/i.test(
+          String(waitingTask?.task_type || "")
+        );
+
+      if (waitingTask && !isPhysicalWaitingTask) {
         if (isWebRejection) {
           const rejected = await updateAgentTask(waitingTask.id, {
             status: "cancelled",
