@@ -364,6 +364,8 @@ export default function App() {
   const [task, setTask] = useState(null);
   const [agentTasks, setAgentTasks] = useState([]);
   const [agentTaskId, setAgentTaskId] = useState(null);
+  const [taskCenterOpen, setTaskCenterOpen] = useState(false);
+  const [selectedAgentTask, setSelectedAgentTask] = useState(null);
 
   const activeWatchRef = useRef(null);
   const lastOrderMessageRef = useRef(new Map());
@@ -405,6 +407,46 @@ export default function App() {
     } catch (error) {
       console.error("FETCH TASK ERROR", error);
     }
+  }
+
+  async function openAgentTask(taskId) {
+    if (!taskId) return;
+    try {
+      const response = await fetch(
+        `/api/fetch/tasks?task_id=${encodeURIComponent(taskId)}`,
+        { cache: "no-store", headers: { Accept: "application/json" } }
+      );
+      const data = await readApiJson(response);
+      if (response.ok && data?.success && data.task) {
+        setSelectedAgentTask(data.task);
+        setTaskCenterOpen(true);
+      }
+    } catch (error) {
+      console.error("FETCH TASK CENTER ERROR", error);
+    }
+  }
+
+  async function taskAction(taskId, action) {
+    if (!taskId) return;
+    try {
+      const response = await fetch("/api/fetch/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ task_id: taskId, action })
+      });
+      const data = await readApiJson(response);
+      if (response.ok && data?.success && data.task) {
+        setSelectedAgentTask(data.task);
+        await refreshAgentTasks();
+      }
+    } catch (error) {
+      console.error("FETCH TASK ACTION ERROR", error);
+    }
+  }
+
+  async function refreshSelectedTask() {
+    if (!selectedAgentTask?.id) return;
+    await openAgentTask(selectedAgentTask.id);
   }
 
   async function send(rawText) {
