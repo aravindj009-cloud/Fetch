@@ -706,21 +706,3 @@ aside > p {
   white-space: nowrap;
 }
 .ledgerText small { font-size: 9px; opacity: .55; }
-
-
-.workflowPlan {
-  margin-top: 16px;
-  padding-top: 15px;
-  border-top: 1px solid rgba(17,17,17,.10);
-}
-.workflowPlan > small { display:block; font-size:10px; letter-spacing:.12em; font-weight:800; opacity:.55; margin-bottom:9px; }
-.workflowPlanList { display:grid; gap:6px; }
-.workflowStep { display:grid; grid-template-columns:22px 1fr; gap:8px; align-items:start; padding:7px 8px; border-radius:9px; border:1px solid rgba(17,17,17,.07); }
-.workflowStep > span { font-size:9px; opacity:.45; font-weight:800; padding-top:2px; }
-.workflowStep div { display:grid; gap:2px; }
-.workflowStep strong { font-size:10px; line-height:1.3; }
-.workflowStep small { font-size:8px; opacity:.5; text-transform:uppercase; letter-spacing:.04em; }
-.workflowStep.completed { opacity:.65; }
-.workflowStep.running { border-color:rgba(17,17,17,.22); }
-.workflowStep.waiting { border-style:dashed; }
-.workflowStep.failed { text-decoration:line-through; opacity:.55; }
