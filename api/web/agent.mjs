@@ -17,6 +17,7 @@
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
+import { updateAgentTask } from "../../lib/fetch-agent-runtime.mjs";
 
 let physicalOrderModulePromise = null;
 
@@ -1015,6 +1016,7 @@ async function handlePhysicalWebRequest({
       message:
         "Please allow location access so Fetch can find the right nearby store and calculate delivery.",
       workflow_id: result?.workflow_id || null,
+      agent_task_id: result?.agent_task_id || null,
       fetch: result?.fetch || null,
       atc: result?.atc || null,
       execution: result?.execution || null,
@@ -1074,6 +1076,22 @@ async function handlePhysicalWebRequest({
 
   if (!order?.id) {
     throw new Error("Could not create Fetch order");
+  }
+
+  if (result?.agent_task_id) {
+    try {
+      await updateAgentTask(result.agent_task_id, {
+        task_data: {
+          source: "universal_task_engine",
+          conversation_id: conversationId,
+          order_id: order.id,
+          workflow_id: result?.workflow_id || null,
+          execution_network: "physical_network"
+        }
+      });
+    } catch (error) {
+      console.error("FETCH AGENT ORDER LINK ERROR:", error);
+    }
   }
 
   const locatedOrder = await updateOrder(order.id, {
