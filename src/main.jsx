@@ -362,6 +362,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
   const [task, setTask] = useState(null);
+  const [agentTasks, setAgentTasks] = useState([]);
+  const [agentTaskId, setAgentTaskId] = useState(null);
 
   const activeWatchRef = useRef(null);
   const lastOrderMessageRef = useRef(new Map());
@@ -369,6 +371,41 @@ export default function App() {
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
   const conversationRef = useRef(getConversationId());
+
+  async function refreshAgentTasks() {
+    try {
+      const response = await fetch(
+        `/api/fetch/tasks?conversation_id=${encodeURIComponent(conversationRef.current)}&channel=web&limit=10`,
+        { cache: "no-store", headers: { Accept: "application/json" } }
+      );
+      const data = await readApiJson(response);
+      if (response.ok && data?.success) {
+        setAgentTasks(Array.isArray(data.tasks) ? data.tasks : []);
+      }
+    } catch (error) {
+      console.error("FETCH TASK LEDGER ERROR", error);
+    }
+  }
+
+  async function refreshAgentTask(taskId) {
+    if (!taskId) return;
+    try {
+      const response = await fetch(
+        `/api/fetch/tasks?task_id=${encodeURIComponent(taskId)}`,
+        { cache: "no-store", headers: { Accept: "application/json" } }
+      );
+      const data = await readApiJson(response);
+      if (response.ok && data?.success && data.task) {
+        setAgentTaskId(taskId);
+        setAgentTasks((current) => {
+          const next = current.filter((item) => item.id !== taskId);
+          return [data.task, ...next].slice(0, 10);
+        });
+      }
+    } catch (error) {
+      console.error("FETCH TASK ERROR", error);
+    }
+  }
 
   async function send(rawText) {
     const text = String(rawText || "").trim();
@@ -453,6 +490,11 @@ export default function App() {
           "Fetch request failed";
 
         throw new Error(apiError);
+      }
+
+      if (data?.agent_task_id) {
+        setAgentTaskId(data.agent_task_id);
+        refreshAgentTask(data.agent_task_id);
       }
 
       const route =
@@ -555,6 +597,7 @@ export default function App() {
         }
       ]);
     } finally {
+      refreshAgentTasks();
       setBusy(false);
 
       setTimeout(() => {
@@ -719,6 +762,8 @@ export default function App() {
   }
 
   useEffect(() => {
+    refreshAgentTasks();
+
     const savedOrderId = localStorage.getItem(ACTIVE_ORDER_KEY);
 
     if (!savedOrderId) return;
@@ -804,6 +849,8 @@ export default function App() {
     ]);
 
     setTask(null);
+    setAgentTaskId(null);
+    setAgentTasks([]);
     setInput("");
 
     setTimeout(() => {
@@ -1156,6 +1203,28 @@ export default function App() {
 
               </div>
 
+            )}
+
+            {agentTasks.length > 0 && (
+              <div className="taskLedger">
+                <small>AGENT LEDGER</small>
+                <div className="taskLedgerList">
+                  {agentTasks.slice(0, 5).map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`ledgerItem ${agentTaskId === item.id ? "selected" : ""}`}
+                      onClick={() => refreshAgentTask(item.id)}
+                    >
+                      <span className="ledgerDot" />
+                      <span className="ledgerText">
+                        <strong>{item.goal || item.raw_request || "Fetch task"}</strong>
+                        <small>{item.status} · {item.task_type}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             <div className="networks">
