@@ -659,3 +659,50 @@ aside > p {
     font-size: 14px;
   }
 }
+
+
+/* Durable Fetch Agent task ledger */
+.taskLedger {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(17,17,17,.10);
+}
+.taskLedger > small {
+  display: block;
+  font-size: 10px;
+  letter-spacing: .12em;
+  font-weight: 800;
+  opacity: .55;
+  margin-bottom: 10px;
+}
+.taskLedgerList { display: grid; gap: 7px; }
+.ledgerItem {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid rgba(17,17,17,.08);
+  background: rgba(255,255,255,.55);
+  border-radius: 10px;
+  padding: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+.ledgerItem:hover, .ledgerItem.selected { border-color: rgba(17,17,17,.22); }
+.ledgerDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #111;
+  margin-top: 5px;
+  flex: 0 0 auto;
+}
+.ledgerText { min-width: 0; display: grid; gap: 3px; }
+.ledgerText strong {
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ledgerText small { font-size: 9px; opacity: .55; }
