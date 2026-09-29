@@ -409,6 +409,18 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    refreshAgentTasks();
+    const timer = window.setInterval(() => {
+      refreshAgentTasks();
+      if (taskCenterOpen && selectedAgentTask?.id) {
+        openAgentTask(selectedAgentTask.id);
+      }
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [taskCenterOpen, selectedAgentTask?.id]);
+
   async function openAgentTask(taskId) {
     if (!taskId) return;
     try {
