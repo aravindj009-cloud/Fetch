@@ -895,6 +895,8 @@ export default function App() {
     setTask(null);
     setAgentTaskId(null);
     setAgentTasks([]);
+    setSelectedAgentTask(null);
+    setTaskCenterOpen(false);
     setInput("");
 
     setTimeout(() => {
