@@ -706,3 +706,31 @@ aside > p {
   white-space: nowrap;
 }
 .ledgerText small { font-size: 9px; opacity: .55; }
+
+.taskCenterOverlay{position:fixed;inset:0;z-index:50;background:rgba(10,10,10,.28);display:flex;justify-content:flex-end}
+.taskCenterPanel{width:min(480px,94vw);height:100%;background:#fff;padding:28px;box-shadow:-20px 0 60px rgba(0,0,0,.12);overflow:auto}
+.taskCenterHeader{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid rgba(17,17,17,.1);padding-bottom:18px}
+.taskCenterHeader small{font-size:9px;letter-spacing:.14em;font-weight:800;opacity:.5}
+.taskCenterHeader h2{font-size:18px;line-height:1.25;margin:7px 0 0}
+.taskCenterClose{border:0;background:transparent;font-size:25px;cursor:pointer;height:32px}
+.taskCenterStatus{display:flex;justify-content:space-between;align-items:center;padding:14px 0;font-size:11px}
+.taskCenterStatus strong{text-transform:capitalize}
+.taskCenterStatus span{opacity:.5}
+.taskTimeline{display:grid;gap:0;margin:8px 0 20px}
+.taskTimelineStep{display:grid;grid-template-columns:32px 1fr;gap:12px;position:relative;padding:0 0 18px}
+.taskTimelineStep:not(:last-child):after{content:"";position:absolute;left:15px;top:29px;bottom:0;width:1px;background:rgba(17,17,17,.12)}
+.timelineDot{width:30px;height:30px;border:1px solid rgba(17,17,17,.15);border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:800;background:#fff;z-index:1}
+.taskTimelineStep.completed .timelineDot{background:#111;color:#fff}
+.taskTimelineStep.running .timelineDot{border-color:#111}
+.taskTimelineStep.waiting .timelineDot{border-style:dashed}
+.timelineBody{padding-top:5px;display:grid;gap:4px}
+.timelineBody strong{font-size:11px}
+.timelineBody span{font-size:9px;text-transform:uppercase;letter-spacing:.04em;opacity:.48}
+.timelineBody p{font-size:10px;line-height:1.45;margin:5px 0 0;opacity:.72}
+.taskCenterActions{display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(17,17,17,.1);padding-top:16px}
+.taskCenterActions button{border:0;border-radius:10px;padding:10px 13px;background:#111;color:#fff;font-size:10px;font-weight:700;cursor:pointer}
+.taskCenterActions button.secondary{background:#f1f1f1;color:#111}
+.taskEvents{margin-top:20px;border-top:1px solid rgba(17,17,17,.1);padding-top:14px}
+.taskEvents summary{font-size:10px;font-weight:800;cursor:pointer}
+.taskEvents div{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(17,17,17,.06);font-size:9px}
+.taskEvents div span{opacity:.5}
