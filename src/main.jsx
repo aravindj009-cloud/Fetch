@@ -552,6 +552,14 @@ export default function App() {
       return;
     }
 
+    const conversationHistory = messages
+      .slice(-10)
+      .map((message) => ({
+        role: message.role,
+        content: normalizeAssistantText(message.text || "")
+      }))
+      .filter((message) => message.content);
+
     setMessages((current) => [
       ...current,
       {
@@ -611,7 +619,9 @@ export default function App() {
             conversationId: conversationRef.current,
             channel: "web",
             latitude,
-            longitude
+            longitude,
+            conversationHistory,
+            activeTask: task
           })
         }
       );
