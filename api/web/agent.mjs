@@ -780,6 +780,20 @@ function sendJson(res, status, payload, origin = "") {
   return res.json(safePayload);
 }
 
+function isActionableMobilityRequest(value) {
+  const text = cleanText(value).toLowerCase();
+  const hasMobility = /\b(cab|taxi|uber|rapido|ride|rickshaw|auto)\b/i.test(text);
+  const hasAction = /\b(get|book|find|call|send|arrange|take|pick|drop|bring|need)\b/i.test(text);
+  return hasMobility && hasAction;
+}
+
+function isUnderspecifiedPhysicalRequest(value) {
+  const text = cleanText(value).toLowerCase();
+  const conversationalNeed = /^\s*(?:i|we)\s+(?:need|want)\b/i.test(text);
+  const quantityItem = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:\.\d+)?)\s*(?:kg|kgs|kilo|kilos|g|gram|grams|l|litre|litres|liter|liters|pack|packs|piece|pieces|units?)?\s+[a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)?\b/i.test(text);
+  const explicitExecution = /\b(?:buy|purchase|order|deliver|delivery|bring me|get me|fetch me|send me|shop for|pick up|pickup)\b/i.test(text);
+  return conversationalNeed && quantityItem && !explicitExecution;
+}
 function isLikelyPhysicalText(value) {
   const text = cleanText(value).toLowerCase();
   if (!text) return false;
@@ -1945,6 +1959,7 @@ async function handlePost(req, res) {
 
   const researchRequest =
     !isLikelyPhysicalText(effectiveText) &&
+    !isActionableMobilityRequest(effectiveText) &&
     isLiveResearchRequest(effectiveText) &&
     !browserExecutionRequest;
 
@@ -2048,6 +2063,55 @@ async function handlePost(req, res) {
     })
   );
 
+  /*
+   * CONVERSATIONAL PHYSICAL REQUESTS
+   *
+   * Keep underspecified "I need X" shopping statements in the
+   * conversation layer until Fetch has enough detail to execute.
+   * Explicit execution requests still use the ATC/order path.
+   */
+  if (isUnderspecifiedPhysicalRequest(text)) {
+    try {
+      const conversationalExecution = await executeDigitalAgent({
+        task: {
+          id: result?.workflow_id || ('web:' + Date.now()),
+          source_text: text,
+          goal: text,
+          objective: text,
+          task_data: {
+            source_text: text,
+            text,
+            conversation_history: conversationHistory,
+            universal_result: result || null
+          }
+        },
+        route: { resource_type: 'digital_agent', reason: 'underspecified_physical_request' },
+        resource: { resource_type: 'digital_agent' },
+        context: {
+          channel: 'web',
+          text,
+          conversation_id: conversationId,
+          workflow_id: result?.workflow_id || null,
+          use_web_search: false,
+          conversation_history: conversationHistory
+        }
+      });
+
+      if (conversationalExecution?.message) {
+        return sendJson(res, 200, {
+          success: true,
+          status: 'conversation',
+          workflow_id: result?.workflow_id || null,
+          message: cleanText(conversationalExecution.message),
+          fetch: result?.fetch || null,
+          atc: { ...(result?.atc || {}), resource_type: 'digital_agent', reason: 'underspecified_physical_request' },
+          execution: conversationalExecution
+        }, origin);
+      }
+    } catch (conversationError) {
+      console.error('FETCH WEB CONVERSATIONAL PHYSICAL BRIDGE ERROR:', conversationError);
+    }
+  }
   if (isPhysicalResult(result, text)) {
     const physical = await handlePhysicalWebRequest({
       result,
