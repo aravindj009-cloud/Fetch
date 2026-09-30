@@ -787,7 +787,7 @@ function isActionableMobilityRequest(value) {
   return hasMobility && hasAction;
 }
 
-function isUnderspecifiedPhysicalRequest(value) {
+function buildShoppingConversationReply(text, history = []) {  const current = cleanText(text);  const lower = current.toLowerCase();  const previous = Array.isArray(history) ? history.map((item) => cleanText(item?.content)).filter(Boolean) : [];  const combined = [...previous, current].join(' ').toLowerCase();  const quantityMatch = current.match(/\b(\d+(?:\.\d+)?)\s*(kg|kgs|kilo|kilos|g|gram|grams|l|litre|litres|liter|liters)\s+([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)?)/i);  const itemMatch = current.match(/\b(?:need|want)\s+(?:\d+(?:\.\d+)?\s*)?(?:kg|kgs|kilo|kilos|g|gram|grams|l|litre|litres|liter|liters)?\s*([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)?)/i);  const quantity = quantityMatch?.[1] || (combined.match(/\b(\d+(?:\.\d+)?)\s*(?:kg|kgs|kilo|kilos)\b/i)?.[1] || '');  const item = cleanText(quantityMatch?.[3] || itemMatch?.[1] || (combined.match(/\b(apples?|bananas?|milk|bread|eggs?)\b/i)?.[0] || 'item'));  if (/\bfresh\b/i.test(current) && /\bapple/i.test(combined) && !/\bstandard|mixed|variety\b/i.test(current)) {    return `Perfect — ${quantity || 'the requested amount'} kg of fresh apples.\n\nOne more detail — do you have a preferred variety, or should I choose a standard mixed/available option?`;  }  if (/\b(?:standard|mixed|available)\b/i.test(current) && /\bapple/i.test(combined)) {    return `Understood — ${quantity || 'the requested amount'} kg of fresh apples, standard/mixed variety. I have the details I need to move forward.`;  }  if (quantity && item) {    const unit = /\bkg|kgs|kilo|kilos\b/i.test(current) ? 'kg' : '';    const amount = unit ? `${quantity} ${unit}` : quantity;    return `Got it — ${amount} of ${item}.\n\nQuick check — do you want fresh ${item} for delivery, or are you just noting an item for later? If you want fresh ${item}, tell me your preferred variety if you have one (for example: Gala, Fuji, Honeycrisp, Granny Smith).`;  }  return `Got it — ${current}. What detail would you like to specify before I move forward?`;}function isUnderspecifiedPhysicalRequest(value) {
   const text = cleanText(value).toLowerCase();
   const conversationalNeed = /^\s*(?:i|we)\s+(?:need|want)\b/i.test(text);
   const quantityItem = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:\.\d+)?)\s*(?:kg|kgs|kilo|kilos|g|gram|grams|l|litre|litres|liter|liters|pack|packs|piece|pieces|units?)?\s+[a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)?\b/i.test(text);
@@ -2071,6 +2071,27 @@ async function handlePost(req, res) {
    * Explicit execution requests still use the ATC/order path.
    */
   if (isUnderspecifiedPhysicalRequest(text)) {
+    try {
+      const localConversationMessage = buildShoppingConversationReply(text, conversationHistory);
+      return sendJson(res, 200, {
+        success: true,
+        status: 'conversation',
+        workflow_id: result?.workflow_id || null,
+        message: localConversationMessage,
+        fetch: result?.fetch || null,
+        atc: { ...(result?.atc || {}), resource_type: 'digital_agent', reason: 'underspecified_physical_request' },
+        execution: {
+          success: true,
+          status: 'conversation',
+          provider: 'fetch_conversation_fallback',
+          side_effect: false,
+          message: localConversationMessage
+        }
+      }, origin);
+    } catch (conversationError) {
+      console.error('FETCH WEB LOCAL CONVERSATION ERROR:', conversationError);
+    }
+
     try {
       const conversationalExecution = await executeDigitalAgent({
         task: {
