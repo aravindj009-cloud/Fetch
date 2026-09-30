@@ -16,6 +16,7 @@
  */
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
+import { answerFetchConversation } from "../../lib/fetch-conversation.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
 import { updateAgentTask, listAgentTasks, addAgentEvent } from "../../lib/fetch-agent-runtime.mjs";
 
@@ -228,6 +229,29 @@ function buildEffectiveRequestText(text, history) {
   }
 
   return current;
+}
+
+function isExplicitSideEffectRequest(text = "") {
+  const value = cleanText(text).toLowerCase();
+
+  if (/^(what|why|how|when|where|who|which|can you tell me|tell me|explain|describe|is|are|does|do|can|could|would|should)\b/i.test(value)) {
+    return false;
+  }
+
+  return /\b(book|buy|purchase|order|deliver|delivery|send|call|contact|schedule|reserve|reservation|pay|transfer|cancel|request|arrange|get me|bring me|pick me up|take me|drop me|hire|assign)\b/i.test(value);
+}
+
+async function answerNormalConversation(text, history, activeTask = null) {
+  const message = await answerFetchConversation({
+    text,
+    history: history.map((item) => ({
+      role: item.role,
+      text: item.content || item.text || ""
+    })),
+    activeTask
+  });
+
+  return cleanText(message);
 }
 
 function isWeatherRequest(text = "") {
@@ -1927,6 +1951,49 @@ async function handlePost(req, res) {
       );
     } catch (timeError) {
       console.error("FETCH TIME SOURCE ERROR:", timeError);
+    }
+  }
+
+  /*
+   * GENERAL CONVERSATION LAYER
+   *
+   * Ordinary questions should be answered by Fetch's production
+   * conversation engine before the Universal/ATC execution system.
+   * This keeps informational requests from being misclassified as
+   * capability-registry or execution tasks.
+   *
+   * Explicit side-effect requests continue to the execution stack.
+   */
+  if (!isExplicitSideEffectRequest(effectiveText) && !isPhysicalResult({}, effectiveText)) {
+    try {
+      const conversationMessage = await answerNormalConversation(
+        effectiveText,
+        conversationHistory
+      );
+
+      if (conversationMessage) {
+        return sendJson(
+          res,
+          200,
+          {
+            success: true,
+            status: "completed",
+            workflow_id: null,
+            message: conversationMessage,
+            fetch: { source_class: "conversation" },
+            atc: { resource_type: "digital_agent" },
+            execution: {
+              success: true,
+              status: "conversation",
+              provider: "fetch_conversation",
+              side_effect: false
+            }
+          },
+          origin
+        );
+      }
+    } catch (conversationError) {
+      console.error("FETCH GENERAL CONVERSATION ERROR:", conversationError);
     }
   }
 
