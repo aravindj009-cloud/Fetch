@@ -734,3 +734,86 @@ aside > p {
 .taskEvents summary{font-size:10px;font-weight:800;cursor:pointer}
 .taskEvents div{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(17,17,17,.06);font-size:9px}
 .taskEvents div span{opacity:.5}
+
+
+/* Polished assistant message typography */
+.formattedMessage {
+  width: 100%;
+  color: #171717;
+}
+
+.messageParagraph {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.65;
+  letter-spacing: -0.005em;
+}
+
+.messageParagraph:last-child {
+  margin-bottom: 0;
+}
+
+.messageHeading {
+  margin: 2px 0 9px;
+  font: 600 15px/1.35 "Space Grotesk", sans-serif;
+  letter-spacing: -0.02em;
+}
+
+.messageList {
+  margin: 5px 0 12px;
+  padding-left: 19px;
+}
+
+.messageList li {
+  margin: 5px 0;
+  padding-left: 3px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.messageNumbered {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 7px;
+  margin: 7px 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.messageNumbered > span {
+  font-weight: 700;
+  color: #777;
+}
+
+.messageLink {
+  color: #111;
+  text-decoration: underline;
+  text-decoration-color: #aaa;
+  text-underline-offset: 3px;
+  font-weight: 600;
+  transition: opacity .15s ease;
+}
+
+.messageLink:hover {
+  opacity: .65;
+}
+
+.formattedMessage strong {
+  font-weight: 700;
+}
+
+.bubble.assistant .formattedMessage + .meta {
+  margin-top: 13px;
+}
+
+@media (max-width: 700px) {
+  .bubble {
+    max-width: 88%;
+  }
+
+  .messageParagraph,
+  .messageList li,
+  .messageNumbered {
+    font-size: 13.5px;
+  }
+}
