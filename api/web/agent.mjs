@@ -228,6 +228,13 @@ function buildEffectiveRequestText(text, history) {
     return `What is the weather today ${current}?`;
   }
 
+  const timeContext = [...previousUserMessages, ...previousAssistantMessages]
+    .some((value) => /\b(time|timezone|clock)\b/i.test(value));
+
+  if (timeContext) {
+    return `What is the time in ${current}?`;
+  }
+
   return current;
 }
 
@@ -415,6 +422,10 @@ function timezoneForLocation(location = "") {
     [/\b(dubai|uae|abu dhabi)\b/i, "Asia/Dubai"],
     [/\b(singapore)\b/i, "Asia/Singapore"],
     [/\b(sydney|melbourne|australia)\b/i, "Australia/Sydney"],
+    [/\b(vancouver|victoria|british columbia|bc)\b/i, "America/Vancouver"],
+    [/\b(toronto|ottawa|montreal|quebec|quebec city)\b/i, "America/Toronto"],
+    [/\b(calgary|edmonton|alberta)\b/i, "America/Edmonton"],
+    [/\b(winnipeg|manitoba)\b/i, "America/Winnipeg"],
     [/\b(new york|nyc)\b/i, "America/New_York"],
     [/\b(los angeles|la|san francisco)\b/i, "America/Los_Angeles"],
     [/\b(chicago)\b/i, "America/Chicago"],
