@@ -280,6 +280,90 @@ function parseResearchResults(text) {
   return results.length ? results : null;
 }
 
+function renderInline(text, keyPrefix = "inline") {
+  const value = String(text || "");
+  const tokenPattern = /(\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)]+\)|https?:\/\/[^\s<]+|\*[^*]+\*)/g;
+  const parts = value.split(tokenPattern);
+
+  return parts.map((part, index) => {
+    const key = `${keyPrefix}-${index}`;
+    if (/^\*\*[^*]+\*\*$/.test(part)) {
+      return <strong key={key}>{part.slice(2, -2)}</strong>;
+    }
+    const markdownLink = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    if (markdownLink) {
+      return <a key={key} href={markdownLink[2]} target="_blank" rel="noopener noreferrer" className="messageLink">{markdownLink[1]} ↗</a>;
+    }
+    if (/^https?:\/\//i.test(part)) {
+      const cleanUrl = part.replace(/[),.;]+$/, "");
+      return <a key={key} href={cleanUrl} target="_blank" rel="noopener noreferrer" className="messageLink">{getHost(cleanUrl)} ↗</a>;
+    }
+    if (/^\*[^*]+\*$/.test(part)) {
+      return <em key={key}>{part.slice(1, -1)}</em>;
+    }
+    return <React.Fragment key={key}>{part}</React.Fragment>;
+  });
+}
+
+function FormattedAssistantMessage({ text }) {
+  const normalized = normalizeAssistantText(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!normalized) return null;
+
+  const lines = normalized.split("\n");
+  const blocks = [];
+  let listItems = [];
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    blocks.push(
+      <ul className="messageList" key={`list-${blocks.length}`}>
+        {listItems.map((item, index) => (
+          <li key={`item-${index}`}>{renderInline(item, `list-${index}`)}</li>
+        ))}
+      </ul>
+    );
+    listItems = [];
+  };
+
+  lines.forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (!line) {
+      flushList();
+      return;
+    }
+
+    const bullet = line.match(/^(?:[-•*])\s+(.+)$/);
+    if (bullet) {
+      listItems.push(bullet[1]);
+      return;
+    }
+
+    flushList();
+
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    if (heading) {
+      blocks.push(<h4 className="messageHeading" key={`heading-${index}`}>{renderInline(heading[1], `heading-${index}`)}</h4>);
+      return;
+    }
+
+    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (numbered) {
+      blocks.push(
+        <div className="messageNumbered" key={`number-${index}`}>
+          <span>{line.match(/^\d+/)[0]}</span>
+          <div>{renderInline(numbered[1], `number-${index}`)}</div>
+        </div>
+      );
+      return;
+    }
+
+    blocks.push(<p className="messageParagraph" key={`paragraph-${index}`}>{renderInline(line, `paragraph-${index}`)}</p>);
+  });
+
+  flushList();
+  return <div className="formattedMessage">{blocks}</div>;
+}
+
 function ResearchResults({ text, citations = [] }) {
   const safeText = normalizeAssistantText(text);
   const results = parseResearchResults(safeText);
@@ -1072,10 +1156,7 @@ export default function App() {
                   >
 
                     {message.role === "assistant" ? (
-                      <ResearchResults
-                        text={message.text}
-                        citations={message.citations || []}
-                      />
+                      <FormattedAssistantMessage text={message.text} />
                     ) : (
                       message.text
                     )}
