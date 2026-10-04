@@ -994,3 +994,19 @@ aside > p {
   .connectorConnectBody { min-width: calc(100% - 58px); }
   .connectorConnectButton { margin-left: 56px; }
 }
+
+/* Connector authorization */
+.connectorSetup { max-width: 760px; }
+.setupBack { background: transparent; border: 0; color: #8f9a9e; font: inherit; cursor: pointer; padding: 0; margin-bottom: 34px; }
+.setupIcon { width: 64px; height: 64px; border-radius: 18px; background: #f4f6f7; color: #111; display:flex; align-items:center; justify-content:center; font-size: 26px; font-weight: 800; margin-bottom: 22px; }
+.setupCard { margin-top: 28px; border: 1px solid #293033; border-radius: 20px; padding: 20px; display:flex; align-items:center; justify-content:space-between; gap: 18px; background:#111516; }
+.setupCard > div { display:flex; flex-direction:column; gap:6px; }
+.setupCard strong { font-size:16px; }
+.setupCard span { color:#899397; font-size:13px; line-height:1.45; }
+.setupCard button { border:0; background:#f4f6f7; color:#111; border-radius:12px; padding:11px 15px; font-weight:800; cursor:pointer; white-space:nowrap; }
+.setupCard button:disabled { opacity:.55; cursor:default; }
+.setupConnected { color:#20c997 !important; font-weight:800; white-space:nowrap; }
+.setupNote { margin-top:16px; padding:18px 20px; border-radius:16px; background:#0f1213; border:1px solid #202628; }
+.setupNote strong { font-size:13px; }
+.setupNote p { margin:7px 0 0; color:#7f8a8e; font-size:13px; line-height:1.55; }
+@media (max-width: 620px) { .setupCard { align-items:flex-start; flex-direction:column; } .setupCard button, .setupConnected { width:100%; text-align:center; box-sizing:border-box; } }
