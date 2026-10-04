@@ -2344,7 +2344,7 @@ async function maybeSendCustomerWelcome({
     const name = String(customer.name || "").trim();
     const displayName = name ? ` ${name.split(/\\s+/)[0]}` : "";
     const welcome =
-      `Hi${displayName}! 👋\\n\\nI'm Fetch, your personal assistant. Tell me what you need and I'll figure out the best way to help.`;
+      `Hi${displayName}! 👋\n\nI'm Fetch, your personal assistant. Tell me what you need and I'll figure out the best way to help.\n\nIf Fetch needs another service to complete something for you, open your Connectors here:\nhttps://tryfetch.in/connectors`;
 
     await saveMessage({
       customerId: customer.id,

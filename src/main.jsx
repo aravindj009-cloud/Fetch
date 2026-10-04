@@ -13,13 +13,50 @@ const starters = [
 
 const fetchConnectors = [
   {
+    id: "email",
+    name: "Google Workspace",
+    detail: "Gmail, Calendar and Google productivity tools",
+    icon: "G",
+    capabilities: ["email", "calendar"],
+    connectLabel: "Connect",
+    setup: true,
+  },
+  {
+    id: "outlook",
+    name: "Outlook",
+    detail: "Read, search, draft and send Outlook mail",
+    icon: "O",
+    state: "Coming soon",
+  },
+  {
+    id: "linear",
+    name: "Linear",
+    detail: "Search and update Linear issues",
+    icon: "L",
+    state: "Coming soon",
+  },
+  {
+    id: "notion",
+    name: "Notion",
+    detail: "Search, read and manage Notion pages",
+    icon: "N",
+    state: "Coming soon",
+  },
+  {
+    id: "github",
+    name: "GitHub",
+    detail: "Read repositories, issues, pull requests and code",
+    icon: "GH",
+    state: "Coming soon",
+  },
+  {
     id: "instamart",
     name: "Instamart",
     detail: "Groceries & everyday essentials",
     icon: "I",
     capabilities: ["search_products", "check_availability", "build_basket"],
-    trigger: /\b(groceries|grocery|milk|vegetables|snacks|essentials|kitkat|munch|chicken|food items?)\b/i,
-    connectLabel: "Connect Instamart",
+    connectLabel: "Connect",
+    setup: true,
   },
   {
     id: "swiggy",
@@ -27,8 +64,8 @@ const fetchConnectors = [
     detail: "Food, groceries & local delivery",
     icon: "S",
     capabilities: ["search_food", "search_groceries", "build_order"],
-    trigger: /\b(order food|restaurant food|biryani|pizza|burger|meals?|swiggy)\b/i,
-    connectLabel: "Connect Swiggy",
+    connectLabel: "Connect",
+    setup: true,
   },
   {
     id: "uber",
@@ -36,32 +73,28 @@ const fetchConnectors = [
     detail: "Rides & mobility",
     icon: "U",
     capabilities: ["request_ride", "estimate_fare", "track_ride"],
-    trigger: /\b(uber|cab|taxi|ride|airport pickup|pick me up|drop me)\b/i,
-    connectLabel: "Connect Uber",
+    connectLabel: "Connect",
+    setup: true,
   },
   {
     id: "rapido",
     name: "Rapido",
     detail: "Bike, auto & cab rides",
     icon: "R",
-    capabilities: ["request_ride", "estimate_fare", "track_ride"],
-    trigger: /\b(rapido|bike taxi|auto ride)\b/i,
-    connectLabel: "Connect Rapido",
+    state: "Coming soon",
   },
   {
     id: "partners",
     name: "Fetch Partners",
     detail: "Local stores & service providers",
     icon: "F",
-    capabilities: ["local_fulfilment", "service_request"],
     state: "Built into Fetch",
   },
   {
     id: "shopper",
     name: "Human Shopper",
-    detail: "Fallback when no digital route can fulfil the task",
+    detail: "Physical fulfilment when no digital route can fulfil the task",
     icon: "H",
-    capabilities: ["physical_fulfilment"],
     state: "Fallback",
   },
 ];
@@ -81,58 +114,107 @@ function navigateFetch(path) {
 
 function FetchDirectoryPage({ section = "connectors" }) {
   const isContact = section === "contact";
+  const [connectionStates, setConnectionStates] = useState({});
+  const [loadingConnections, setLoadingConnections] = useState(!isContact);
+
+  useEffect(() => {
+    if (isContact) return;
+
+    const conversationId = getConversationId();
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch(
+          `/api/fetch/context.mjs?status=1&conversation_id=${encodeURIComponent(conversationId)}`,
+          { cache: "no-store", headers: { Accept: "application/json" } }
+        );
+        const data = await response.json().catch(() => null);
+        if (!cancelled && response.ok && data?.success) {
+          setConnectionStates(data.connections || {});
+        }
+      } catch (error) {
+        console.error("FETCH CONNECTOR DIRECTORY STATUS ERROR", error);
+      } finally {
+        if (!cancelled) setLoadingConnections(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isContact]);
+
   function handleConnectorConnect(connector) {
+    const conversationId = getConversationId();
+    localStorage.setItem("fetch_conversation_id", conversationId);
+
     if (connector.id === "uber") {
-      const conversationId = localStorage.getItem("fetch_conversation_id") || `web:${makeId()}`;
-      localStorage.setItem("fetch_conversation_id", conversationId);
-      window.location.assign(`/api/fetch/context.mjs?uber_connect=1&conversation_id=${encodeURIComponent(conversationId)}`);
+      window.location.assign(
+        `/api/fetch/context.mjs?uber_connect=1&conversation_id=${encodeURIComponent(conversationId)}`
+      );
       return;
     }
 
-    // Swiggy / Instamart / Email are intentionally not marked "connected"
-    // until their real provider authorization is completed.
-    const target = `/connectors/${encodeURIComponent(connector.id)}`;
-    navigateFetch(target);
+    if (connector.id === "email") {
+      window.location.assign(
+        `/api/fetch/context.mjs?google_connect=1&conversation_id=${encodeURIComponent(conversationId)}`
+      );
+      return;
+    }
+
+    if (connector.id === "swiggy" || connector.id === "instamart") {
+      navigateFetch(`/connectors/${encodeURIComponent(connector.id)}`);
+    }
   }
+
   return (
     <div className="fetchDirectory">
       <header className="directoryHeader">
-        <button className="directoryBrand" onClick={() => navigateFetch("/")}>fetch<span>.</span></button>
+        <button className="directoryBrand" onClick={() => navigateFetch("/")}>
+          fetch<span>.</span>
+        </button>
         <nav>
           <button className={!isContact ? "active" : ""} onClick={() => navigateFetch("/connectors")}>Connectors</button>
           <button className={isContact ? "active" : ""} onClick={() => navigateFetch("/contact")}>Contact</button>
           <button className="directoryBack" onClick={() => navigateFetch("/")}>Open Fetch →</button>
         </nav>
       </header>
+
       <main className="directoryMain">
         {isContact ? (
           <>
             <small className="directoryEyebrow">CONTACT</small>
             <h1>Reach <em>Fetch.</em></h1>
-            <p className="directoryLead">Fetch is your personal assistant. Start with WhatsApp or open the web experience — you don't need to learn another app.</p>
+            <p className="directoryLead">
+              Fetch is your personal assistant. Start with WhatsApp or open the web experience — you don't need to learn another app.
+            </p>
             <div className="contactCards">
-              <a className="contactCard primary" href="https://wa.me/919074559146"><span className="contactIcon">◉</span><div><strong>WhatsApp</strong><small>+91 90745 59146</small></div><b>→</b></a>
-              <a className="contactCard" href="https://tryfetch.in/"><span className="contactIcon">F</span><div><strong>Web</strong><small>tryfetch.in</small></div><b>→</b></a>
-              <div className="contactCard"><span className="contactIcon">@</span><div><strong>Email</strong><small>Coming soon</small></div><b>—</b></div>
-            </div>
-            <section className="directorySection">
-              <small className="directoryEyebrow">HOW TO USE FETCH</small>
-              <div className="contactSteps">
-                <div><b>01</b><span><strong>Tell Fetch what you need.</strong><small>Use natural language. No service selection required.</small></span></div>
-                <div><b>02</b><span><strong>Fetch chooses the route.</strong><small>ATC selects a connector, partner or human resource.</small></span></div>
-                <div><b>03</b><span><strong>You stay in control.</strong><small>Fetch asks before payments or sensitive actions.</small></span></div>
+              <a className="contactCard primary" href="https://wa.me/919074559146">
+                <span className="contactIcon">◉</span>
+                <div><strong>WhatsApp</strong><small>+91 90745 59146</small></div><b>→</b>
+              </a>
+              <a className="contactCard" href="https://tryfetch.in/">
+                <span className="contactIcon">F</span>
+                <div><strong>Web</strong><small>tryfetch.in</small></div><b>→</b>
+              </a>
+              <div className="contactCard">
+                <span className="contactIcon">@</span>
+                <div><strong>Email</strong><small>Coming soon</small></div><b>—</b>
               </div>
-            </section>
+            </div>
           </>
         ) : (
           <>
             <small className="directoryEyebrow">FETCH CONNECTORS</small>
-            <h1>Tools Fetch <em>can use.</em></h1>
-            <p className="directoryLead">You don't have to decide which service to use. Fetch understands the task and selects the best available resource behind the scenes.</p>
+            <h1>Tools your <em>Fetch agent</em> can use.</h1>
+            <p className="directoryLead">
+              You don't choose the service. Tell Fetch the outcome and it decides which connected tool, partner or person can do the work.
+            </p>
+
             <div className="connectorDirectoryList">
               {fetchConnectors.map((connector) => {
-                const connected = false;
-                const state = connector.state || "Not connected";
+                const connected = connectionStates[connector.id] === true;
+                const canConnect = Boolean(connector.setup && connector.connectLabel);
+
                 return (
                   <article className={`directoryConnector ${connected ? "connected" : ""}`} key={connector.id}>
                     <div className="directoryConnectorIcon">{connector.icon}</div>
@@ -140,22 +222,33 @@ function FetchDirectoryPage({ section = "connectors" }) {
                       <strong>{connector.name}</strong>
                       <span>{connector.detail}</span>
                     </div>
-                    {connector.connectLabel ? (
+
+                    {canConnect ? (
                       <button
                         type="button"
                         className={`directoryConnectorAction ${connected ? "connected" : ""}`}
                         onClick={() => handleConnectorConnect(connector)}
+                        disabled={connected || loadingConnections}
                       >
-                        {connector.id === "uber" ? "Connect" : "Connect"}
+                        {connected ? "Connected" : loadingConnections ? "Checking…" : "Connect"}
                       </button>
                     ) : (
-                      <span className="directoryConnectorState">{state}</span>
+                      <span className="directoryConnectorState">
+                        {connector.state}
+                      </span>
                     )}
                   </article>
                 );
               })}
             </div>
-            <div className="directoryCallout"><span>F</span><div><strong>One assistant. Many execution paths.</strong><p>Ask for the outcome. Fetch coordinates the tools, stores, services and people required to get it done.</p></div></div>
+
+            <div className="directoryCallout">
+              <span>F</span>
+              <div>
+                <strong>One assistant. Many execution paths.</strong>
+                <p>Ask for the outcome. Fetch coordinates the tools, stores, services and people required to get it done.</p>
+              </div>
+            </div>
           </>
         )}
       </main>
