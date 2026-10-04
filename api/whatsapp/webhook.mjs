@@ -7121,7 +7121,7 @@ async function handleCustomerMessage({
         const betaWelcome =
           "Welcome to Fetch beta, " +
           (profileName ? profileName.split(/\\s+/)[0] : "") +
-          "! 👋\\n\\n" +
+          "! 👋\n\n" +
           "I’m your personal assistant. Tell me what you need and I’ll figure out the best way to help.";
 
         await saveMessage({
