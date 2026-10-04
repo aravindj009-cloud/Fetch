@@ -179,7 +179,8 @@ export default async function handler(req, res) {
         console.error("FETCH UBER CALLBACK ERROR:", error);
         return res.status(500).send(oauthPage("Connection failed", "Fetch could not finish the Uber connection.", false));
       }
-    } && new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`).searchParams.has("token")) {
+    }
+    if (requestUrl.searchParams.has("token")) {
     try { return await handleOnboarding(req, res); }
     catch (error) {
       console.error("FETCH WHATSAPP ONBOARDING ERROR:", error);
