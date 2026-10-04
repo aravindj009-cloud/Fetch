@@ -2337,14 +2337,14 @@ async function maybeSendCustomerWelcome({
 }) {
   const text = String(userMessage || "").trim();
   const isGreeting =
-    /^(?:hi|hello|hey|helo|hii|hiii|namaste|namaskaram)(?:\\s+fetch)?[!.?]*$/i.test(text) ||
-    /^(?:hey|hi|hello)\\s+fetch[!.?]*$/i.test(text);
+    /^(?:hi|hello|hey|helo|hii|hiii|namaste|namaskaram)(?:\s+fetch)?[!.?]*$/i.test(text) ||
+    /^(?:hey|hi|hello)\s+fetch[!.?]*$/i.test(text);
 
   if (!customer?.id || !phone || !isGreeting) return false;
 
   try {
     const name = String(customer.name || "").trim();
-    const displayName = name ? ` ${name.split(/\\s+/)[0]}` : "";
+    const displayName = name ? ` ${name.split(/\s+/)[0]}` : "";
     const welcome =
       `Welcome to Fetch${displayName}! 👋\n\nI’m your personal assistant. Tell me what you need and I’ll figure out the best way to help.`;
 
@@ -4292,10 +4292,10 @@ function extractFlexibleShoppingRequest(text) {
   */
 
   const prefix =
-    "(?:i\\s+want|i\\s+need|i'd\\s+like|i\\s+would\\s+like|please\\s+get|please\\s+fetch|can\\s+you\\s+get|can\\s+you\\s+fetch|get\\s+me|fetch\\s+me|buy\\s+me|order|enikku|enik|enikk|mujhe|mere\\s+liye|enakku|naaku|nanage)";
+    "(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order|enikku|enik|enikk|mujhe|mere\s+liye|enakku|naaku|nanage)";
 
   const deliveryMarker =
-    "(?:deliver(?:ed|\\s+it)?\\s+to|delivery\\s+(?:location|to)?|delivery\\s+address|deliver\\s+at|delivered\\s+at|to\\s+my\\s+address|to\\s+me|at\\s+my\\s+address|delivery)";
+    "(?:deliver(?:ed|\s+it)?\s+to|delivery\s+(?:location|to)?|delivery\s+address|deliver\s+at|delivered\s+at|to\s+my\s+address|to\s+me|at\s+my\s+address|delivery)";
 
   /*
     FIRST: request with an explicit store and a delivery marker.
@@ -4303,7 +4303,7 @@ function extractFlexibleShoppingRequest(text) {
   */
   const withStoreAndDelivery =
     new RegExp(
-      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+?)\\s*,?\\s*${deliveryMarker}\\s+(.+)$`,
+      `^${prefix}\s+(.+?)\s+(?:from|at)\s+(.+?)\s*,?\s*${deliveryMarker}\s+(.+)$`,
       "i"
     );
 
@@ -4334,7 +4334,7 @@ function extractFlexibleShoppingRequest(text) {
   */
   const withStore =
     new RegExp(
-      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+)$`,
+      `^${prefix}\s+(.+?)\s+(?:from|at)\s+(.+)$`,
       "i"
     );
 
@@ -4356,7 +4356,7 @@ function extractFlexibleShoppingRequest(text) {
     const tail =
       rawStoreAndMaybeAddress.match(
         new RegExp(
-          `^(.+?)\\s*,?\\s*${deliveryMarker}\\s+(.+)$`,
+          `^(.+?)\s*,?\s*${deliveryMarker}\s+(.+)$`,
           "i"
         )
       );
@@ -4399,7 +4399,7 @@ function extractFlexibleShoppingRequest(text) {
   */
   const deliveryOnly =
     new RegExp(
-      `^${prefix}\\s+(.+?)\\s+${deliveryMarker}\\s+(.+)$`,
+      `^${prefix}\s+(.+?)\s+${deliveryMarker}\s+(.+)$`,
       "i"
     );
 
@@ -4428,7 +4428,7 @@ function extractFlexibleShoppingRequest(text) {
   */
   const itemOnly =
     new RegExp(
-      `^${prefix}\\s+(.+)$`,
+      `^${prefix}\s+(.+)$`,
       "i"
     );
 
@@ -4470,14 +4470,14 @@ function extractDeterministicShoppingRequest(text) {
   }
 
   const prefix =
-    "(?:i\\s+want|i\\s+need|i'd\\s+like|i\\s+would\\s+like|please\\s+get|please\\s+fetch|can\\s+you\\s+get|can\\s+you\\s+fetch|get\\s+me|fetch\\s+me|buy\\s+me|order|enikku|enik|enikk|mujhe|mere\\s+liye|enakku|naaku|nanage)";
+    "(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order|enikku|enik|enikk|mujhe|mere\s+liye|enakku|naaku|nanage)";
 
   const deliveryMarker =
-    "(?:deliver(?:ed|\\s+it)?\\s+to|delivery\\s+(?:location|to)?|delivery\\s+address|deliver\\s+at|delivered\\s+at|to\\s+my\\s+address|to\\s+me|at\\s+my\\s+address|delivery)";
+    "(?:deliver(?:ed|\s+it)?\s+to|delivery\s+(?:location|to)?|delivery\s+address|deliver\s+at|delivered\s+at|to\s+my\s+address|to\s+me|at\s+my\s+address|delivery)";
 
   const explicitPattern =
     new RegExp(
-      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+?)\\s*,?\\s*${deliveryMarker}\\s+(.+)$`,
+      `^${prefix}\s+(.+?)\s+(?:from|at)\s+(.+?)\s*,?\s*${deliveryMarker}\s+(.+)$`,
       "i"
     );
 
@@ -4503,7 +4503,7 @@ function extractDeterministicShoppingRequest(text) {
 
   const simpleStorePattern =
     new RegExp(
-      `^${prefix}\\s+(.+?)\\s+(?:from|at)\\s+(.+)$`,
+      `^${prefix}\s+(.+?)\s+(?:from|at)\s+(.+)$`,
       "i"
     );
 
@@ -4529,7 +4529,7 @@ function extractDeterministicShoppingRequest(text) {
 
   const deliveryOnlyPattern =
     new RegExp(
-      `^${prefix}\\s+(.+?)\\s+${deliveryMarker}\\s+(.+)$`,
+      `^${prefix}\s+(.+?)\s+${deliveryMarker}\s+(.+)$`,
       "i"
     );
 
@@ -4553,7 +4553,7 @@ function extractDeterministicShoppingRequest(text) {
 
   const itemOnlyPattern =
     new RegExp(
-      `^${prefix}\\s+(.+)$`,
+      `^${prefix}\s+(.+)$`,
       "i"
     );
 
@@ -5834,7 +5834,7 @@ function applyOrderItemModification(
 
     const regex =
       new RegExp(
-        `(?:^|;\\s*)${escaped}(?:\\s*;|\\s*$)`,
+        `(?:^|;\s*)${escaped}(?:\s*;|\s*$)`,
         "i"
       );
 
@@ -7098,7 +7098,7 @@ async function handleCustomerMessage({
   // WhatsApp with "Hi Fetch!" only. Activate the customer server-side so
   // no invite token is exposed in the chat.
   const cleanBetaGreeting =
-    /^(?:hi|hey|hello)\\s+fetch[!.?]*$/i.test(String(userMessage || "").trim());
+    /^(?:hi|hey|hello)\s+fetch[!.?]*$/i.test(String(userMessage || "").trim());
 
   if (cleanBetaGreeting) {
     try {
@@ -7137,7 +7137,7 @@ async function handleCustomerMessage({
 
         const betaWelcome =
           "Welcome to Fetch beta, " +
-          (profileName ? profileName.split(/\\s+/)[0] : "") +
+          (profileName ? profileName.split(/\s+/)[0] : "") +
           "! 👋\n\n" +
           "I’m your personal assistant. Tell me what you need and I’ll figure out the best way to help.";
 
