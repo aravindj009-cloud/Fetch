@@ -6435,6 +6435,166 @@ function isLikelyMemoryQuestionForWhatsApp(text) {
   return hasQuestionWord && hasMemoryReference;
 }
 
+async function tryDirectCustomerMemoryCommand({
+  customer,
+  phone,
+  userMessage,
+} = {}) {
+  if (!customer?.id) return { handled: false };
+
+  const value = String(userMessage || "").trim();
+  const normalized = value.toLowerCase();
+
+  const forgetAll =
+    /^(?:please\s+)?(?:forget|delete|clear)\s+(?:everything|all(?:\s+my)?\s+(?:memory|memories|information|saved information))$/i.test(value) ||
+    /^(?:forget|delete|clear)\s+everything$/i.test(value);
+
+  const forgetMatch =
+    value.match(/^(?:please\s+)?(?:forget|delete|remove)\s+(?:that\s+)?(?:i\s+)?(?:told\s+you\s+)?(?:about\s+)?(.+)$/i);
+
+  const isMemoryCommand =
+    forgetAll ||
+    Boolean(forgetMatch) ||
+    /^(?:what do you remember about me|what do you remember|show my memories|show what you remember)$/i.test(value);
+
+  if (!isMemoryCommand) return { handled: false };
+
+  try {
+    if (forgetAll) {
+      await supabaseRequest(
+        `fetch_customer_memory?customer_id=eq.${encodeURIComponent(customer.id)}`,
+        {
+          method: "DELETE",
+          headers: { Prefer: "return=minimal" },
+        }
+      );
+
+      const reply = "Done. I’ve cleared the memories Fetch has saved for you.";
+      await saveMessage({
+        customerId: customer.id,
+        phone,
+        role: "user",
+        message: userMessage,
+      });
+      await saveMessage({
+        customerId: customer.id,
+        phone,
+        role: "assistant",
+        message: reply,
+      });
+      await sendWhatsAppMessage(phone, reply);
+      return { handled: true };
+    }
+
+    if (forgetMatch?.[1]) {
+      const phrase = forgetMatch[1]
+        .trim()
+        .replace(/[.!?]+$/, "");
+
+      const rows = await supabaseRequest(
+        `fetch_customer_memory?customer_id=eq.${encodeURIComponent(
+          customer.id
+        )}&order=updated_at.desc&limit=100`
+      );
+
+      const tokens = new Set(
+        normalizeMemoryTokensForWhatsApp(phrase)
+      );
+
+      let best = null;
+
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const rowTokens = new Set(
+          normalizeMemoryTokensForWhatsApp(
+            memoryRowTextForWhatsApp(row)
+          )
+        );
+        const overlap = [...tokens].filter((token) => rowTokens.has(token));
+
+        if (overlap.length && (!best || overlap.length > best.overlap.length)) {
+          best = { row, overlap };
+        }
+      }
+
+      if (!best || !best.row?.memory_key) {
+        const reply = "I couldn’t find a saved memory matching that. Nothing was deleted.";
+        await sendWhatsAppMessage(phone, reply);
+        return { handled: true };
+      }
+
+      await supabaseRequest(
+        `fetch_customer_memory?customer_id=eq.${encodeURIComponent(
+          customer.id
+        )}&memory_key=eq.${encodeURIComponent(best.row.memory_key)}`,
+        {
+          method: "DELETE",
+          headers: { Prefer: "return=minimal" },
+        }
+      );
+
+      const reply = `Done. I’ve forgotten “${best.row.memory_key.replace(/_/g, " ")}”.`;
+      await saveMessage({
+        customerId: customer.id,
+        phone,
+        role: "user",
+        message: userMessage,
+      });
+      await saveMessage({
+        customerId: customer.id,
+        phone,
+        role: "assistant",
+        message: reply,
+      });
+      await sendWhatsAppMessage(phone, reply);
+      return { handled: true };
+    }
+
+    const rows = await supabaseRequest(
+      `fetch_customer_memory?customer_id=eq.${encodeURIComponent(
+        customer.id
+      )}&or=(expires_at.is.null,expires_at.gt.${encodeURIComponent(
+        new Date().toISOString()
+      )})&order=updated_at.desc&limit=50`
+    );
+
+    const memories = (Array.isArray(rows) ? rows : []).map((row) => {
+      const value = row?.memory_value;
+      const display =
+        value?.value ??
+        value?.date ??
+        value?.subject ??
+        (typeof value === "string" ? value : null);
+
+      return display
+        ? `• ${String(row.memory_key).replace(/_/g, " ")}: ${String(display)}`
+        : `• ${String(row.memory_key).replace(/_/g, " ")}`;
+    });
+
+    const reply = memories.length
+      ? "Here’s what I remember:\n\n" + memories.join("\n")
+      : "I don’t have any saved memories for you yet.";
+
+    await saveMessage({
+      customerId: customer.id,
+      phone,
+      role: "user",
+      message: userMessage,
+    });
+    await saveMessage({
+      customerId: customer.id,
+      phone,
+      role: "assistant",
+      message: reply,
+    });
+    await sendWhatsAppMessage(phone, reply);
+
+    return { handled: true };
+  } catch (error) {
+    console.error("FETCH MEMORY COMMAND ERROR:", error);
+    return { handled: false };
+  }
+}
+
 async function tryDirectCustomerMemoryQuestion({
   customer,
   phone,
@@ -6833,6 +6993,21 @@ async function handleCustomerMessage({
     await getLatestOrder(
       customer.id
     );
+
+  /*
+    User-controlled memory commands run before the universal agent so
+    "forget" can never be interpreted as a shopping or research request.
+  */
+  const memoryCommandResult =
+    await tryDirectCustomerMemoryCommand({
+      customer,
+      phone: normalizedPhone,
+      userMessage,
+    });
+
+  if (memoryCommandResult.handled) {
+    return;
+  }
 
   /*
     Deterministic durable-memory lookup comes first for memory questions.
