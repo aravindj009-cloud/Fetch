@@ -1,5 +1,6 @@
 /* V8 Context-aware decision endpoint */
 import crypto from "node:crypto";
+import { createOAuthState, consumeOAuthState, saveProviderConnection } from "../../lib/fetch-provider-connections.mjs";
 import { processFetchV8Request } from "../../lib/fetch-v8.mjs";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://skfxzagxlxputwpwxwbe.supabase.co";
@@ -41,6 +42,69 @@ function onboardingPage(heading, body, success = true) {
   return page;
 }
 
+function oauthPage(title, body, success, conversationId = "") {
+  const color = success ? "#20c997" : "#ff6b6b";
+  const returnUrl = conversationId
+    ? "/?uber=" + (success ? "connected" : "error") + "&conversation_id=" + encodeURIComponent(conversationId)
+    : "/";
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fetch · Uber</title><style>body{margin:0;background:#0b0d0e;color:#f5f7f8;font-family:Inter,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center}.card{width:min(520px,calc(100% - 40px));background:#15191b;border:1px solid #293033;border-radius:24px;padding:34px;box-sizing:border-box}.logo{width:56px;height:56px;border-radius:50%;background:#fff;color:#111;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:28px;margin-bottom:28px}.status{color:'+color+';font-weight:700;margin-bottom:12px}h1{font-size:30px;line-height:1.1;margin:0 0 14px}p{color:#aeb8bb;line-height:1.6;font-size:16px}a{display:block;text-align:center;text-decoration:none;background:#fff;color:#111;padding:15px 18px;border-radius:14px;font-weight:700;margin-top:26px}</style></head><body><main class="card"><div class="logo">F</div><div class="status">'+(success ? "Connected" : "Connection failed")+'</div><h1>'+title+'</h1><p>'+body+'</p><a href="'+returnUrl+'">Return to Fetch →</a></main></body></html>';
+}
+
+async function handleUberConnect(req, res) {
+  const clientId = String(process.env.UBER_CLIENT_ID || "").trim();
+  const redirectUri = String(process.env.UBER_REDIRECT_URI || "https://tryfetch.in/api/fetch/context.mjs?uber_callback=1").trim();
+  if (!clientId) return res.status(503).send("Fetch Uber connection is not configured yet. Add UBER_CLIENT_ID in Vercel.");
+  const url = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
+  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  if (!conversationId) return res.status(400).send("Missing Fetch conversation.");
+  const state = crypto.randomBytes(32).toString("base64url");
+  await createOAuthState({ state, conversationId, providerId: "uber", redirectUri, clientId });
+  const authorize = new URL("https://auth.uber.com/oauth/v2/authorize");
+  authorize.searchParams.set("client_id", clientId);
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("redirect_uri", redirectUri);
+  authorize.searchParams.set("scope", "profile offline_access");
+  authorize.searchParams.set("state", state);
+  res.statusCode = 302;
+  res.setHeader("Location", authorize.toString());
+  return res.end();
+}
+
+async function handleUberCallback(req, res) {
+  const url = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
+  const state = url.searchParams.get("state");
+  if (url.searchParams.get("error")) return res.status(400).send(oauthPage("Uber connection cancelled", "The authorization was not completed.", false));
+  if (!state) return res.status(400).send(oauthPage("Invalid connection", "Fetch did not receive the OAuth state from Uber.", false));
+  const stateRow = await consumeOAuthState(state);
+  if (!stateRow) return res.status(400).send(oauthPage("Connection expired", "Please start the connection again.", false));
+  const code = url.searchParams.get("code");
+  if (!code) return res.status(400).send(oauthPage("No authorization code", "Uber did not return an authorization code.", false, stateRow.conversation_id));
+  const clientId = String(process.env.UBER_CLIENT_ID || stateRow.client_id || "").trim();
+  const clientSecret = String(process.env.UBER_CLIENT_SECRET || "").trim();
+  const redirectUri = String(process.env.UBER_REDIRECT_URI || stateRow.redirect_uri || "").trim();
+  if (!clientId || !clientSecret) return res.status(503).send(oauthPage("Fetch is not configured", "The Uber client credentials are not configured on the server yet.", false, stateRow.conversation_id));
+  const tokenResponse = await fetch("https://auth.uber.com/oauth/v2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "authorization_code", redirect_uri: redirectUri, code }),
+  });
+  const data = await tokenResponse.json();
+  if (!tokenResponse.ok || !data?.access_token) {
+    console.error("FETCH UBER TOKEN ERROR", tokenResponse.status, JSON.stringify(data).slice(0, 500));
+    return res.status(502).send(oauthPage("Uber could not connect", "Uber rejected the authorization. Check the Fetch redirect URI and Uber application settings.", false, stateRow.conversation_id));
+  }
+  await saveProviderConnection({
+    conversationId: stateRow.conversation_id,
+    providerId: "uber",
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || null,
+    tokenType: data.token_type || "Bearer",
+    expiresIn: data.expires_in,
+    scopes: String(data.scope || "").split(/\s+/).filter(Boolean),
+  });
+  return res.status(200).send(oauthPage("Uber is connected", "Fetch securely stored the connection on the server. Return to Fetch and your pending request can continue.", true, stateRow.conversation_id));
+}
+
 async function handleOnboarding(req, res) {
   const token = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`).searchParams.get("token");
   const verified = verifyOnboardingToken(token);
@@ -62,7 +126,22 @@ async function handleOnboarding(req, res) {
 }
 
 export default async function handler(req, res) {
-  if (req.method === "GET" && new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`).searchParams.has("token")) {
+  if (req.method === "GET") {
+    const requestUrl = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
+    if (requestUrl.searchParams.get("uber_connect") === "1") {
+      try { return await handleUberConnect(req, res); }
+      catch (error) {
+        console.error("FETCH UBER CONNECT ERROR:", error);
+        return res.status(500).send("Fetch could not start the Uber connection.");
+      }
+    }
+    if (requestUrl.searchParams.get("uber_callback") === "1") {
+      try { return await handleUberCallback(req, res); }
+      catch (error) {
+        console.error("FETCH UBER CALLBACK ERROR:", error);
+        return res.status(500).send(oauthPage("Connection failed", "Fetch could not finish the Uber connection.", false));
+      }
+    } && new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`).searchParams.has("token")) {
     try { return await handleOnboarding(req, res); }
     catch (error) {
       console.error("FETCH WHATSAPP ONBOARDING ERROR:", error);
