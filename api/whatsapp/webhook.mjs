@@ -1,3 +1,11 @@
+import crypto from "node:crypto";
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 /* FETCH WHATSAPP WEBHOOK - V9 DIRECT MEMORY FALLBACK FIX */
 /* FETCH WHATSAPP WEBHOOK - V9 MEMORY RETRIEVAL RESPONSE FIX */
 const SUPABASE_URL =
@@ -12891,6 +12899,57 @@ async function recordWebhookEvent(
   }
 }
 
+async function readRawRequestBody(req) {
+  if (Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
+
+  if (typeof req.body === "string") {
+    return Buffer.from(req.body, "utf8");
+  }
+
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function verifyWhatsAppSignature(rawBody, signatureHeader) {
+  const appSecret = String(process.env.WHATSAPP_APP_SECRET || "").trim();
+
+  if (!appSecret) {
+    throw new Error("WHATSAPP_APP_SECRET is missing");
+  }
+
+  const signature = String(signatureHeader || "").trim();
+
+  if (!signature.startsWith("sha256=")) {
+    return false;
+  }
+
+  const provided = signature.slice("sha256=".length).trim();
+
+  if (!/^[a-f0-9]{64}$/i.test(provided)) {
+    return false;
+  }
+
+  const expected = crypto
+    .createHmac("sha256", appSecret)
+    .update(rawBody)
+    .digest("hex");
+
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const providedBuffer = Buffer.from(provided, "hex");
+
+  return (
+    expectedBuffer.length === providedBuffer.length &&
+    crypto.timingSafeEqual(expectedBuffer, providedBuffer)
+  );
+}
+
 /* =========================================================
    WHATSAPP MESSAGE EXTRACTION
 ========================================================= */
@@ -13030,43 +13089,35 @@ export default async function handler(
         );
     }
 
-    let body =
-      req.body;
+    /*
+      Verify Meta's HMAC signature before parsing or processing anything.
+      The app secret never leaves the server.
+    */
+    const rawBody = await readRawRequestBody(req);
+    const signatureHeader =
+      req.headers["x-hub-signature-256"] ||
+      req.headers["X-Hub-Signature-256"] ||
+      "";
 
-    if (
-      typeof body ===
-      "string"
-    ) {
-      body =
-        JSON.parse(body);
+    if (!verifyWhatsAppSignature(rawBody, signatureHeader)) {
+      console.warn("FETCH WHATSAPP SIGNATURE REJECTED");
+      return res.status(401).json({
+        success: false,
+        error: "invalid_signature",
+      });
     }
 
-    if (
-      !body ||
-      typeof body !==
-        "object"
-    ) {
-      const chunks = [];
+    let body = {};
 
-      for await (
-        const chunk of req
-      ) {
-        chunks.push(
-          Buffer.from(chunk)
-        );
+    if (rawBody.length) {
+      try {
+        body = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: "invalid_json",
+        });
       }
-
-      const raw =
-        Buffer.concat(
-          chunks
-        ).toString(
-          "utf8"
-        );
-
-      body =
-        raw
-          ? JSON.parse(raw)
-          : {};
     }
 
     console.log(
