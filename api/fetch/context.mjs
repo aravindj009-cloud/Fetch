@@ -32,6 +32,12 @@ async function supabaseRequest(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+function sendHtml(res, statusCode, html) {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(html);
+}
+
 function onboardingPage(heading, body, success = true, options = {}) {
   const connectors = [
     { id: "swiggy", name: "Swiggy", detail: "Food, groceries & local delivery", icon: "S" },
@@ -124,10 +130,10 @@ async function handleOnboarding(req, res) {
   const token = requestUrl.searchParams.get("token");
   const connector = String(requestUrl.searchParams.get("connector") || "").trim().toLowerCase();
   const verified = verifyOnboardingToken(token);
-  if (!verified) return res.status(400).setHeader("Content-Type", "text/html; charset=utf-8").send(onboardingPage("This connection link has expired", "Return to WhatsApp and say “Hey Fetch” to receive a fresh connection link.", false));
+  if (!verified) return sendHtml(res, 400, onboardingPage("This connection link has expired", "Return to WhatsApp and say “Hey Fetch” to receive a fresh connection link.", false));
 
   const rows = await supabaseRequest(`customers?phone=eq.${encodeURIComponent(verified.phone)}&select=id,name,connector_preferences&limit=1`);
-  if (!Array.isArray(rows) || !rows.length) return res.status(404).setHeader("Content-Type", "text/html; charset=utf-8").send(onboardingPage("We couldn't find your Fetch account", "Return to WhatsApp and say “Hey Fetch” again to start a fresh connection.", false));
+  if (!Array.isArray(rows) || !rows.length) return sendHtml(res, 404, onboardingPage("We couldn't find your Fetch account", "Return to WhatsApp and say “Hey Fetch” again to start a fresh connection.", false));
 
   const customer = rows[0];
   const preferences = customer.connector_preferences && typeof customer.connector_preferences === "object" ? customer.connector_preferences : {};
@@ -158,7 +164,9 @@ async function handleOnboarding(req, res) {
   const body = connector
     ? `Fetch will now keep ${connector} available as an execution path. You can connect another service below.`
     : "WhatsApp is connected to Fetch. Choose the services you want Fetch to be able to use.";
-  return res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(
+  return sendHtml(
+    res,
+    200,
     onboardingPage(title, body, true, { showConnectors: true, selected, token })
   );
 }
@@ -184,7 +192,7 @@ export default async function handler(req, res) {
     try { return await handleOnboarding(req, res); }
     catch (error) {
       console.error("FETCH WHATSAPP ONBOARDING ERROR:", error);
-      return res.status(500).setHeader("Content-Type", "text/html; charset=utf-8").send(onboardingPage("Something went wrong", "Please return to WhatsApp and try again.", false));
+      return sendHtml(res, 500, onboardingPage("Something went wrong", "Please return to WhatsApp and try again.", false));
     }
   }
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
