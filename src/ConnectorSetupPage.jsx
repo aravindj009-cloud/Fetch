@@ -6,7 +6,7 @@ export default function ConnectorSetupPage({ connector, getConversationId, navig
   const conversationId = getConversationId();
 
   useEffect(() => {
-    fetch("/api/fetch/connectors.mjs?status=1&conversation_id=" + encodeURIComponent(conversationId), { cache: "no-store" })
+    fetch("/api/fetch/context.mjs?status=1&conversation_id=" + encodeURIComponent(conversationId), { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => setStatus(data?.connections?.[connector.id] ? "connected" : "available"))
       .catch(() => setStatus("available"));
@@ -18,7 +18,7 @@ export default function ConnectorSetupPage({ connector, getConversationId, navig
       connector.id === "email" ? "google_connect=1" :
       connector.id === "swiggy" ? "swiggy_connect=1" :
       "instamart_connect=1";
-    window.location.assign("/api/fetch/connectors.mjs?" + param + "&conversation_id=" + encodeURIComponent(conversationId));
+    window.location.assign("/api/fetch/context.mjs?" + param + "&conversation_id=" + encodeURIComponent(conversationId));
   };
 
   const description =
