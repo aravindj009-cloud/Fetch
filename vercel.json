@@ -14,7 +14,7 @@
     },
     {
       "source": "/invite/:token",
-      "destination": "/api/fetch/context.mjs?invite_preview=1&token=:token"
+      "destination": "/"
     },
     {
       "source": "/connectors",
