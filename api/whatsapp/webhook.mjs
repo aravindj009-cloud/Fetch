@@ -6799,6 +6799,13 @@ async function tryUniversalFetchCustomerRequest({
 
   const normalizedPhone = normalizePhone(phone);
 
+  let conversationHistory = [];
+  try {
+    conversationHistory = await getRecentMessages(customer.id);
+  } catch (historyError) {
+    console.error("FETCH WHATSAPP CONTEXT HISTORY ERROR:", historyError);
+  }
+
   try {
     const result = await executeUniversalFetchRequest({
       text: userMessage,
@@ -6815,6 +6822,7 @@ async function tryUniversalFetchCustomerRequest({
       suppliedContext: {
         physical_order: activeOrder || null,
         source: "whatsapp_customer",
+        conversation_history: conversationHistory,
       },
     });
 
