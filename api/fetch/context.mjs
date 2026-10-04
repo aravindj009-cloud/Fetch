@@ -1,6 +1,6 @@
 /* V8 Context-aware decision endpoint */
 import crypto from "node:crypto";
-import { createOAuthState, consumeOAuthState, saveProviderConnection } from "../../lib/fetch-provider-connections.mjs";
+import { createOAuthState, consumeOAuthState, saveProviderConnection, getProviderConnection } from "../../lib/fetch-provider-connections.mjs";
 import { processFetchV8Request } from "../../lib/fetch-v8.mjs";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://skfxzagxlxputwpwxwbe.supabase.co";
@@ -171,9 +171,193 @@ async function handleOnboarding(req, res) {
   );
 }
 
+const SWIGGY_BASE = "https://mcp.swiggy.com";
+const FETCH_BASE = "https://tryfetch.in";
+
+function makePkce() {
+  const verifier = crypto.randomBytes(32).toString("base64url");
+  const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
+  return { verifier, challenge };
+}
+
+function connectorCallbackUrl(provider) {
+  return FETCH_BASE + "/api/fetch/context.mjs?" + (provider === "google" ? "google_callback=1" : "swiggy_callback=1");
+}
+
+async function registerSwiggyClient(redirectUri) {
+  if (process.env.SWIGGY_CLIENT_ID) {
+    return { clientId: String(process.env.SWIGGY_CLIENT_ID), clientSecret: process.env.SWIGGY_CLIENT_SECRET || null };
+  }
+  const response = await fetch(SWIGGY_BASE + "/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Fetch",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.client_id) {
+    throw new Error("Swiggy client registration failed (" + response.status + ")");
+  }
+  return { clientId: data.client_id, clientSecret: data.client_secret || null };
+}
+
+async function handleSwiggyConnect(req, res, provider) {
+  const url = new URL(req.url, FETCH_BASE);
+  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open Fetch in this browser first, then return to Connectors.", false));
+  const redirectUri = connectorCallbackUrl(provider);
+  const { verifier, challenge } = makePkce();
+  const { clientId } = await registerSwiggyClient(redirectUri);
+  const state = crypto.randomBytes(32).toString("base64url");
+  await createOAuthState({ state, conversationId, providerId: provider, redirectUri, clientId, codeVerifier: verifier });
+  const authorize = new URL(SWIGGY_BASE + "/auth/authorize");
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("client_id", clientId);
+  authorize.searchParams.set("redirect_uri", redirectUri);
+  authorize.searchParams.set("code_challenge", challenge);
+  authorize.searchParams.set("code_challenge_method", "S256");
+  authorize.searchParams.set("state", state);
+  authorize.searchParams.set("scope", "mcp:tools");
+  res.statusCode = 302;
+  res.setHeader("Location", authorize.toString());
+  return res.end();
+}
+
+async function handleSwiggyCallback(req, res) {
+  const url = new URL(req.url, FETCH_BASE);
+  const state = url.searchParams.get("state");
+  if (url.searchParams.get("error")) return sendHtml(res, 400, onboardingPage("Connection cancelled", "No connection was saved. Return to Connectors and try again.", false));
+  if (!state) return sendHtml(res, 400, onboardingPage("Invalid connection", "Fetch did not receive a valid OAuth state.", false));
+  const stateRow = await consumeOAuthState(state);
+  if (!stateRow) return sendHtml(res, 400, onboardingPage("Connection expired", "Please start the connection again.", false));
+  const code = url.searchParams.get("code");
+  if (!code) return sendHtml(res, 400, onboardingPage("Authorization incomplete", "The provider did not return an authorization code.", false));
+  const tokenResponse = await fetch(SWIGGY_BASE + "/auth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      code_verifier: stateRow.code_verifier || "",
+      redirect_uri: stateRow.redirect_uri,
+    }),
+  });
+  const data = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !data?.access_token) {
+    console.error("FETCH SWIGGY TOKEN ERROR", tokenResponse.status, JSON.stringify(data).slice(0, 500));
+    return sendHtml(res, 502, onboardingPage("Provider could not connect", "The authorization reached the provider, but the token exchange was rejected. The provider may need Fetch's callback URL allowlisted.", false));
+  }
+  await saveProviderConnection({
+    conversationId: stateRow.conversation_id,
+    providerId: stateRow.provider_id,
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || null,
+    tokenType: data.token_type || "Bearer",
+    expiresIn: data.expires_in,
+    scopes: String(data.scope || "").split(/\s+/).filter(Boolean),
+  });
+  return sendHtml(res, 200, onboardingPage(
+    stateRow.provider_id === "instamart" ? "Instamart is connected." : "Swiggy is connected.",
+    "Fetch securely stored the provider connection. You can return to Fetch and continue your task.",
+    true
+  ));
+}
+
+async function handleGoogleConnect(req, res) {
+  const clientId = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+  const clientSecret = String(process.env.GOOGLE_CLIENT_SECRET || "").trim();
+  if (!clientId || !clientSecret) return sendHtml(res, 503, onboardingPage("Email is not configured yet", "Fetch is ready for Gmail OAuth, but Google OAuth credentials have not been added to Vercel yet.", false));
+  const url = new URL(req.url, FETCH_BASE);
+  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open Fetch in this browser first, then return to Connectors.", false));
+  const state = crypto.randomBytes(32).toString("base64url");
+  const redirectUri = connectorCallbackUrl("google");
+  await createOAuthState({ state, conversationId, providerId: "email", redirectUri, clientId });
+  const authorize = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authorize.searchParams.set("client_id", clientId);
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("redirect_uri", redirectUri);
+  authorize.searchParams.set("scope", "openid email https://www.googleapis.com/auth/gmail.modify");
+  authorize.searchParams.set("access_type", "offline");
+  authorize.searchParams.set("include_granted_scopes", "true");
+  authorize.searchParams.set("prompt", "consent");
+  authorize.searchParams.set("state", state);
+  res.statusCode = 302;
+  res.setHeader("Location", authorize.toString());
+  return res.end();
+}
+
+async function handleGoogleCallback(req, res) {
+  const url = new URL(req.url, FETCH_BASE);
+  const stateRow = await consumeOAuthState(url.searchParams.get("state") || "");
+  if (!stateRow) return sendHtml(res, 400, onboardingPage("Connection expired", "Please start the email connection again.", false));
+  const code = url.searchParams.get("code");
+  const clientId = String(process.env.GOOGLE_CLIENT_ID || stateRow.client_id || "").trim();
+  const clientSecret = String(process.env.GOOGLE_CLIENT_SECRET || "").trim();
+  if (!code || !clientId || !clientSecret) return sendHtml(res, 400, onboardingPage("Email authorization incomplete", "Google did not return everything Fetch needs.", false));
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: stateRow.redirect_uri, grant_type: "authorization_code" }),
+  });
+  const data = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !data?.access_token) return sendHtml(res, 502, onboardingPage("Google could not connect", "Google rejected the token exchange. Check the OAuth redirect URI and consent configuration.", false));
+  await saveProviderConnection({
+    conversationId: stateRow.conversation_id,
+    providerId: "email",
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || null,
+    tokenType: data.token_type || "Bearer",
+    expiresIn: data.expires_in,
+    scopes: String(data.scope || "").split(/\s+/).filter(Boolean),
+  });
+  return sendHtml(res, 200, onboardingPage("Email is connected.", "Fetch securely stored the Google connection. Email is now available as an execution path.", true));
+}
+
+async function handleConnectorStatus(req, res) {
+  const url = new URL(req.url, FETCH_BASE);
+  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  if (!conversationId) return res.status(400).json({ success: false, error: "conversation_id_required" });
+  const result = {};
+  for (const providerId of ["swiggy", "instamart", "email", "uber"]) {
+    const connection = await getProviderConnection({ conversationId, providerId });
+    result[providerId] = Boolean(connection?.access_token);
+  }
+  return res.status(200).json({ success: true, connections: result });
+}
+
 export default async function handler(req, res) {
   if (req.method === "GET") {
     const requestUrl = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
+    if (requestUrl.searchParams.get("status") === "1") {
+      try { return await handleConnectorStatus(req, res); }
+      catch (error) { console.error("FETCH CONNECTOR STATUS ERROR:", error); return res.status(500).json({ success:false, error:"connector_status_failed" }); }
+    }
+    if (requestUrl.searchParams.get("swiggy_connect") === "1") {
+      try { return await handleSwiggyConnect(req, res, "swiggy"); }
+      catch (error) { console.error("FETCH SWIGGY CONNECT ERROR:", error); return sendHtml(res, 500, onboardingPage("Fetch could not start Swiggy", error?.message || "Please try again.", false)); }
+    }
+    if (requestUrl.searchParams.get("instamart_connect") === "1") {
+      try { return await handleSwiggyConnect(req, res, "instamart"); }
+      catch (error) { console.error("FETCH INSTANTMART CONNECT ERROR:", error); return sendHtml(res, 500, onboardingPage("Fetch could not start Instamart", error?.message || "Please try again.", false)); }
+    }
+    if (requestUrl.searchParams.get("swiggy_callback") === "1") {
+      try { return await handleSwiggyCallback(req, res); }
+      catch (error) { console.error("FETCH SWIGGY CALLBACK ERROR:", error); return sendHtml(res, 500, onboardingPage("Connection failed", "Fetch could not finish the provider connection.", false)); }
+    }
+    if (requestUrl.searchParams.get("google_connect") === "1") {
+      try { return await handleGoogleConnect(req, res); }
+      catch (error) { console.error("FETCH GOOGLE CONNECT ERROR:", error); return sendHtml(res, 500, onboardingPage("Fetch could not start email connection", error?.message || "Please try again.", false)); }
+    }
+    if (requestUrl.searchParams.get("google_callback") === "1") {
+      try { return await handleGoogleCallback(req, res); }
+      catch (error) { console.error("FETCH GOOGLE CALLBACK ERROR:", error); return sendHtml(res, 500, onboardingPage("Email connection failed", "Fetch could not finish the Google connection.", false)); }
+    }
     if (requestUrl.searchParams.get("uber_connect") === "1") {
       try { return await handleUberConnect(req, res); }
       catch (error) {
