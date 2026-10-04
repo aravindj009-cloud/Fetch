@@ -48,6 +48,8 @@ console.log(
   "FETCH SERVER: using server-side Supabase secret key"
 );
 
+import { activateCustomerBeta } from "../../lib/fetch-beta.mjs";
+
 const ACTIVE_ORDER_STATUSES = [
   "collecting_details",
   "awaiting_confirmation",
