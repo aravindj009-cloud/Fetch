@@ -2266,6 +2266,42 @@ async function saveMessage({
 }
 
 /* =========================================================
+   WHATSAPP BUSINESS PROFILE
+   The profile is the persistent entry point to Fetch connectors.
+========================================================= */
+
+async function ensureWhatsAppBusinessProfile() {
+  if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) return;
+
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v26.0/${WHATSAPP_PHONE_NUMBER_ID}/whatsapp_business_profile`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          websites: ["https://tryfetch.in/connectors"],
+        }),
+      }
+    );
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.warn("FETCH WHATSAPP PROFILE UPDATE FAILED:", JSON.stringify(data));
+      return;
+    }
+
+    console.log("FETCH WHATSAPP PROFILE: Connectors link configured");
+  } catch (error) {
+    console.warn("FETCH WHATSAPP PROFILE SYNC ERROR:", error?.message || error);
+  }
+}
+
+/* =========================================================
    CUSTOMER ONBOARDING
 ========================================================= */
 
@@ -2299,93 +2335,28 @@ async function maybeSendCustomerWelcome({
 }) {
   const text = String(userMessage || "").trim();
   const isGreeting =
-    /^(?:hi|hello|hey|helo|hii|hiii|namaste|namaskaram)(?:\s+fetch)?[!.?]*$/i.test(text) ||
-    /^(?:hey|hi|hello)\s+fetch[!.?]*$/i.test(text);
+    /^(?:hi|hello|hey|helo|hii|hiii|namaste|namaskaram)(?:\\s+fetch)?[!.?]*$/i.test(text) ||
+    /^(?:hey|hi|hello)\\s+fetch[!.?]*$/i.test(text);
 
-  if (!customer?.id || !phone) {
-    return false;
-  }
+  if (!customer?.id || !phone || !isGreeting) return false;
 
   try {
-    const preferences =
-      customer.connector_preferences &&
-      typeof customer.connector_preferences === "object"
-        ? customer.connector_preferences
-        : {};
+    const name = String(customer.name || "").trim();
+    const displayName = name ? ` ${name.split(/\\s+/)[0]}` : "";
+    const welcome =
+      `Hi${displayName}! 👋\\n\\nI'm Fetch, your personal assistant. Tell me what you need and I'll figure out the best way to help.`;
 
-    const hasConnector =
-      ["swiggy", "instamart", "email"].some(
-        (id) => Boolean(preferences[id])
-      );
-
-    /*
-      Fetch's WhatsApp number is the contact layer.
-      The web connection page is the tool/connector layer.
-
-      A greeting always opens the connection experience, just like the
-      Instinct flow. A customer with no connected tools is gated from
-      normal agent execution until they choose at least one connector.
-    */
-    if (isGreeting || !hasConnector) {
-      const token = await createWhatsAppOnboardingToken(phone);
-      const onboardingUrl =
-        `https://tryfetch.in/api/fetch/context?token=${encodeURIComponent(token)}`;
-
-      const name = String(customer.name || "").trim();
-      const displayName = name
-        ? ` ${name.split(/\s+/)[0]}`
-        : "";
-
-      const welcome =
-        isGreeting
-          ? `Hi${displayName}! 👋`
-          : "Before I can act for you, connect at least one service to Fetch.";
-
-      const connectMessage =
-        "I'm Fetch, your personal assistant.\n\n" +
-        "Connect the services you want me to use here:\n" +
-        onboardingUrl +
-        "\n\n" +
-        "Once connected, come back to WhatsApp and tell me what you need. I'll figure out the route.";
-
-      await saveMessage({
-        customerId: customer.id,
-        orderId: null,
-        phone,
-        role: "assistant",
-        message: welcome,
-      });
-
-      await saveMessage({
-        customerId: customer.id,
-        orderId: null,
-        phone,
-        role: "assistant",
-        message: connectMessage,
-      });
-
-      await sendWhatsAppMessage(phone, welcome);
-      await sendWhatsAppMessage(phone, connectMessage);
-
-      if (!customer.whatsapp_connected) {
-        await supabaseRequest(
-          `customers?id=eq.${encodeURIComponent(customer.id)}`,
-          {
-            method: "PATCH",
-            headers: { Prefer: "return=minimal" },
-            body: JSON.stringify({
-              whatsapp_onboarding_sent: true,
-            }),
-          }
-        );
-      }
-
-      return true;
-    }
-
-    return false;
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone,
+      role: "assistant",
+      message: welcome,
+    });
+    await sendWhatsAppMessage(phone, welcome);
+    return true;
   } catch (error) {
-    console.error("FETCH CUSTOMER ONBOARDING ERROR:", error);
+    console.error("FETCH CUSTOMER WELCOME ERROR:", error);
     return false;
   }
 }
@@ -6996,7 +6967,7 @@ async function tryUniversalFetchCustomerRequest({
     ) {
       await sendWhatsAppMessage(
         normalizedPhone,
-        "I understand the task, but that service is not connected to Fetch yet. I haven't claimed it was completed."
+        "I can handle that, but the service I need isn't connected yet. Open Fetch's WhatsApp profile and tap Connectors to connect it. I haven't claimed the task was completed."
       );
 
       await saveMessage({
@@ -7013,7 +6984,7 @@ async function tryUniversalFetchCustomerRequest({
         phone: normalizedPhone,
         role: "assistant",
         message:
-          "I understand the task, but that service is not connected to Fetch yet. I haven't claimed it was completed.",
+          "I can handle that, but the service I need isn't connected yet. Open Fetch's WhatsApp profile and tap Connectors to connect it. I haven't claimed the task was completed.",
       });
 
       return {
@@ -13160,6 +13131,9 @@ export default async function handler(
   req,
   res
 ) {
+  // Keep the persistent WhatsApp profile entry point aligned with Fetch connectors.
+  void ensureWhatsAppBusinessProfile();
+
   try {
     /* META VERIFICATION */
 
