@@ -11078,11 +11078,6 @@ async function handleShopperOnboardingMessage({
 function isExplicitShopperMessage(text, { location = null, shopper = null } = {}) {
   const value = cleanConversationText(text).toLowerCase();
 
-  // A location from an active shopper is operational shopper traffic.
-  if (location) {
-    return true;
-  }
-
   if (!value) {
     return false;
   }
@@ -13549,10 +13544,49 @@ export default async function handler(
       String(shopper.approval_status || "pending").toLowerCase() === "approved" &&
       String(shopper.onboarding_step || "inactive").toLowerCase() === "active";
 
-    if (
+    /*
+      A WhatsApp number can be both a shopper and a customer.
+      When that dual-role user has an active customer order awaiting
+      delivery location, the location belongs to the customer task.
+      Only otherwise should a bare location be treated as shopper
+      operating-location traffic.
+    */
+    const routingCustomer =
+      location
+        ? await getOrCreateCustomer(from, profileName)
+        : null;
+
+    const routingCustomerOrder =
+      routingCustomer
+        ? await getActiveOrder(routingCustomer)
+        : null;
+
+    const customerLocationPending =
+      Boolean(
+        location &&
+        routingCustomerOrder &&
+        ["collecting_details", "awaiting_location", "intake"].includes(
+          String(routingCustomerOrder.status || "").toLowerCase()
+        )
+      );
+
+    if (customerLocationPending) {
+      console.log(
+        "FETCH ROUTING: location -> active customer task"
+      );
+
+      await handleCustomerMessage({
+        phone: from,
+        profileName,
+        userMessage:
+          text ||
+          "Shared a WhatsApp location pin",
+        location,
+      });
+    } else if (
       shopperIsActive &&
       isExplicitShopperMessage(text || "", {
-        location,
+        location: null,
         shopper,
       })
     ) {
