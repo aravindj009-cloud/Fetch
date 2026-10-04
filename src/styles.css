@@ -1017,17 +1017,22 @@ aside > p {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 28px 18px;
+  padding: 18px;
   background: #171717;
   color: #f5f5f2;
 }
 .fetchInviteCard {
-  width: min(520px, 100%);
-  padding: 42px 30px 34px;
+  width: min(540px, 100%);
+  min-height: min(760px, calc(100vh - 36px));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 46px 34px 34px;
   border-radius: 28px;
   background: #1f1f1f;
   border: 1px solid rgba(255,255,255,.08);
   box-shadow: 0 30px 90px rgba(0,0,0,.4);
+  box-sizing: border-box;
 }
 .fetchInviteLogo {
   width: 58px;
@@ -1037,19 +1042,20 @@ aside > p {
   border-radius: 50%;
   background: #f4f4f0;
   color: #171717;
-  font: 700 28px "Space Grotesk";
-  margin-bottom: 34px;
+  font: 700 28px Georgia, serif;
+  margin-bottom: 48px;
 }
 .fetchInviteEyebrow {
   color: #8f8f8a;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: .18em;
+  margin-bottom: 14px;
 }
 .fetchInviteCard h1 {
-  font: 600 clamp(48px, 11vw, 72px)/.94 "Space Grotesk";
+  font: 600 clamp(45px, 10vw, 70px)/.96 "Space Grotesk";
   letter-spacing: -.075em;
-  margin: 16px 0 20px;
+  margin: 0 0 28px;
 }
 .fetchInviteCard h1 em {
   font-style: normal;
@@ -1061,61 +1067,107 @@ aside > p {
   line-height: 1.65;
   margin: 0;
 }
-.fetchInvitePoints {
-  display: grid;
-  gap: 0;
-  margin: 30px 0;
-  border-top: 1px solid rgba(255,255,255,.08);
+.fetchInviteRows {
+  margin: 12px 0 30px;
 }
-.fetchInvitePoints > div {
+.fetchInviteRows > div {
   display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 12px;
-  padding: 16px 0;
+  grid-template-columns: 36px 1fr;
+  gap: 14px;
+  padding: 20px 0;
   border-bottom: 1px solid rgba(255,255,255,.08);
 }
-.fetchInvitePoints b {
+.fetchInviteRows > div:first-child {
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+.fetchInviteRowIcon {
   color: #777770;
-  font-size: 10px;
-  padding-top: 3px;
+  font-size: 24px;
+  line-height: 1;
+  padding-top: 1px;
 }
-.fetchInvitePoints span {
+.fetchInviteRows span:last-child {
   display: grid;
-  gap: 4px;
+  gap: 6px;
 }
-.fetchInvitePoints strong {
-  font-size: 14px;
+.fetchInviteRows strong {
+  font-size: 15px;
 }
-.fetchInvitePoints small {
+.fetchInviteRows small {
   color: #8f8e89;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .fetchInvitePrimary {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
+  min-height: 58px;
   padding: 16px 18px;
+  border: 0;
   border-radius: 15px;
   background: #f4f4f0;
   color: #171717;
   text-decoration: none;
-  font-weight: 700;
+  font: 700 16px "Space Grotesk";
   box-sizing: border-box;
+  cursor: pointer;
 }
 .fetchInvitePrimary span {
-  font-size: 22px;
+  font-size: 24px;
+}
+.fetchInvitePhoneCard {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 6px 0 24px;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+  background: #242424;
+}
+.fetchInvitePhoneIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #f4f4f0;
+  color: #171717;
+}
+.fetchInvitePhoneCard div:last-child {
+  display: grid;
+  gap: 4px;
+}
+.fetchInvitePhoneCard strong {
+  font-size: 15px;
+}
+.fetchInvitePhoneCard small {
+  color: #8f8e89;
+  font-size: 12px;
+}
+.fetchInviteBack {
+  margin: 18px auto 0;
+  border: 0;
+  background: transparent;
+  color: #9b9a95;
+  font-size: 13px;
+  cursor: pointer;
 }
 .fetchInviteFine {
-  margin-top: 14px !important;
+  margin-top: 16px !important;
   text-align: center;
   font-size: 11px !important;
   color: #74746f !important;
 }
 @media (max-width: 600px) {
-  .fetchInvitePage { padding: 14px; }
-  .fetchInviteCard { padding: 32px 22px 26px; border-radius: 24px; }
+  .fetchInvitePage { padding: 10px; }
+  .fetchInviteCard {
+    min-height: calc(100vh - 20px);
+    padding: 32px 22px 26px;
+    border-radius: 24px;
+  }
+  .fetchInviteLogo { margin-bottom: 38px; }
 }
-
 /* Fetch beta invite release: 2026-10-04 */
