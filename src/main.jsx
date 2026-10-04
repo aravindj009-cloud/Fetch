@@ -652,6 +652,7 @@ function FetchMainApp() {
   const [listening, setListening] = useState(false);
   const [connectionStates, setConnectionStates] = useState(() => getStoredConnectorStates());
   const [pendingConnectorTask, setPendingConnectorTask] = useState(null);
+  const [oauthConnecting, setOauthConnecting] = useState(null);
   const [task, setTask] = useState(null);
   const [agentTasks, setAgentTasks] = useState([]);
   const [agentTaskId, setAgentTaskId] = useState(null);
@@ -701,6 +702,26 @@ function FetchMainApp() {
   }
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthProvider = params.get("uber");
+    const oauthConversation = params.get("conversation_id");
+    if (oauthProvider === "connected" && oauthConversation === conversationRef.current) {
+      fetch(`/api/fetch/connector-status?conversation_id=${encodeURIComponent(conversationRef.current)}&provider=uber`, { cache: "no-store" })
+        .then((response) => response.json())
+        .then((data) => {
+          if (data?.connected) {
+            const next = saveConnectorState("uber", "connected");
+            setConnectionStates(next);
+            const pending = JSON.parse(localStorage.getItem(PENDING_CONNECTOR_TASK_KEY) || "null");
+            if (pending?.connectorId === "uber") {
+              setPendingConnectorTask(pending);
+              window.setTimeout(() => send(pending.text, { resume: true, suppressUserMessage: true }), 300);
+            }
+          }
+        })
+        .catch((error) => console.error("FETCH UBER CONNECTION STATUS ERROR", error))
+        .finally(() => window.history.replaceState({}, "", "/"));
+    }
     const syncConnectorState = () => setConnectionStates(getStoredConnectorStates());
     const onConnectorConnected = (event) => {
       const next = saveConnectorState(event?.detail?.connectorId, "connected");
@@ -1467,6 +1488,17 @@ function FetchMainApp() {
                           const connectorId = message.meta.connectorId;
                           const connector = fetchConnectors.find((item) => item.id === connectorId);
                           if (!connector) return;
+                          if (connectorId === "uber") {
+                            localStorage.setItem(PENDING_CONNECTOR_TASK_KEY, JSON.stringify({
+                              text: message.text,
+                              connectorId,
+                              createdAt: Date.now()
+                            }));
+                            setPendingConnectorTask({ text: message.text, connectorId, createdAt: Date.now() });
+                            setOauthConnecting(connectorId);
+                            window.location.assign(`/api/fetch/uber/connect?conversation_id=${encodeURIComponent(conversationRef.current)}`);
+                            return;
+                          }
                           saveConnectorState(connectorId, "connected");
                           setConnectionStates(getStoredConnectorStates());
                           setPendingConnectorTask(null);
@@ -1476,7 +1508,7 @@ function FetchMainApp() {
                             {
                               id: makeId(),
                               role: "assistant",
-                              text: `${connector.name} is connected. I’m continuing your original request now.`,
+                              text: `${connector.name} is connected for this session. I’m continuing your original request now.`,
                               meta: { status: "connector_connected", network: connector.name }
                             }
                           ]);
