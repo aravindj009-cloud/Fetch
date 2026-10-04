@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import FetchOnboarding from "./FetchOnboarding.jsx";
 
 const starters = [
   "Get me 2 KitKats and milk",
@@ -433,6 +434,9 @@ function ResearchResults({ text, citations = [] }) {
 }
 
 export default function App() {
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try { return localStorage.getItem("fetch_onboarding_v2_complete") !== "1"; } catch { return true; }
+  });
   const [messages, setMessages] = useState([
     {
       id: "welcome",
@@ -1010,12 +1014,22 @@ export default function App() {
     }, 0);
   }
 
+  const handleOnboardingStarter = (starter) => {
+    window.setTimeout(() => send(starter), 120);
+  };
+
   const hasUserMessage = messages.some(
     (message) => message.role === "user"
   );
 
   return (
     <div className="app">
+      {showOnboarding && (
+        <FetchOnboarding
+          onComplete={() => setShowOnboarding(false)}
+          onStarter={handleOnboardingStarter}
+        />
+      )}
     {taskCenterOpen && selectedAgentTask && (
       <div className="taskCenterOverlay" role="dialog" aria-modal="true">
         <div className="taskCenterPanel">
