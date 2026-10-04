@@ -379,6 +379,7 @@ export default async function handler(req, res) {
       return sendHtml(res, 500, onboardingPage("Something went wrong", "Please return to WhatsApp and try again.", false));
     }
   }
+  }
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   try {
     const body = req.body || {};
