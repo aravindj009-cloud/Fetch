@@ -6331,19 +6331,20 @@ function shouldRunV9ForCustomerMessage(text) {
   const value = String(text || "").trim();
   if (!value) return false;
 
-  const lower = value.toLowerCase();
-
   /*
-    Keep deterministic transactional commands on the existing WhatsApp
-    state machine. These are already implemented and should not create
-    unnecessary V9 workflows.
+    SINGLE ROUTING BOUNDARY:
+    V9 is the default conversational/agent path. The legacy customer engine
+    is reserved for deterministic transaction controls and the physical
+    shopping state machine. This prevents travel, planning, research,
+    recommendations, follow-ups, and other natural conversation from being
+    interpreted as delivery addresses or product requests.
   */
   const legacyOnly = [
     /^(yes|y|yeah|yep|ya|ok|okay|sure|go ahead|confirm|confirmed)$/i,
     /^(no|n|nope|cancel|cancel it|don't|dont)$/i,
     /^(paid|i'?ve paid|i have paid|payment done|payment completed)$/i,
     /^(received|payment received|got the payment)$/i,
-    /^(status|track|eta|update|any update|where is my order)$/i,
+    /^(where is my order|order status|track my order|track order|eta)$/i,
     /^(new order|new fetch order|start new order|another order)$/i,
     /^(join|start|accept|decline|available|earnings|payout|last order)$/i,
     /^(shopping|picked up|out for delivery|delivered)$/i,
@@ -6356,30 +6357,17 @@ function shouldRunV9ForCustomerMessage(text) {
   /*
     Explicit memory is a Fetch Agent capability and should go through V9.
   */
-  if (
-    /\b(remember|memorize|save|store|don't forget|do not forget)\b/i.test(
-      value
-    )
-  ) {
+  if (/\b(remember|memorize|save|store|don't forget|do not forget)\b/i.test(value)) {
     return true;
   }
 
   /*
-    Requests that clearly need a universal digital/human execution layer.
-    Shopping requests are intentionally also allowed through V9 as a
-    planning/shadow layer; physical execution still falls through to the
-    existing order engine.
+    Everything else goes through the Universal Agent first.
+    Physical shopping is still safely handed back to the mature physical
+    order engine after ATC identifies the physical network.
   */
-  return (
-    /\b(book|booking|reserve|reservation|flight|flights|calendar|meeting|schedule|appointment|message|email|call|phone|research|find out|look up|compare|weather|news|latest|current|remind|reminder|cancel my|send this|contact)\b/i.test(
-      lower
-    ) ||
-    /\b(buy|get|fetch|purchase|order|pick up|pickup|deliver|shopping|groceries|items)\b/i.test(
-      lower
-    )
-  );
+  return true;
 }
-
 function canonicalMemoryTokenForWhatsApp(token) {
   let value = String(token || "").toLowerCase().trim();
   if (!value) return "";
