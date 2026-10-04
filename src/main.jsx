@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import FetchOnboarding from "./FetchOnboarding.jsx";
+import ConnectorSetupPage from "./ConnectorSetupPage.jsx";
 
 const starters = [
   "Get me 2 KitKats and milk",
@@ -620,6 +621,11 @@ export default function App() {
 
   if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
   if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
+  if (/^\/connectors\/(swiggy|instamart|email)$/.test(directoryPath)) {
+    const connectorId = directoryPath.split("/")[2];
+    const connector = fetchConnectors.find((item) => item.id === connectorId);
+    if (connector) return <ConnectorSetupPage connector={connector} getConversationId={getConversationId} navigateFetch={navigateFetch} />;
+  }
 
   return <FetchMainApp />;
 }
@@ -793,56 +799,8 @@ function FetchMainApp() {
       return;
     }
 
-    const requiredConnector = !resume ? getConnectorForRequest(text) : null;
-    const connectorConnected = requiredConnector
-      ? connectionStates[requiredConnector.id] === "connected"
-      : true;
-
-    if (requiredConnector && !connectorConnected) {
-      if (!suppressUserMessage) {
-        setMessages((current) => [
-          ...current,
-          { id: makeId(), role: "user", text, meta: null }
-        ]);
-      }
-
-      localStorage.setItem(PENDING_CONNECTOR_TASK_KEY, JSON.stringify({
-        text,
-        connectorId: requiredConnector.id,
-        createdAt: Date.now()
-      }));
-      setPendingConnectorTask({
-        text,
-        connectorId: requiredConnector.id,
-        createdAt: Date.now()
-      });
-
-      setInput("");
-      setTask({
-        text,
-        stage: "connector needed",
-        status: "awaiting_connector",
-        network: requiredConnector.name
-      });
-
-      setMessages((current) => [
-        ...current,
-        {
-          id: makeId(),
-          role: "assistant",
-          text: requiredConnector.id === "instamart"
-            ? "I can get that for you through Instamart. Connect it once and I’ll continue automatically."
-            : `I can handle that through ${requiredConnector.name}. Connect it once and I’ll continue automatically.`,
-          meta: {
-            status: "awaiting_connector",
-            network: requiredConnector.name,
-            connectorId: requiredConnector.id
-          }
-        }
-      ]);
-      return;
-    }
-
+    // Connector selection belongs to the server-side ATC. Keep chat natural;
+    // never block a request using a browser-only connector flag.
     const conversationHistory = messages
       .slice(-10)
       .map((message) => ({
@@ -1481,32 +1439,16 @@ function FetchMainApp() {
                           const connectorId = message.meta.connectorId;
                           const connector = fetchConnectors.find((item) => item.id === connectorId);
                           if (!connector) return;
+                          localStorage.setItem(PENDING_CONNECTOR_TASK_KEY, JSON.stringify({ text: message.text, connectorId, createdAt: Date.now() }));
+                          setPendingConnectorTask({ text: message.text, connectorId, createdAt: Date.now() });
+                          setOauthConnecting(connectorId);
                           if (connectorId === "uber") {
-                            localStorage.setItem(PENDING_CONNECTOR_TASK_KEY, JSON.stringify({
-                              text: message.text,
-                              connectorId,
-                              createdAt: Date.now()
-                            }));
-                            setPendingConnectorTask({ text: message.text, connectorId, createdAt: Date.now() });
-                            setOauthConnecting(connectorId);
-                            window.location.assign(`/api/fetch/context.mjs?uber_connect=1&conversation_id=${encodeURIComponent(conversationRef.current)}`);
-                            return;
+                            window.location.assign("/api/fetch/context.mjs?uber_connect=1&conversation_id=" + encodeURIComponent(conversationRef.current));
+                          } else {
+                            const param = connectorId === "email" ? "google_connect=1" : connectorId === "swiggy" ? "swiggy_connect=1" : "instamart_connect=1";
+                            window.location.assign("/api/fetch/connectors.mjs?" + param + "&conversation_id=" + encodeURIComponent(conversationRef.current));
                           }
-                          saveConnectorState(connectorId, "connected");
-                          setConnectionStates(getStoredConnectorStates());
-                          setPendingConnectorTask(null);
-                          localStorage.removeItem(PENDING_CONNECTOR_TASK_KEY);
-                          setMessages((current) => [
-                            ...current,
-                            {
-                              id: makeId(),
-                              role: "assistant",
-                              text: `${connector.name} is connected for this session. I’m continuing your original request now.`,
-                              meta: { status: "connector_connected", network: connector.name }
-                            }
-                          ]);
-                          window.setTimeout(() => send(message.text, { resume: true, suppressUserMessage: true }), 250);
-                        }}
+                        }
                       />
                     )}
 
