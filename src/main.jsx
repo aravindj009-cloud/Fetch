@@ -99,6 +99,12 @@ function FetchDirectoryPage({ section = "connectors" }) {
   const [connectionStates, setConnectionStates] = useState(() => getStoredConnectorStates());
 
   function handleConnectorConnect(connector) {
+    if (connector.id === "uber") {
+      const conversationId = localStorage.getItem("fetch_conversation_id") || `web:${makeId()}`;
+      localStorage.setItem("fetch_conversation_id", conversationId);
+      window.location.assign(`/api/fetch/uber/connect?conversation_id=${encodeURIComponent(conversationId)}`);
+      return;
+    }
     const next = saveConnectorState(connector.id, "connected");
     setConnectionStates(next);
     window.dispatchEvent(new CustomEvent("fetch-connector-connected", { detail: { connectorId: connector.id } }));
