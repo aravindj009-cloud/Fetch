@@ -48,7 +48,7 @@ console.log(
   "FETCH SERVER: using server-side Supabase secret key"
 );
 
-import { activateCustomerBeta } from "../../lib/fetch-beta.mjs";
+import { activateCustomerBeta, claimBetaInvite } from "../../lib/fetch-beta.mjs";
 
 const ACTIVE_ORDER_STATUSES = [
   "collecting_details",
@@ -7093,6 +7093,62 @@ async function handleCustomerMessage({
       normalizedPhone,
       profileName
     );
+
+  // Invite-only beta activation: a user arriving from a Fetch invite
+  // can send the prefilled invite code back to this WhatsApp number.
+  const betaInviteMatch = String(userMessage || "").match(/(?:FETCH[-_ ]?INVITE|FETCH[-_ ]?BETA)[: ]+([A-Za-z0-9_-]{16,})/i);
+  if (betaInviteMatch?.[1]) {
+    try {
+      const claim = await claimBetaInvite({
+        token: betaInviteMatch[1],
+        phone: normalizedPhone,
+      });
+
+      if (claim.success) {
+        await activateCustomerBeta({
+          phone: normalizedPhone,
+          inviteId: claim.invite?.id || null,
+        });
+
+        await saveMessage({
+          customerId: customer.id,
+          orderId: null,
+          phone: normalizedPhone,
+          role: "user",
+          message: userMessage,
+        });
+
+        const betaWelcome =
+          "Welcome to Fetch beta, " +
+          (profileName ? profileName.split(/\\s+/)[0] : "") +
+          "! 👋\\n\\n" +
+          "I’m your personal assistant. Tell me what you need and I’ll figure out the best way to help.";
+
+        await saveMessage({
+          customerId: customer.id,
+          orderId: null,
+          phone: normalizedPhone,
+          role: "assistant",
+          message: betaWelcome,
+        });
+
+        await sendWhatsAppMessage(normalizedPhone, betaWelcome);
+        return;
+      }
+
+      if (claim.reason === "invite_already_used") {
+        await sendWhatsAppMessage(normalizedPhone, "That Fetch beta invite has already been used. If you were invited personally, ask the sender for a new invite.");
+        return;
+      }
+
+      await sendWhatsAppMessage(normalizedPhone, "That Fetch beta invite is invalid or has expired. Ask the sender for a fresh invite.");
+      return;
+    } catch (error) {
+      console.error("FETCH BETA INVITE ACTIVATION ERROR:", error);
+      await sendWhatsAppMessage(normalizedPhone, "I couldn’t activate that beta invite right now. Please try the invite again in a moment.");
+      return;
+    }
+  }
 
   const activeOrder =
     await getActiveOrder(
