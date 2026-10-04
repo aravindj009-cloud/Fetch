@@ -2313,7 +2313,7 @@ async function maybeSendCustomerWelcome({
 
     if (alreadyConnected) {
       const welcome =
-        `Hi${displayName}! 👋\\n\\nI'm Fetch, your personal assistant. I'm here to help with whatever you need.`;
+        `Hi${displayName}! 👋\n\nI'm Fetch, your personal assistant. I'm here to help with whatever you need.`;
       await saveMessage({
         customerId: customer.id,
         orderId: null,
@@ -2327,16 +2327,16 @@ async function maybeSendCustomerWelcome({
 
     const token = await createWhatsAppOnboardingToken(phone);
     const onboardingUrl =
-      `https://tryfetch.in/api/whatsapp/onboarding?token=${encodeURIComponent(token)}`;
+      `https://tryfetch.in/api/fetch/context?token=${encodeURIComponent(token)}`;
 
     const welcome =
       `Hi${displayName}! 👋`;
 
     const connectMessage =
-      "I'm Fetch, your personal assistant. I'm here to help you with whatever you need.\\n\\n" +
-      "Connect your WhatsApp here — it only takes a few seconds.\\n" +
+      "I'm Fetch, your personal assistant. I'm here to help you with whatever you need.\n\n" +
+      "Connect your WhatsApp here — it only takes a few seconds.\n" +
       onboardingUrl +
-      "\\n\\n" +
+      "\n\n" +
       "Once you're connected, just tell me what you need. I'll figure out the rest.";
 
     await saveMessage({
