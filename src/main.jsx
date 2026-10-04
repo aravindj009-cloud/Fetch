@@ -1446,7 +1446,7 @@ function FetchMainApp() {
                             window.location.assign("/api/fetch/context.mjs?uber_connect=1&conversation_id=" + encodeURIComponent(conversationRef.current));
                           } else {
                             const param = connectorId === "email" ? "google_connect=1" : connectorId === "swiggy" ? "swiggy_connect=1" : "instamart_connect=1";
-                            window.location.assign("/api/fetch/connectors.mjs?" + param + "&conversation_id=" + encodeURIComponent(conversationRef.current));
+                            window.location.assign("/api/fetch/context.mjs?" + param + "&conversation_id=" + encodeURIComponent(conversationRef.current));
                           }
                         }}
                       />
