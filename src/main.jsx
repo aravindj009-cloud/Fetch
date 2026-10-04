@@ -10,6 +10,74 @@ const starters = [
   "Remember that I prefer things after 7 PM"
 ];
 
+const fetchConnectors = [
+  { id: "instamart", name: "Instamart", detail: "Groceries & everyday essentials", icon: "I", state: "Available when needed" },
+  { id: "swiggy", name: "Swiggy", detail: "Food, groceries & local delivery", icon: "S", state: "Available when needed" },
+  { id: "uber", name: "Uber", detail: "Rides & mobility", icon: "U", state: "Available when needed" },
+  { id: "rapido", name: "Rapido", detail: "Bike, auto & cab rides", icon: "R", state: "Available when needed" },
+  { id: "partners", name: "Fetch Partners", detail: "Local stores & service providers", icon: "F", state: "Built into Fetch" },
+  { id: "shopper", name: "Human Shopper", detail: "Fallback when no digital route can fulfil the task", icon: "H", state: "Fallback" },
+];
+
+function navigateFetch(path) {
+  window.history.pushState({}, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function FetchDirectoryPage({ section = "connectors" }) {
+  const isContact = section === "contact";
+  return (
+    <div className="fetchDirectory">
+      <header className="directoryHeader">
+        <button className="directoryBrand" onClick={() => navigateFetch("/")}>fetch<span>.</span></button>
+        <nav>
+          <button className={!isContact ? "active" : ""} onClick={() => navigateFetch("/connectors")}>Connectors</button>
+          <button className={isContact ? "active" : ""} onClick={() => navigateFetch("/contact")}>Contact</button>
+          <button className="directoryBack" onClick={() => navigateFetch("/")}>Open Fetch →</button>
+        </nav>
+      </header>
+      <main className="directoryMain">
+        {isContact ? (
+          <>
+            <small className="directoryEyebrow">CONTACT</small>
+            <h1>Reach <em>Fetch.</em></h1>
+            <p className="directoryLead">Fetch is your personal assistant. Start with WhatsApp or open the web experience — you don't need to learn another app.</p>
+            <div className="contactCards">
+              <a className="contactCard primary" href="https://wa.me/919074559146"><span className="contactIcon">◉</span><div><strong>WhatsApp</strong><small>+91 90745 59146</small></div><b>→</b></a>
+              <a className="contactCard" href="https://tryfetch.in/"><span className="contactIcon">F</span><div><strong>Web</strong><small>tryfetch.in</small></div><b>→</b></a>
+              <div className="contactCard"><span className="contactIcon">@</span><div><strong>Email</strong><small>Coming soon</small></div><b>—</b></div>
+            </div>
+            <section className="directorySection">
+              <small className="directoryEyebrow">HOW TO USE FETCH</small>
+              <div className="contactSteps">
+                <div><b>01</b><span><strong>Tell Fetch what you need.</strong><small>Use natural language. No service selection required.</small></span></div>
+                <div><b>02</b><span><strong>Fetch chooses the route.</strong><small>ATC selects a connector, partner or human resource.</small></span></div>
+                <div><b>03</b><span><strong>You stay in control.</strong><small>Fetch asks before payments or sensitive actions.</small></span></div>
+              </div>
+            </section>
+          </>
+        ) : (
+          <>
+            <small className="directoryEyebrow">FETCH CONNECTORS</small>
+            <h1>Tools Fetch <em>can use.</em></h1>
+            <p className="directoryLead">You don't have to decide which service to use. Fetch understands the task and selects the best available resource behind the scenes.</p>
+            <div className="connectorDirectoryList">
+              {fetchConnectors.map((connector) => (
+                <article className="directoryConnector" key={connector.id}>
+                  <div className="directoryConnectorIcon">{connector.icon}</div>
+                  <div className="directoryConnectorCopy"><strong>{connector.name}</strong><span>{connector.detail}</span></div>
+                  <span className="directoryConnectorState">{connector.state}</span>
+                </article>
+              ))}
+            </div>
+            <div className="directoryCallout"><span>F</span><div><strong>One assistant. Many execution paths.</strong><p>Ask for the outcome. Fetch coordinates the tools, stores, services and people required to get it done.</p></div></div>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
 const makeId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -434,6 +502,17 @@ function ResearchResults({ text, citations = [] }) {
 }
 
 export default function App() {
+  const [directoryPath, setDirectoryPath] = useState(() => window.location.pathname);
+
+  useEffect(() => {
+    const onPopState = () => setDirectoryPath(window.location.pathname);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
+  if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
+
   const [showOnboarding, setShowOnboarding] = useState(() => {
     try { return localStorage.getItem("fetch_onboarding_v2_complete") !== "1"; } catch { return true; }
   });
@@ -1113,9 +1192,9 @@ export default function App() {
             Fetch is ready
           </span>
 
-          <button onClick={clearConversation}>
-            New
-          </button>
+          <button onClick={() => navigateFetch("/connectors")}>Connectors</button>
+          <button onClick={() => navigateFetch("/contact")}>Contact</button>
+          <button onClick={clearConversation}>New</button>
         </div>
       </header>
 
