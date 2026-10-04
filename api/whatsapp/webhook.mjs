@@ -6906,9 +6906,14 @@ async function tryUniversalFetchCustomerRequest({
     */
     if (
       result?.execution?.success === true &&
-      result?.execution?.message
+      (result?.execution?.message || result?.task?.result || result?.result)
     ) {
-      const reply = String(result.execution.message).trim();
+      const reply = String(
+        result.execution.message ||
+        result.task?.result ||
+        result.result ||
+        ""
+      ).trim();
 
       await saveMessage({
         customerId: customer.id,
