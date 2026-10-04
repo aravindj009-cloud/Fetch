@@ -584,7 +584,7 @@ async function sendWhatsAppMessage(
           type: "text",
 
           text: {
-            preview_url: false,
+            preview_url: true,
             body: message,
           },
         }),
@@ -632,7 +632,8 @@ async function getCustomer(phone) {
 }
 
 async function getOrCreateCustomer(
-  phone
+  phone,
+  profileName = ""
 ) {
   const normalizedPhone =
     normalizePhone(phone);
@@ -643,6 +644,19 @@ async function getOrCreateCustomer(
     );
 
   if (customer) {
+    if (profileName && !String(customer.name || "").trim()) {
+      const updated = await supabaseRequest(
+        `customers?id=eq.${encodeURIComponent(customer.id)}`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify({
+            name: String(profileName).trim().slice(0, 120),
+          }),
+        }
+      );
+      customer = Array.isArray(updated) && updated.length ? updated[0] : customer;
+    }
     return customer;
   }
 
@@ -661,6 +675,10 @@ async function getOrCreateCustomer(
           body: JSON.stringify({
             phone:
               normalizedPhone,
+            name:
+              profileName
+                ? String(profileName).trim().slice(0, 120)
+                : null,
           }),
         }
       );
@@ -2251,34 +2269,75 @@ async function saveMessage({
    CUSTOMER ONBOARDING
 ========================================================= */
 
+async function createWhatsAppOnboardingToken(phone) {
+  const normalizedPhone = normalizePhone(phone);
+  const expiresAt = Math.floor(Date.now() / 1000) + 15 * 60;
+  const secret =
+    String(process.env.FETCH_ONBOARDING_SECRET || "").trim() ||
+    String(SUPABASE_KEY || "").trim();
+
+  const payload = Buffer.from(
+    JSON.stringify({
+      phone: normalizedPhone,
+      exp: expiresAt,
+    }),
+    "utf8"
+  ).toString("base64url");
+
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(payload)
+    .digest("base64url");
+
+  return `${payload}.${signature}`;
+}
+
 async function maybeSendCustomerWelcome({
   customer,
   phone,
   userMessage,
 }) {
   const text = String(userMessage || "").trim();
-  if (!customer?.id || !phone || !/^(hi|hello|hey|helo|hii|hiii|namaste|namaskaram)$/i.test(text)) {
+  const isGreeting =
+    /^(?:hi|hello|hey|helo|hii|hiii|namaste|namaskaram)(?:\s+fetch)?[!.?]*$/i.test(text) ||
+    /^(?:hey|hi|hello)\s+fetch[!.?]*$/i.test(text);
+
+  if (!customer?.id || !phone || !isGreeting) {
     return false;
   }
 
   try {
-    const rows = await supabaseRequest(
-      `messages?customer_id=eq.${encodeURIComponent(customer.id)}&select=id&limit=1`
-    );
+    const alreadyConnected = Boolean(customer.whatsapp_connected);
+    const name = String(customer.name || "").trim();
+    const displayName = name ? ` ${name.split(/\s+/)[0]}` : "";
 
-    // The current incoming message has not been saved yet. An empty history
-    // therefore means this is the user's first Fetch conversation.
-    if (Array.isArray(rows) && rows.length) {
-      return false;
+    if (alreadyConnected) {
+      const welcome =
+        `Hi${displayName}! 👋\\n\\nI'm Fetch, your personal assistant. I'm here to help with whatever you need.`;
+      await saveMessage({
+        customerId: customer.id,
+        orderId: null,
+        phone,
+        role: "assistant",
+        message: welcome,
+      });
+      await sendWhatsAppMessage(phone, welcome);
+      return true;
     }
 
-    const welcome =
-      "Hi 👋 I’m Fetch, your personal assistant.";
+    const token = await createWhatsAppOnboardingToken(phone);
+    const onboardingUrl =
+      `https://tryfetch.in/api/whatsapp/onboarding?token=${encodeURIComponent(token)}`;
 
-    const onboarding =
-      "Connect Fetch here — it only takes a few seconds:\n" +
-      "https://tryfetch.in/?onboarding=whatsapp\n\n" +
-      "Once you’re connected, just tell me what you need. I’ll figure out the rest.";
+    const welcome =
+      `Hi${displayName}! 👋`;
+
+    const connectMessage =
+      "I'm Fetch, your personal assistant. I'm here to help you with whatever you need.\\n\\n" +
+      "Connect your WhatsApp here — it only takes a few seconds.\\n" +
+      onboardingUrl +
+      "\\n\\n" +
+      "Once you're connected, just tell me what you need. I'll figure out the rest.";
 
     await saveMessage({
       customerId: customer.id,
@@ -2293,11 +2352,22 @@ async function maybeSendCustomerWelcome({
       orderId: null,
       phone,
       role: "assistant",
-      message: onboarding,
+      message: connectMessage,
     });
 
     await sendWhatsAppMessage(phone, welcome);
-    await sendWhatsAppMessage(phone, onboarding);
+    await sendWhatsAppMessage(phone, connectMessage);
+
+    await supabaseRequest(
+      `customers?id=eq.${encodeURIComponent(customer.id)}`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          whatsapp_onboarding_sent: true,
+        }),
+      }
+    );
 
     return true;
   } catch (error) {
@@ -6970,6 +7040,7 @@ async function tryUniversalFetchCustomerRequest({
 
 async function handleCustomerMessage({
   phone,
+  profileName = "",
   userMessage,
   location = null,
 }) {
@@ -6978,7 +7049,8 @@ async function handleCustomerMessage({
 
   const customer =
     await getOrCreateCustomer(
-      normalizedPhone
+      normalizedPhone,
+      profileName
     );
 
   const activeOrder =
@@ -13030,6 +13102,12 @@ function extractIncomingWhatsAppMessage(
         message.from
       ),
 
+    profileName:
+      String(
+        value?.contacts?.[0]?.profile?.name ||
+        ""
+      ).trim(),
+
     text:
       message?.text?.body?.trim() ||
       interactiveCommand ||
@@ -13196,6 +13274,7 @@ export default async function handler(
 
     const {
       from,
+      profileName,
       text,
       location,
     } = incoming;
@@ -13498,6 +13577,7 @@ export default async function handler(
     } else {
       await handleCustomerMessage({
         phone: from,
+        profileName,
         userMessage:
           text ||
           "Shared a WhatsApp location pin",
