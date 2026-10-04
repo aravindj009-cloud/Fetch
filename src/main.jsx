@@ -703,6 +703,42 @@ function ResearchResults({ text, citations = [] }) {
   );
 }
 
+function FetchInvitePage({ token }) {
+  const inviteToken = String(token || "");
+  const whatsappText = encodeURIComponent(
+    `FETCH INVITE ${inviteToken}`
+  );
+  const whatsappUrl = `https://wa.me/919074559146?text=${whatsappText}`;
+
+  return (
+    <div className="fetchInvitePage">
+      <main className="fetchInviteCard">
+        <div className="fetchInviteLogo">F</div>
+        <div className="fetchInviteEyebrow">PRIVATE BETA</div>
+        <h1>You're invited<br /><em>to Fetch.</em></h1>
+        <p>
+          Fetch is your personal assistant. Ask for what you need in your own
+          words and Fetch figures out the best way to help.
+        </p>
+
+        <div className="fetchInvitePoints">
+          <div><b>01</b><span><strong>Private beta</strong><small>Access is limited to invited users.</small></span></div>
+          <div><b>02</b><span><strong>Works through WhatsApp</strong><small>Your WhatsApp number becomes your Fetch identity.</small></span></div>
+          <div><b>03</b><span><strong>Connect only when needed</strong><small>Fetch asks for a service connection when a task requires it.</small></span></div>
+        </div>
+
+        <a className="fetchInvitePrimary" href={whatsappUrl}>
+          Continue with WhatsApp <span>→</span>
+        </a>
+
+        <p className="fetchInviteFine">
+          Tap the button, send the prefilled message to Fetch, and your beta access will be activated.
+        </p>
+      </main>
+    </div>
+  );
+}
+
 export default function App() {
   const [directoryPath, setDirectoryPath] = useState(() => window.location.pathname);
 
@@ -711,6 +747,9 @@ export default function App() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+
+  const inviteMatch = directoryPath.match(/^\/invite\/([^/]+)$/);
+  if (inviteMatch) return <FetchInvitePage token={decodeURIComponent(inviteMatch[1])} />;
 
   if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
   if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
