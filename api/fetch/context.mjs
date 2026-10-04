@@ -32,16 +32,30 @@ async function supabaseRequest(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-function onboardingPage(heading, body, success = true) {
-  const page = "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Fetch</title><style>body{margin:0;background:#0b0d0e;color:#f5f7f8;font-family:Inter,system-ui,-apple-system,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center}.card{width:min(520px,calc(100% - 40px));background:#15191b;border:1px solid #293033;border-radius:24px;padding:34px;box-sizing:border-box;box-shadow:0 24px 70px rgba(0,0,0,.45)}.logo{width:56px;height:56px;border-radius:50%;background:#fff;color:#111;display:flex;align-items:center;justify-content:center;font:700 28px Georgia;margin-bottom:28px}h1{font-size:30px;line-height:1.1;margin:0 0 14px}p{color:#aeb8bb;line-height:1.6;font-size:16px}.status{display:inline-flex;color:__COLOR__;font-weight:700;margin:12px 0}a{display:block;text-align:center;text-decoration:none;background:#fff;color:#111;padding:15px 18px;border-radius:14px;font-weight:700;margin-top:26px}</style></head><body><main class=\"card\"><div class=\"logo\">F</div><div class=\"status\">__STATUS__ Fetch</div><h1>__HEADING__</h1><p>__BODY__</p>__LINK__</main></body></html>"
+function onboardingPage(heading, body, success = true, options = {}) {
+  const connectors = [
+    { id: "swiggy", name: "Swiggy", detail: "Food, groceries & local delivery", icon: "S" },
+    { id: "instamart", name: "Instamart", detail: "Groceries & everyday essentials", icon: "I" },
+    { id: "email", name: "Email", detail: "Send, read and manage email with Fetch", icon: "@" },
+  ];
+  const selected = options.selected || {};
+  const token = String(options.token || "");
+  const connectorRows = connectors.map((item) => {
+    const connected = Boolean(selected[item.id]);
+    const href = "/api/fetch/context?token=" + encodeURIComponent(token) + "&connector=" + encodeURIComponent(item.id);
+    return '<div class="connector '+(connected ? "connected" : "")+'"><div class="icon">'+item.icon+'</div><div class="copy"><strong>'+item.name+'</strong><span>'+item.detail+'</span></div><a class="'+(connected ? "done" : "")+'" href="'+href+'">'+(connected ? "Connected ✓" : "Connect")+'</a></div>';
+  }).join("");
+  const connectorBlock = options.showConnectors ? '<section class="connectors"><div class="sectionTitle">CONNECTORS</div><p class="sub">Tools your Fetch agent can use. Choose the services you want available to Fetch.</p>'+connectorRows+'</section>' : "";
+  const returnLink = options.showConnectors ? '<a class="whatsapp" href="https://wa.me/919074559146">Back to Fetch on WhatsApp →</a>' : "";
+  const page = "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Fetch · Connections</title><style>body{margin:0;background:#0b0d0e;color:#f5f7f8;font-family:Inter,system-ui,-apple-system,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}.card{width:min(560px,100%);background:#111516;border:1px solid #293033;border-radius:26px;padding:30px;box-sizing:border-box;box-shadow:0 24px 70px rgba(0,0,0,.45)}.logo{width:52px;height:52px;border-radius:50%;background:#fff;color:#111;display:flex;align-items:center;justify-content:center;font:700 27px Georgia;margin-bottom:24px}h1{font-size:30px;line-height:1.1;margin:0 0 12px}p{color:#aeb8bb;line-height:1.55;font-size:15px;margin:0}.status{display:inline-flex;color:__COLOR__;font-weight:700;margin:4px 0 12px}.connectors{margin-top:28px}.sectionTitle{font-size:11px;letter-spacing:.16em;color:#7e8a8e;font-weight:800;margin-bottom:8px}.sub{font-size:14px;margin-bottom:14px}.connector{display:flex;align-items:center;gap:14px;padding:14px 0;border-top:1px solid #252b2d}.icon{width:42px;height:42px;border-radius:12px;background:#1b2022;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex:0 0 42px}.copy{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}.copy strong{font-size:16px}.copy span{font-size:13px;color:#8f9a9e}.connector a{background:#f5f7f8;color:#101314;text-decoration:none;padding:9px 14px;border-radius:10px;font-weight:700;font-size:13px}.connector a.done{background:#1e2925;color:#7ee2ba}.whatsapp{display:block;text-align:center;text-decoration:none;background:#fff;color:#111;padding:14px 18px;border-radius:13px;font-weight:700;margin-top:26px}</style></head><body><main class=\"card\"><div class=\"logo\">F</div><div class=\"status\">__STATUS__ Fetch</div><h1>__HEADING__</h1><p>__BODY__</p>__CONNECTORS____RETURN__</main></body></html>"
     .replace("__COLOR__", success ? "#20c997" : "#ff6b6b")
     .replace("__STATUS__", success ? "✓ Connected" : "!")
     .replace("__HEADING__", String(heading))
     .replace("__BODY__", String(body))
-    .replace("__LINK__", success ? '<a href="https://wa.me/919074559146">Return to Fetch on WhatsApp →</a>' : "");
+    .replace("__CONNECTORS__", connectorBlock)
+    .replace("__RETURN__", returnLink);
   return page;
 }
-
 function oauthPage(title, body, success, conversationId = "") {
   const color = success ? "#20c997" : "#ff6b6b";
   const returnUrl = conversationId
@@ -106,22 +120,46 @@ async function handleUberCallback(req, res) {
 }
 
 async function handleOnboarding(req, res) {
-  const token = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`).searchParams.get("token");
+  const requestUrl = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
+  const token = requestUrl.searchParams.get("token");
+  const connector = String(requestUrl.searchParams.get("connector") || "").trim().toLowerCase();
   const verified = verifyOnboardingToken(token);
   if (!verified) return res.status(400).setHeader("Content-Type", "text/html; charset=utf-8").send(onboardingPage("This connection link has expired", "Return to WhatsApp and say “Hey Fetch” to receive a fresh connection link.", false));
 
-  const rows = await supabaseRequest(`customers?phone=eq.${encodeURIComponent(verified.phone)}&select=id,name&limit=1`);
+  const rows = await supabaseRequest(`customers?phone=eq.${encodeURIComponent(verified.phone)}&select=id,name,connector_preferences&limit=1`);
   if (!Array.isArray(rows) || !rows.length) return res.status(404).setHeader("Content-Type", "text/html; charset=utf-8").send(onboardingPage("We couldn't find your Fetch account", "Return to WhatsApp and say “Hey Fetch” again to start a fresh connection.", false));
 
-  await supabaseRequest(`customers?id=eq.${encodeURIComponent(rows[0].id)}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ whatsapp_connected: true, whatsapp_connected_at: new Date().toISOString(), whatsapp_onboarding_sent: true }),
-  });
+  const customer = rows[0];
+  const preferences = customer.connector_preferences && typeof customer.connector_preferences === "object" ? customer.connector_preferences : {};
+  const allowed = new Set(["swiggy", "instamart", "email"]);
+  if (connector && allowed.has(connector)) {
+    preferences[connector] = true;
+    await supabaseRequest(`customers?id=eq.${encodeURIComponent(customer.id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        connector_preferences: preferences,
+        whatsapp_connected: true,
+        whatsapp_connected_at: new Date().toISOString(),
+        whatsapp_onboarding_sent: true,
+      }),
+    });
+  } else {
+    await supabaseRequest(`customers?id=eq.${encodeURIComponent(customer.id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ whatsapp_connected: true, whatsapp_connected_at: new Date().toISOString(), whatsapp_onboarding_sent: true }),
+    });
+  }
 
-  const firstName = String(rows[0].name || "").trim().split(/\s+/)[0];
+  const firstName = String(customer.name || "").trim().split(/\s+/)[0];
+  const selected = { ...preferences };
+  const title = connector ? `${connector.charAt(0).toUpperCase() + connector.slice(1)} is connected.` : `You're connected${firstName ? `, ${firstName}` : ""}.`;
+  const body = connector
+    ? `Fetch will now keep ${connector} available as an execution path. You can connect another service below.`
+    : "WhatsApp is connected to Fetch. Choose the services you want Fetch to be able to use.";
   return res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(
-    onboardingPage(`You're connected${firstName ? `, ${firstName}` : ""}.`, "Fetch is now connected to this WhatsApp number. Go back to the chat and tell Fetch what you need — no menus, no store selection, no separate app required.")
+    onboardingPage(title, body, true, { showConnectors: true, selected, token })
   );
 }
 
