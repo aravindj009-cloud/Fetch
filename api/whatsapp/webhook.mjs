@@ -11003,6 +11003,44 @@ async function handleShopperOnboardingMessage({
    SHOPPER ENGINE
 ========================================================= */
 
+function isExplicitShopperMessage(text, { location = null, shopper = null } = {}) {
+  const value = cleanConversationText(text).toLowerCase();
+
+  // A location from an active shopper is operational shopper traffic.
+  if (location) {
+    return true;
+  }
+
+  if (!value) {
+    return false;
+  }
+
+  // Explicit shopper lifecycle / job commands. Everything else is allowed
+  // to fall through to the customer assistant, even when the phone is also
+  // registered as a shopper.
+  if (/^(?:start|join|accept|decline|shopping|picked\s*up|out\s+for\s+delivery|delivered|status|earnings?|payouts?|received|not\s+received)$/i.test(value)) {
+    return true;
+  }
+
+  if (isShopperAvailabilityMessage(value)) {
+    return true;
+  }
+
+  if (isShopperCancellationRequest(value) || isShopperCannotFulfillRequest(value)) {
+    return true;
+  }
+
+  if (parseSubstitutionCommand(value)) {
+    return true;
+  }
+
+  if (looksLikeShopperOnboardingPayment(value)) {
+    return true;
+  }
+
+  return false;
+}
+
 async function handleShopperMessage({
   phone,
   text,
@@ -13432,7 +13470,17 @@ export default async function handler(
       String(shopper.approval_status || "pending").toLowerCase() === "approved" &&
       String(shopper.onboarding_step || "inactive").toLowerCase() === "active";
 
-    if (shopperIsActive) {
+    if (
+      shopperIsActive &&
+      isExplicitShopperMessage(text || "", {
+        location,
+        shopper,
+      })
+    ) {
+      console.log(
+        "FETCH ROUTING: active shopper command -> shopper workflow"
+      );
+
       await handleShopperMessage({
         phone: from,
         text: text || "LOCATION",
