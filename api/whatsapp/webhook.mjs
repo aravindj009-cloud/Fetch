@@ -1,3 +1,11 @@
+import crypto from "node:crypto";
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 /* FETCH WHATSAPP WEBHOOK - V9 DIRECT MEMORY FALLBACK FIX */
 /* FETCH WHATSAPP WEBHOOK - V9 MEMORY RETRIEVAL RESPONSE FIX */
 const SUPABASE_URL =
@@ -2236,6 +2244,65 @@ async function saveMessage({
       "FETCH SAVE MESSAGE ERROR:",
       error
     );
+  }
+}
+
+/* =========================================================
+   CUSTOMER ONBOARDING
+========================================================= */
+
+async function maybeSendCustomerWelcome({
+  customer,
+  phone,
+  userMessage,
+}) {
+  const text = String(userMessage || "").trim();
+  if (!customer?.id || !phone || !/^(hi|hello|hey|helo|hii|hiii|namaste|namaskaram)$/i.test(text)) {
+    return false;
+  }
+
+  try {
+    const rows = await supabaseRequest(
+      `messages?customer_id=eq.${encodeURIComponent(customer.id)}&select=id&limit=1`
+    );
+
+    // The current incoming message has not been saved yet. An empty history
+    // therefore means this is the user's first Fetch conversation.
+    if (Array.isArray(rows) && rows.length) {
+      return false;
+    }
+
+    const welcome =
+      "Hi 👋 I’m Fetch, your personal assistant.";
+
+    const onboarding =
+      "Connect Fetch here — it only takes a few seconds:\n" +
+      "https://tryfetch.in/?onboarding=whatsapp\n\n" +
+      "Once you’re connected, just tell me what you need. I’ll figure out the rest.";
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone,
+      role: "assistant",
+      message: welcome,
+    });
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone,
+      role: "assistant",
+      message: onboarding,
+    });
+
+    await sendWhatsAppMessage(phone, welcome);
+    await sendWhatsAppMessage(phone, onboarding);
+
+    return true;
+  } catch (error) {
+    console.error("FETCH CUSTOMER ONBOARDING ERROR:", error);
+    return false;
   }
 }
 
@@ -6376,6 +6443,166 @@ function isLikelyMemoryQuestionForWhatsApp(text) {
   return hasQuestionWord && hasMemoryReference;
 }
 
+async function tryDirectCustomerMemoryCommand({
+  customer,
+  phone,
+  userMessage,
+} = {}) {
+  if (!customer?.id) return { handled: false };
+
+  const value = String(userMessage || "").trim();
+  const normalized = value.toLowerCase();
+
+  const forgetAll =
+    /^(?:please\s+)?(?:forget|delete|clear)\s+(?:everything|all(?:\s+my)?\s+(?:memory|memories|information|saved information))$/i.test(value) ||
+    /^(?:forget|delete|clear)\s+everything$/i.test(value);
+
+  const forgetMatch =
+    value.match(/^(?:please\s+)?(?:forget|delete|remove)\s+(?:that\s+)?(?:i\s+)?(?:told\s+you\s+)?(?:about\s+)?(.+)$/i);
+
+  const isMemoryCommand =
+    forgetAll ||
+    Boolean(forgetMatch) ||
+    /^(?:what do you remember about me|what do you remember|show my memories|show what you remember)$/i.test(value);
+
+  if (!isMemoryCommand) return { handled: false };
+
+  try {
+    if (forgetAll) {
+      await supabaseRequest(
+        `fetch_customer_memory?customer_id=eq.${encodeURIComponent(customer.id)}`,
+        {
+          method: "DELETE",
+          headers: { Prefer: "return=minimal" },
+        }
+      );
+
+      const reply = "Done. I’ve cleared the memories Fetch has saved for you.";
+      await saveMessage({
+        customerId: customer.id,
+        phone,
+        role: "user",
+        message: userMessage,
+      });
+      await saveMessage({
+        customerId: customer.id,
+        phone,
+        role: "assistant",
+        message: reply,
+      });
+      await sendWhatsAppMessage(phone, reply);
+      return { handled: true };
+    }
+
+    if (forgetMatch?.[1]) {
+      const phrase = forgetMatch[1]
+        .trim()
+        .replace(/[.!?]+$/, "");
+
+      const rows = await supabaseRequest(
+        `fetch_customer_memory?customer_id=eq.${encodeURIComponent(
+          customer.id
+        )}&order=updated_at.desc&limit=100`
+      );
+
+      const tokens = new Set(
+        normalizeMemoryTokensForWhatsApp(phrase)
+      );
+
+      let best = null;
+
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const rowTokens = new Set(
+          normalizeMemoryTokensForWhatsApp(
+            memoryRowTextForWhatsApp(row)
+          )
+        );
+        const overlap = [...tokens].filter((token) => rowTokens.has(token));
+
+        if (overlap.length && (!best || overlap.length > best.overlap.length)) {
+          best = { row, overlap };
+        }
+      }
+
+      if (!best || !best.row?.memory_key) {
+        const reply = "I couldn’t find a saved memory matching that. Nothing was deleted.";
+        await sendWhatsAppMessage(phone, reply);
+        return { handled: true };
+      }
+
+      await supabaseRequest(
+        `fetch_customer_memory?customer_id=eq.${encodeURIComponent(
+          customer.id
+        )}&memory_key=eq.${encodeURIComponent(best.row.memory_key)}`,
+        {
+          method: "DELETE",
+          headers: { Prefer: "return=minimal" },
+        }
+      );
+
+      const reply = `Done. I’ve forgotten “${best.row.memory_key.replace(/_/g, " ")}”.`;
+      await saveMessage({
+        customerId: customer.id,
+        phone,
+        role: "user",
+        message: userMessage,
+      });
+      await saveMessage({
+        customerId: customer.id,
+        phone,
+        role: "assistant",
+        message: reply,
+      });
+      await sendWhatsAppMessage(phone, reply);
+      return { handled: true };
+    }
+
+    const rows = await supabaseRequest(
+      `fetch_customer_memory?customer_id=eq.${encodeURIComponent(
+        customer.id
+      )}&or=(expires_at.is.null,expires_at.gt.${encodeURIComponent(
+        new Date().toISOString()
+      )})&order=updated_at.desc&limit=50`
+    );
+
+    const memories = (Array.isArray(rows) ? rows : []).map((row) => {
+      const value = row?.memory_value;
+      const display =
+        value?.value ??
+        value?.date ??
+        value?.subject ??
+        (typeof value === "string" ? value : null);
+
+      return display
+        ? `• ${String(row.memory_key).replace(/_/g, " ")}: ${String(display)}`
+        : `• ${String(row.memory_key).replace(/_/g, " ")}`;
+    });
+
+    const reply = memories.length
+      ? "Here’s what I remember:\n\n" + memories.join("\n")
+      : "I don’t have any saved memories for you yet.";
+
+    await saveMessage({
+      customerId: customer.id,
+      phone,
+      role: "user",
+      message: userMessage,
+    });
+    await saveMessage({
+      customerId: customer.id,
+      phone,
+      role: "assistant",
+      message: reply,
+    });
+    await sendWhatsAppMessage(phone, reply);
+
+    return { handled: true };
+  } catch (error) {
+    console.error("FETCH MEMORY COMMAND ERROR:", error);
+    return { handled: false };
+  }
+}
+
 async function tryDirectCustomerMemoryQuestion({
   customer,
   phone,
@@ -6759,10 +6986,36 @@ async function handleCustomerMessage({
       customer
     );
 
+  const welcomed =
+    await maybeSendCustomerWelcome({
+      customer,
+      phone: normalizedPhone,
+      userMessage,
+    });
+
+  if (welcomed) {
+    return;
+  }
+
   const latestOrder =
     await getLatestOrder(
       customer.id
     );
+
+  /*
+    User-controlled memory commands run before the universal agent so
+    "forget" can never be interpreted as a shopping or research request.
+  */
+  const memoryCommandResult =
+    await tryDirectCustomerMemoryCommand({
+      customer,
+      phone: normalizedPhone,
+      userMessage,
+    });
+
+  if (memoryCommandResult.handled) {
+    return;
+  }
 
   /*
     Deterministic durable-memory lookup comes first for memory questions.
@@ -12646,6 +12899,57 @@ async function recordWebhookEvent(
   }
 }
 
+async function readRawRequestBody(req) {
+  if (Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
+
+  if (typeof req.body === "string") {
+    return Buffer.from(req.body, "utf8");
+  }
+
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function verifyWhatsAppSignature(rawBody, signatureHeader) {
+  const appSecret = String(process.env.WHATSAPP_APP_SECRET || "").trim();
+
+  if (!appSecret) {
+    throw new Error("WHATSAPP_APP_SECRET is missing");
+  }
+
+  const signature = String(signatureHeader || "").trim();
+
+  if (!signature.startsWith("sha256=")) {
+    return false;
+  }
+
+  const provided = signature.slice("sha256=".length).trim();
+
+  if (!/^[a-f0-9]{64}$/i.test(provided)) {
+    return false;
+  }
+
+  const expected = crypto
+    .createHmac("sha256", appSecret)
+    .update(rawBody)
+    .digest("hex");
+
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const providedBuffer = Buffer.from(provided, "hex");
+
+  return (
+    expectedBuffer.length === providedBuffer.length &&
+    crypto.timingSafeEqual(expectedBuffer, providedBuffer)
+  );
+}
+
 /* =========================================================
    WHATSAPP MESSAGE EXTRACTION
 ========================================================= */
@@ -12785,43 +13089,35 @@ export default async function handler(
         );
     }
 
-    let body =
-      req.body;
+    /*
+      Verify Meta's HMAC signature before parsing or processing anything.
+      The app secret never leaves the server.
+    */
+    const rawBody = await readRawRequestBody(req);
+    const signatureHeader =
+      req.headers["x-hub-signature-256"] ||
+      req.headers["X-Hub-Signature-256"] ||
+      "";
 
-    if (
-      typeof body ===
-      "string"
-    ) {
-      body =
-        JSON.parse(body);
+    if (!verifyWhatsAppSignature(rawBody, signatureHeader)) {
+      console.warn("FETCH WHATSAPP SIGNATURE REJECTED");
+      return res.status(401).json({
+        success: false,
+        error: "invalid_signature",
+      });
     }
 
-    if (
-      !body ||
-      typeof body !==
-        "object"
-    ) {
-      const chunks = [];
+    let body = {};
 
-      for await (
-        const chunk of req
-      ) {
-        chunks.push(
-          Buffer.from(chunk)
-        );
+    if (rawBody.length) {
+      try {
+        body = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: "invalid_json",
+        });
       }
-
-      const raw =
-        Buffer.concat(
-          chunks
-        ).toString(
-          "utf8"
-        );
-
-      body =
-        raw
-          ? JSON.parse(raw)
-          : {};
     }
 
     console.log(
