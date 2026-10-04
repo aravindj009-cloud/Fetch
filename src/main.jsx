@@ -631,6 +631,10 @@ export default function App() {
   if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
   if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
 
+  return <FetchMainApp />;
+}
+
+function FetchMainApp() {
   const [showOnboarding, setShowOnboarding] = useState(() => {
     try { return localStorage.getItem("fetch_onboarding_v2_complete") !== "1"; } catch { return true; }
   });
