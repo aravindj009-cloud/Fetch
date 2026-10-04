@@ -923,3 +923,74 @@ aside > p {
 .contactSteps>div{display:flex;gap:20px;padding:22px 0;border-bottom:1px solid rgba(255,255,255,.1)}
 .contactSteps>b{font-size:10px;opacity:.4}.contactSteps span{display:flex;flex-direction:column;gap:5px}.contactSteps strong{font-size:15px}.contactSteps small{font-size:12px;color:rgba(245,242,237,.5);line-height:1.5}
 @media(max-width:600px){.directoryHeader{padding:0 18px}.directoryHeader nav button:not(.directoryBack){display:none}.directoryMain{width:calc(100vw - 36px);padding:60px 0 80px}.directoryMain h1{font-size:52px}.directoryConnector{gap:12px}.directoryConnectorState{font-size:9px;padding:7px 8px}.directoryConnectorIcon{width:44px;height:44px}}
+
+
+/* Conversational connector cards */
+.connectorConnectCard {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #d8ddd9;
+  border-radius: 16px;
+  background: #fafbf9;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.connectorConnectIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: #171918;
+  color: #fff;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.connectorConnectBody {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.connectorConnectBody strong { font-size: 13px; }
+.connectorConnectBody span { color: #686d68; font-size: 11px; }
+.connectorConnectBody small { color: #858a85; font-size: 10px; line-height: 1.35; }
+.connectorConnectButton {
+  border: 1px solid #111;
+  background: #111;
+  color: #fff;
+  border-radius: 999px;
+  padding: 9px 13px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.connectorConnectButton.connected {
+  background: #edf8f1;
+  color: #146b3a;
+  border-color: #9ad4b3;
+}
+.directoryConnector.connected {
+  border-color: #9ad4b3;
+  background: rgba(237,248,241,.35);
+}
+.directoryConnectorAction {
+  border: 1px solid #7c9888;
+  background: transparent;
+  color: #146b3a;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.directoryConnectorAction.connected {
+  background: #edf8f1;
+  border-color: #9ad4b3;
+}
+@media (max-width: 640px) {
+  .connectorConnectCard { align-items: flex-start; flex-wrap: wrap; }
+  .connectorConnectBody { min-width: calc(100% - 58px); }
+  .connectorConnectButton { margin-left: 56px; }
+}
