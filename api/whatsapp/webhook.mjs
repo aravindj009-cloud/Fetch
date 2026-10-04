@@ -2302,18 +2302,52 @@ async function maybeSendCustomerWelcome({
     /^(?:hi|hello|hey|helo|hii|hiii|namaste|namaskaram)(?:\s+fetch)?[!.?]*$/i.test(text) ||
     /^(?:hey|hi|hello)\s+fetch[!.?]*$/i.test(text);
 
-  if (!customer?.id || !phone || !isGreeting) {
+  if (!customer?.id || !phone) {
     return false;
   }
 
   try {
-    const alreadyConnected = Boolean(customer.whatsapp_connected);
-    const name = String(customer.name || "").trim();
-    const displayName = name ? ` ${name.split(/\s+/)[0]}` : "";
+    const preferences =
+      customer.connector_preferences &&
+      typeof customer.connector_preferences === "object"
+        ? customer.connector_preferences
+        : {};
 
-    if (alreadyConnected) {
+    const hasConnector =
+      ["swiggy", "instamart", "email"].some(
+        (id) => Boolean(preferences[id])
+      );
+
+    /*
+      Fetch's WhatsApp number is the contact layer.
+      The web connection page is the tool/connector layer.
+
+      A greeting always opens the connection experience, just like the
+      Instinct flow. A customer with no connected tools is gated from
+      normal agent execution until they choose at least one connector.
+    */
+    if (isGreeting || !hasConnector) {
+      const token = await createWhatsAppOnboardingToken(phone);
+      const onboardingUrl =
+        `https://tryfetch.in/api/fetch/context?token=${encodeURIComponent(token)}`;
+
+      const name = String(customer.name || "").trim();
+      const displayName = name
+        ? ` ${name.split(/\s+/)[0]}`
+        : "";
+
       const welcome =
-        `Hi${displayName}! 👋\n\nI'm Fetch, your personal assistant. I'm here to help with whatever you need.`;
+        isGreeting
+          ? `Hi${displayName}! 👋`
+          : "Before I can act for you, connect at least one service to Fetch.";
+
+      const connectMessage =
+        "I'm Fetch, your personal assistant.\n\n" +
+        "Connect the services you want me to use here:\n" +
+        onboardingUrl +
+        "\n\n" +
+        "Once connected, come back to WhatsApp and tell me what you need. I'll figure out the route.";
+
       await saveMessage({
         customerId: customer.id,
         orderId: null,
@@ -2321,61 +2355,40 @@ async function maybeSendCustomerWelcome({
         role: "assistant",
         message: welcome,
       });
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: null,
+        phone,
+        role: "assistant",
+        message: connectMessage,
+      });
+
       await sendWhatsAppMessage(phone, welcome);
+      await sendWhatsAppMessage(phone, connectMessage);
+
+      if (!customer.whatsapp_connected) {
+        await supabaseRequest(
+          `customers?id=eq.${encodeURIComponent(customer.id)}`,
+          {
+            method: "PATCH",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify({
+              whatsapp_onboarding_sent: true,
+            }),
+          }
+        );
+      }
+
       return true;
     }
 
-    const token = await createWhatsAppOnboardingToken(phone);
-    const onboardingUrl =
-      `https://tryfetch.in/api/fetch/context?token=${encodeURIComponent(token)}`;
-
-    const welcome =
-      `Hi${displayName}! 👋`;
-
-    const connectMessage =
-      "I'm Fetch, your personal assistant. I'm here to help you with whatever you need.\n\n" +
-      "Connect your WhatsApp here — it only takes a few seconds.\n" +
-      onboardingUrl +
-      "\n\n" +
-      "Once you're connected, just tell me what you need. I'll figure out the rest.";
-
-    await saveMessage({
-      customerId: customer.id,
-      orderId: null,
-      phone,
-      role: "assistant",
-      message: welcome,
-    });
-
-    await saveMessage({
-      customerId: customer.id,
-      orderId: null,
-      phone,
-      role: "assistant",
-      message: connectMessage,
-    });
-
-    await sendWhatsAppMessage(phone, welcome);
-    await sendWhatsAppMessage(phone, connectMessage);
-
-    await supabaseRequest(
-      `customers?id=eq.${encodeURIComponent(customer.id)}`,
-      {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({
-          whatsapp_onboarding_sent: true,
-        }),
-      }
-    );
-
-    return true;
+    return false;
   } catch (error) {
     console.error("FETCH CUSTOMER ONBOARDING ERROR:", error);
     return false;
   }
 }
-
 /* =========================================================
    SHOPPER JOBS
 ========================================================= */
