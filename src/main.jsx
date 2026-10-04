@@ -707,9 +707,9 @@ function FetchInvitePage({ token }) {
   const inviteToken = String(token || "fetch-beta-2026-beta");
   const [step, setStep] = useState("welcome");
 
-  const whatsappText = encodeURIComponent(
-    `FETCH BETA ${inviteToken}`
-  );
+  // Keep the WhatsApp handoff clean. Beta activation is handled by the
+  // Fetch WhatsApp welcome flow, so the invite token is never shown to the user.
+  const whatsappText = encodeURIComponent("Hi Fetch!");
   const whatsappUrl = `https://wa.me/919074559146?text=${whatsappText}`;
 
   return (
