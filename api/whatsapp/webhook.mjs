@@ -7094,6 +7094,23 @@ async function handleCustomerMessage({
       profileName
     );
 
+  // Clean WhatsApp beta handoff: the shareable public beta link opens
+  // WhatsApp with "Hi Fetch!" only. Activate the customer server-side so
+  // no invite token is exposed in the chat.
+  const cleanBetaGreeting =
+    /^(?:hi|hey|hello)\\s+fetch[!.?]*$/i.test(String(userMessage || "").trim());
+
+  if (cleanBetaGreeting) {
+    try {
+      await activateCustomerBeta({
+        phone: normalizedPhone,
+        inviteId: null,
+      });
+    } catch (error) {
+      console.error("FETCH CLEAN BETA ACTIVATION ERROR:", error);
+    }
+  }
+
   // Invite-only beta activation: a user arriving from a Fetch invite
   // can send the prefilled invite code back to this WhatsApp number.
   const betaInviteMatch = String(userMessage || "").match(/(?:FETCH[-_ ]?INVITE|FETCH[-_ ]?BETA)[: ]+([A-Za-z0-9_-]{16,})/i);
