@@ -11,6 +11,22 @@
     {
       "source": "/ops/",
       "destination": "/admin.html"
+    },
+    {
+      "source": "/connectors",
+      "destination": "/"
+    },
+    {
+      "source": "/connectors/",
+      "destination": "/"
+    },
+    {
+      "source": "/contact",
+      "destination": "/"
+    },
+    {
+      "source": "/contact/",
+      "destination": "/"
     }
   ]
 }
