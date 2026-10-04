@@ -712,21 +712,24 @@ function FetchMainApp() {
     const oauthProvider = params.get("uber");
     const oauthConversation = params.get("conversation_id");
     if (oauthProvider === "connected" && oauthConversation === conversationRef.current) {
-      fetch(`/api/fetch/connector-status?conversation_id=${encodeURIComponent(conversationRef.current)}&provider=uber`, { cache: "no-store" })
-        .then((response) => response.json())
-        .then((data) => {
-          if (data?.connected) {
-            const next = saveConnectorState("uber", "connected");
-            setConnectionStates(next);
-            const pending = JSON.parse(localStorage.getItem(PENDING_CONNECTOR_TASK_KEY) || "null");
-            if (pending?.connectorId === "uber") {
-              setPendingConnectorTask(pending);
-              window.setTimeout(() => send(pending.text, { resume: true, suppressUserMessage: true }), 300);
-            }
+      const next = saveConnectorState("uber", "connected");
+      setConnectionStates(next);
+      const pending = JSON.parse(localStorage.getItem(PENDING_CONNECTOR_TASK_KEY) || "null");
+      if (pending?.connectorId === "uber") {
+        setPendingConnectorTask(pending);
+        setMessages((current) => [
+          ...current,
+          {
+            id: makeId(),
+            role: "assistant",
+            text: "Uber is connected. I’m continuing your original request now.",
+            meta: { status: "connector_connected", network: "Uber" }
           }
-        })
-        .catch((error) => console.error("FETCH UBER CONNECTION STATUS ERROR", error))
-        .finally(() => window.history.replaceState({}, "", "/"));
+        ]);
+        window.setTimeout(() => send(pending.text, { resume: true, suppressUserMessage: true }), 300);
+      }
+      localStorage.removeItem(PENDING_CONNECTOR_TASK_KEY);
+      window.history.replaceState({}, "", "/");
     }
     const syncConnectorState = () => setConnectionStates(getStoredConnectorStates());
     const onConnectorConnected = (event) => {
