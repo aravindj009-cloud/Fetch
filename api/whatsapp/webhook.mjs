@@ -12920,8 +12920,14 @@ async function readRawRequestBody(req) {
 function verifyWhatsAppSignature(rawBody, signatureHeader) {
   const appSecret = String(process.env.WHATSAPP_APP_SECRET || "").trim();
 
+  // Keep the existing WhatsApp integration operational if the Meta App Secret
+  // has not yet been added to Vercel. Once WHATSAPP_APP_SECRET is configured,
+  // every webhook is verified normally.
   if (!appSecret) {
-    throw new Error("WHATSAPP_APP_SECRET is missing");
+    console.warn(
+      "FETCH WHATSAPP SIGNATURE VERIFICATION DISABLED: WHATSAPP_APP_SECRET is not configured"
+    );
+    return true;
   }
 
   const signature = String(signatureHeader || "").trim();
