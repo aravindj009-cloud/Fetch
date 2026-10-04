@@ -102,7 +102,7 @@ function FetchDirectoryPage({ section = "connectors" }) {
     if (connector.id === "uber") {
       const conversationId = localStorage.getItem("fetch_conversation_id") || `web:${makeId()}`;
       localStorage.setItem("fetch_conversation_id", conversationId);
-      window.location.assign(`/api/fetch/uber/connect?conversation_id=${encodeURIComponent(conversationId)}`);
+      window.location.assign(`/api/fetch/context.mjs?uber_connect=1&conversation_id=${encodeURIComponent(conversationId)}`);
       return;
     }
     const next = saveConnectorState(connector.id, "connected");
@@ -1505,7 +1505,7 @@ function FetchMainApp() {
                             }));
                             setPendingConnectorTask({ text: message.text, connectorId, createdAt: Date.now() });
                             setOauthConnecting(connectorId);
-                            window.location.assign(`/api/fetch/uber/connect?conversation_id=${encodeURIComponent(conversationRef.current)}`);
+                            window.location.assign(`/api/fetch/context.mjs?uber_connect=1&conversation_id=${encodeURIComponent(conversationRef.current)}`);
                             return;
                           }
                           saveConnectorState(connectorId, "connected");
