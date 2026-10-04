@@ -6995,25 +6995,79 @@ async function tryUniversalFetchCustomerRequest({
     }
 
     /*
-      If V9 needs clarification, allow the mature customer engine to
-      continue handling the request. This is the fail-open behavior.
+      SINGLE AGENT RULE:
+      For every non-physical request, the Universal Agent owns the response.
+      Never hand a normal conversation back to the legacy shopping classifier.
+      That legacy fallback was the source of cross-intent failures such as
+      weather -> "I can't access live weather" and travel -> delivery address.
     */
+    const agentReply =
+      result?.execution?.message ||
+      result?.execution?.result ||
+      result?.task?.result ||
+      result?.result ||
+      null;
+
+    if (agentReply) {
+      const reply = String(agentReply).trim();
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "user",
+        message: userMessage,
+      });
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "assistant",
+        message: reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return {
+        handled: true,
+        result,
+      };
+    }
+
+    /*
+      The agent did not produce an answer. Keep ownership with Fetch rather
+      than allowing the legacy shopping engine to reinterpret the request.
+    */
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "I’m working on that, but I couldn’t complete the request right now. Please try again in a moment."
+    );
+
     return {
-      handled: false,
+      handled: true,
       result,
     };
   } catch (error) {
     console.error(
-      "FETCH V9 WHATSAPP BRIDGE ERROR:",
+      "FETCH UNIVERSAL AGENT ERROR:",
       error
     );
 
     /*
-      V9 must never take down the existing WhatsApp MVP. A bridge error
-      simply hands the request back to the existing customer engine.
+      Critical boundary: normal conversational requests never fall back to
+      the legacy shopping classifier. This keeps Fetch behaving as one agent.
     */
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "I’m having trouble completing that right now. Please try again in a moment."
+    );
+
     return {
-      handled: false,
+      handled: true,
       result: null,
     };
   }
