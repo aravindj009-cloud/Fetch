@@ -817,3 +817,75 @@ aside > p {
     font-size: 13.5px;
   }
 }
+
+
+/* Fetch onboarding — first-run experience */
+.fetchOnboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(10, 10, 10, .78);
+  backdrop-filter: blur(18px);
+}
+.fetchOnboardingCard {
+  width: min(680px, 100%);
+  min-height: min(760px, calc(100vh - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: #1d1b1a;
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 28px;
+  box-shadow: 0 30px 100px rgba(0,0,0,.45);
+  padding: 26px 30px 24px;
+  color: #f5f2ed;
+  display: flex;
+  flex-direction: column;
+}
+.fetchOnboardingTop { display:flex; justify-content:space-between; align-items:center; }
+.fetchOnboardingBrand { font-family: Georgia, serif; font-size: 28px; letter-spacing:-1px; }
+.fetchOnboardingBrand span { color:#78d7b1; }
+.fetchOnboardingStep { font-size:11px; letter-spacing:.12em; opacity:.5; }
+.fetchOnboardingScreen { flex:1; display:flex; flex-direction:column; justify-content:center; padding:40px 18px 24px; }
+.fetchOnboardingScreen > small { font-size:11px; letter-spacing:.16em; opacity:.55; margin-bottom:18px; }
+.fetchOnboardingWelcome { text-align:center; align-items:center; }
+.fetchOrb { width:72px; height:72px; display:grid; place-items:center; border-radius:50%; background:#f5f2ed; color:#171515; font-family:Georgia,serif; font-size:34px; margin-bottom:26px; }
+.fetchOnboardingScreen h1, .fetchOnboardingScreen h2 { font-family: Georgia, serif; font-weight:400; letter-spacing:-1.8px; margin:0 0 18px; }
+.fetchOnboardingScreen h1 { font-size:clamp(38px, 7vw, 60px); line-height:1.03; }
+.fetchOnboardingScreen h2 { font-size:clamp(36px, 6vw, 52px); line-height:1.02; }
+.fetchOnboardingScreen h1 em, .fetchOnboardingScreen h2 em { font-style:normal; opacity:.52; }
+.fetchOnboardingScreen p { max-width:560px; font-size:16px; line-height:1.65; color:rgba(245,242,237,.68); margin:0 auto 28px; }
+.fetchOnboardingPrimary { width:100%; border:0; border-radius:16px; padding:17px 20px; background:#f5f2ed; color:#181616; font-weight:700; font-size:15px; cursor:pointer; margin-top:auto; }
+.fetchOnboardingPrimary span { float:right; font-size:20px; line-height:16px; }
+.fetchOnboardingTrust, .fetchOnboardingHint { text-align:center; font-size:12px; color:rgba(245,242,237,.42); margin-top:14px; }
+.fetchPromiseList { border-top:1px solid rgba(255,255,255,.10); margin:8px 0 30px; }
+.fetchPromiseList > div { display:flex; gap:20px; padding:20px 0; border-bottom:1px solid rgba(255,255,255,.10); }
+.fetchPromiseList b { font-size:11px; opacity:.4; padding-top:3px; }
+.fetchPromiseList span { display:flex; flex-direction:column; gap:5px; }
+.fetchPromiseList strong { font-size:16px; }
+.fetchPromiseList small { font-size:13px; line-height:1.5; color:rgba(245,242,237,.55); }
+.fetchConnectorPreview { border-top:1px solid rgba(255,255,255,.10); margin:10px 0 16px; }
+.fetchConnectorRow { display:flex; align-items:center; gap:14px; padding:16px 0; border-bottom:1px solid rgba(255,255,255,.10); }
+.fetchConnectorIcon { width:42px; height:42px; border-radius:12px; display:grid; place-items:center; background:#2a2827; font-weight:800; }
+.fetchConnectorCopy { flex:1; display:flex; flex-direction:column; gap:3px; }
+.fetchConnectorCopy strong { font-size:14px; }
+.fetchConnectorCopy span { font-size:12px; color:rgba(245,242,237,.48); }
+.fetchConnectorRow button { border:1px solid rgba(255,255,255,.15); background:#252321; color:#f5f2ed; border-radius:10px; padding:9px 13px; cursor:pointer; font-size:12px; }
+.fetchConnectorRow button.isConnected { background:#dff7eb; color:#15362a; border-color:#dff7eb; }
+.fetchStarterGrid { display:grid; gap:10px; margin:10px 0 22px; }
+.fetchStarterGrid button { text-align:left; display:flex; align-items:center; gap:12px; border:1px solid rgba(255,255,255,.12); background:#252321; color:#f5f2ed; border-radius:14px; padding:16px; cursor:pointer; font-size:14px; }
+.fetchStarterGrid button:hover { background:#302d2b; }
+.fetchStarterGrid button span { opacity:.5; }
+.fetchOnboardingSkip { border:0; background:none; color:rgba(245,242,237,.55); padding:10px; cursor:pointer; font-size:13px; }
+.fetchOnboardingProgress { display:flex; gap:6px; justify-content:center; padding-top:12px; }
+.fetchOnboardingProgress i { width:24px; height:3px; border-radius:10px; background:rgba(255,255,255,.14); }
+.fetchOnboardingProgress i.active { background:#78d7b1; }
+@media (max-width: 600px) {
+  .fetchOnboarding { padding:0; }
+  .fetchOnboardingCard { min-height:100vh; max-height:none; border-radius:0; border:0; padding:22px 22px 18px; }
+  .fetchOnboardingScreen { padding:30px 4px 22px; }
+  .fetchOnboardingScreen h1 { font-size:40px; }
+  .fetchOnboardingScreen h2 { font-size:38px; }
+}
