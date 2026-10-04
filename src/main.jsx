@@ -65,23 +65,7 @@ const fetchConnectors = [
   },
 ];
 
-const CONNECTOR_STATE_KEY = "fetch_connector_states_v1";
 const PENDING_CONNECTOR_TASK_KEY = "fetch_pending_connector_task_v1";
-
-function getStoredConnectorStates() {
-  try {
-    const value = JSON.parse(localStorage.getItem(CONNECTOR_STATE_KEY) || "{}");
-    return value && typeof value === "object" ? value : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveConnectorState(id, status) {
-  const next = { ...getStoredConnectorStates(), [id]: status };
-  localStorage.setItem(CONNECTOR_STATE_KEY, JSON.stringify(next));
-  return next;
-}
 
 function getConnectorForRequest(text) {
   return fetchConnectors.find((connector) =>
@@ -96,8 +80,6 @@ function navigateFetch(path) {
 
 function FetchDirectoryPage({ section = "connectors" }) {
   const isContact = section === "contact";
-  const [connectionStates, setConnectionStates] = useState(() => getStoredConnectorStates());
-
   function handleConnectorConnect(connector) {
     if (connector.id === "uber") {
       const conversationId = localStorage.getItem("fetch_conversation_id") || `web:${makeId()}`;
@@ -105,9 +87,11 @@ function FetchDirectoryPage({ section = "connectors" }) {
       window.location.assign(`/api/fetch/context.mjs?uber_connect=1&conversation_id=${encodeURIComponent(conversationId)}`);
       return;
     }
-    const next = saveConnectorState(connector.id, "connected");
-    setConnectionStates(next);
-    window.dispatchEvent(new CustomEvent("fetch-connector-connected", { detail: { connectorId: connector.id } }));
+
+    // Swiggy / Instamart / Email are intentionally not marked "connected"
+    // until their real provider authorization is completed.
+    const target = `/connectors/${encodeURIComponent(connector.id)}`;
+    navigateFetch(target);
   }
   return (
     <div className="fetchDirectory">
@@ -146,8 +130,8 @@ function FetchDirectoryPage({ section = "connectors" }) {
             <p className="directoryLead">You don't have to decide which service to use. Fetch understands the task and selects the best available resource behind the scenes.</p>
             <div className="connectorDirectoryList">
               {fetchConnectors.map((connector) => {
-                const connected = connectionStates[connector.id] === "connected";
-                const state = connector.state || (connected ? "Connected" : "Not connected");
+                const connected = false;
+                const state = connector.state || "Not connected";
                 return (
                   <article className={`directoryConnector ${connected ? "connected" : ""}`} key={connector.id}>
                     <div className="directoryConnectorIcon">{connector.icon}</div>
@@ -161,7 +145,7 @@ function FetchDirectoryPage({ section = "connectors" }) {
                         className={`directoryConnectorAction ${connected ? "connected" : ""}`}
                         onClick={() => handleConnectorConnect(connector)}
                       >
-                        {connected ? "Connected ✓" : "Connect"}
+                        {connector.id === "uber" ? "Connect" : "Connect"}
                       </button>
                     ) : (
                       <span className="directoryConnectorState">{state}</span>
