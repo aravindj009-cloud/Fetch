@@ -889,3 +889,37 @@ aside > p {
   .fetchOnboardingScreen h1 { font-size:40px; }
   .fetchOnboardingScreen h2 { font-size:38px; }
 }
+
+/* Fetch connector + contact directory */
+.fetchDirectory{min-height:100vh;background:#1d1b1a;color:#f5f2ed;font-family:"DM Sans",system-ui,sans-serif}
+.directoryHeader{height:76px;padding:0 6vw;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.1);position:sticky;top:0;background:rgba(29,27,26,.92);backdrop-filter:blur(16px);z-index:5}
+.directoryBrand{border:0;background:none;color:#f5f2ed;font:400 29px Georgia,serif;letter-spacing:-1px;cursor:pointer}
+.directoryBrand span{color:#78d7b1}
+.directoryHeader nav{display:flex;gap:8px;align-items:center}
+.directoryHeader nav button{border:1px solid rgba(255,255,255,.12);background:transparent;color:rgba(245,242,237,.7);border-radius:999px;padding:10px 14px;font-size:11px;cursor:pointer}
+.directoryHeader nav button.active{background:#f5f2ed;color:#171515}
+.directoryHeader nav .directoryBack{border-color:#78d7b1;color:#78d7b1}
+.directoryMain{width:min(900px,88vw);margin:auto;padding:90px 0 120px}
+.directoryEyebrow{font-size:10px;letter-spacing:.18em;font-weight:700;color:rgba(245,242,237,.45)}
+.directoryMain h1{font:400 clamp(50px,8vw,86px)/.98 Georgia,serif;letter-spacing:-4px;margin:18px 0}
+.directoryMain h1 em{font-style:normal;color:rgba(245,242,237,.42)}
+.directoryLead{max-width:650px;color:rgba(245,242,237,.62);font-size:17px;line-height:1.65;margin:0 0 48px}
+.connectorDirectoryList{border-top:1px solid rgba(255,255,255,.1)}
+.directoryConnector{display:flex;align-items:center;gap:18px;padding:22px 0;border-bottom:1px solid rgba(255,255,255,.1)}
+.directoryConnectorIcon,.contactIcon{width:52px;height:52px;border-radius:15px;display:grid;place-items:center;background:#2a2827;color:#f5f2ed;font-weight:800;font-size:20px;flex-shrink:0}
+.directoryConnectorCopy{flex:1;display:flex;flex-direction:column;gap:5px}
+.directoryConnectorCopy strong{font-size:16px}
+.directoryConnectorCopy span{font-size:13px;color:rgba(245,242,237,.48)}
+.directoryConnectorState{font-size:10px;color:#78d7b1;border:1px solid rgba(120,215,177,.3);padding:8px 11px;border-radius:999px}
+.directoryCallout{display:flex;gap:18px;margin-top:42px;padding:25px;border:1px solid rgba(255,255,255,.1);border-radius:20px;background:#252321}
+.directoryCallout>span{width:42px;height:42px;border-radius:50%;background:#f5f2ed;color:#171515;display:grid;place-items:center;font:700 20px Georgia}
+.directoryCallout strong{font-size:15px}.directoryCallout p{margin:7px 0 0;color:rgba(245,242,237,.5);font-size:13px;line-height:1.5}
+.contactCards{display:grid;gap:12px}
+.contactCard{display:flex;align-items:center;gap:16px;padding:20px;border:1px solid rgba(255,255,255,.1);border-radius:18px;text-decoration:none;color:#f5f2ed;background:#252321}
+.contactCard.primary{border-color:rgba(120,215,177,.35)}
+.contactCard>div{flex:1;display:flex;flex-direction:column;gap:4px}
+.contactCard strong{font-size:16px}.contactCard small{font-size:12px;color:rgba(245,242,237,.48)}.contactCard>b{font-size:20px;font-weight:400;color:#78d7b1}
+.directorySection{margin-top:75px}.contactSteps{border-top:1px solid rgba(255,255,255,.1);margin-top:20px}
+.contactSteps>div{display:flex;gap:20px;padding:22px 0;border-bottom:1px solid rgba(255,255,255,.1)}
+.contactSteps>b{font-size:10px;opacity:.4}.contactSteps span{display:flex;flex-direction:column;gap:5px}.contactSteps strong{font-size:15px}.contactSteps small{font-size:12px;color:rgba(245,242,237,.5);line-height:1.5}
+@media(max-width:600px){.directoryHeader{padding:0 18px}.directoryHeader nav button:not(.directoryBack){display:none}.directoryMain{width:calc(100vw - 36px);padding:60px 0 80px}.directoryMain h1{font-size:52px}.directoryConnector{gap:12px}.directoryConnectorState{font-size:9px;padding:7px 8px}.directoryConnectorIcon{width:44px;height:44px}}
