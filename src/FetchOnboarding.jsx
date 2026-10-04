@@ -10,7 +10,7 @@ const connectorOptions = [
 
 export default function FetchOnboarding({ onComplete, onStarter }) {
   const [step, setStep] = useState(0);
-  const [connected, setConnected] = useState({});
+  const [connected] = useState({});
 
   useEffect(() => {
     try {
@@ -73,10 +73,11 @@ export default function FetchOnboarding({ onComplete, onStarter }) {
         {step === 2 && (
           <div className="fetchOnboardingScreen">
             <small>YOUR TOOLS</small>
-            <h2>Connect what you<br /><em>already use.</em></h2>
+            <h2>Connect only<br /><em>when you need to.</em></h2>
             <p>
-              You don't need to connect everything now. Fetch asks only when a
-              task needs a service.
+              You don't need to connect anything right now. Tell Fetch what you
+              want done first. If a task needs a service, Fetch will ask you to
+              connect it at that moment.
             </p>
             <div className="fetchConnectorPreview">
               {connectorOptions.map((item) => (
@@ -86,16 +87,11 @@ export default function FetchOnboarding({ onComplete, onStarter }) {
                     <strong>{item.name}</strong>
                     <span>{item.detail}</span>
                   </div>
-                  <button
-                    className={connected[item.id] ? "isConnected" : ""}
-                    onClick={() => setConnected((current) => ({ ...current, [item.id]: !current[item.id] }))}
-                  >
-                    {connected[item.id] ? "Connected" : "Later"}
-                  </button>
+                  <span className="fetchConnectorAvailable">Available when needed</span>
                 </div>
               ))}
             </div>
-            <div className="fetchOnboardingHint">You can manage connectors any time from Fetch.</div>
+            <div className="fetchOnboardingHint">One-time connection · You stay in control.</div>
             <button className="fetchOnboardingPrimary" onClick={() => setStep(3)}>
               Continue <span>→</span>
             </button>
