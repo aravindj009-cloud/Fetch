@@ -11,13 +11,83 @@ const starters = [
 ];
 
 const fetchConnectors = [
-  { id: "instamart", name: "Instamart", detail: "Groceries & everyday essentials", icon: "I", state: "Available when needed" },
-  { id: "swiggy", name: "Swiggy", detail: "Food, groceries & local delivery", icon: "S", state: "Available when needed" },
-  { id: "uber", name: "Uber", detail: "Rides & mobility", icon: "U", state: "Available when needed" },
-  { id: "rapido", name: "Rapido", detail: "Bike, auto & cab rides", icon: "R", state: "Available when needed" },
-  { id: "partners", name: "Fetch Partners", detail: "Local stores & service providers", icon: "F", state: "Built into Fetch" },
-  { id: "shopper", name: "Human Shopper", detail: "Fallback when no digital route can fulfil the task", icon: "H", state: "Fallback" },
+  {
+    id: "instamart",
+    name: "Instamart",
+    detail: "Groceries & everyday essentials",
+    icon: "I",
+    capabilities: ["search_products", "check_availability", "build_basket"],
+    trigger: /\\b(groceries|grocery|milk|vegetables|snacks|essentials|kitkat|munch|chicken|food items?)\\b/i,
+    connectLabel: "Connect Instamart",
+  },
+  {
+    id: "swiggy",
+    name: "Swiggy",
+    detail: "Food, groceries & local delivery",
+    icon: "S",
+    capabilities: ["search_food", "search_groceries", "build_order"],
+    trigger: /\\b(order food|restaurant food|biryani|pizza|burger|meals?|swiggy)\\b/i,
+    connectLabel: "Connect Swiggy",
+  },
+  {
+    id: "uber",
+    name: "Uber",
+    detail: "Rides & mobility",
+    icon: "U",
+    capabilities: ["request_ride", "estimate_fare", "track_ride"],
+    trigger: /\\b(uber|cab|taxi|ride|airport pickup|pick me up|drop me)\\b/i,
+    connectLabel: "Connect Uber",
+  },
+  {
+    id: "rapido",
+    name: "Rapido",
+    detail: "Bike, auto & cab rides",
+    icon: "R",
+    capabilities: ["request_ride", "estimate_fare", "track_ride"],
+    trigger: /\\b(rapido|bike taxi|auto ride)\\b/i,
+    connectLabel: "Connect Rapido",
+  },
+  {
+    id: "partners",
+    name: "Fetch Partners",
+    detail: "Local stores & service providers",
+    icon: "F",
+    capabilities: ["local_fulfilment", "service_request"],
+    state: "Built into Fetch",
+  },
+  {
+    id: "shopper",
+    name: "Human Shopper",
+    detail: "Fallback when no digital route can fulfil the task",
+    icon: "H",
+    capabilities: ["physical_fulfilment"],
+    state: "Fallback",
+  },
 ];
+
+const CONNECTOR_STATE_KEY = "fetch_connector_states_v1";
+const PENDING_CONNECTOR_TASK_KEY = "fetch_pending_connector_task_v1";
+
+function getStoredConnectorStates() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CONNECTOR_STATE_KEY) || "{}");
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveConnectorState(id, status) {
+  const next = { ...getStoredConnectorStates(), [id]: status };
+  localStorage.setItem(CONNECTOR_STATE_KEY, JSON.stringify(next));
+  return next;
+}
+
+function getConnectorForRequest(text) {
+  return fetchConnectors.find((connector) =>
+    connector.trigger instanceof RegExp && connector.trigger.test(String(text || ""))
+  ) || null;
+}
 
 function navigateFetch(path) {
   window.history.pushState({}, "", path);
@@ -26,6 +96,13 @@ function navigateFetch(path) {
 
 function FetchDirectoryPage({ section = "connectors" }) {
   const isContact = section === "contact";
+  const [connectionStates, setConnectionStates] = useState(() => getStoredConnectorStates());
+
+  function handleConnectorConnect(connector) {
+    const next = saveConnectorState(connector.id, "connected");
+    setConnectionStates(next);
+    window.dispatchEvent(new CustomEvent("fetch-connector-connected", { detail: { connectorId: connector.id } }));
+  }
   return (
     <div className="fetchDirectory">
       <header className="directoryHeader">
@@ -62,13 +139,30 @@ function FetchDirectoryPage({ section = "connectors" }) {
             <h1>Tools Fetch <em>can use.</em></h1>
             <p className="directoryLead">You don't have to decide which service to use. Fetch understands the task and selects the best available resource behind the scenes.</p>
             <div className="connectorDirectoryList">
-              {fetchConnectors.map((connector) => (
-                <article className="directoryConnector" key={connector.id}>
-                  <div className="directoryConnectorIcon">{connector.icon}</div>
-                  <div className="directoryConnectorCopy"><strong>{connector.name}</strong><span>{connector.detail}</span></div>
-                  <span className="directoryConnectorState">{connector.state}</span>
-                </article>
-              ))}
+              {fetchConnectors.map((connector) => {
+                const connected = connectionStates[connector.id] === "connected";
+                const state = connector.state || (connected ? "Connected" : "Not connected");
+                return (
+                  <article className={`directoryConnector ${connected ? "connected" : ""}`} key={connector.id}>
+                    <div className="directoryConnectorIcon">{connector.icon}</div>
+                    <div className="directoryConnectorCopy">
+                      <strong>{connector.name}</strong>
+                      <span>{connector.detail}</span>
+                    </div>
+                    {connector.connectLabel ? (
+                      <button
+                        type="button"
+                        className={`directoryConnectorAction ${connected ? "connected" : ""}`}
+                        onClick={() => handleConnectorConnect(connector)}
+                      >
+                        {connected ? "Connected ✓" : "Connect"}
+                      </button>
+                    ) : (
+                      <span className="directoryConnectorState">{state}</span>
+                    )}
+                  </article>
+                );
+              })}
             </div>
             <div className="directoryCallout"><span>F</span><div><strong>One assistant. Many execution paths.</strong><p>Ask for the outcome. Fetch coordinates the tools, stores, services and people required to get it done.</p></div></div>
           </>
@@ -374,6 +468,30 @@ function renderInline(text, keyPrefix = "inline") {
   });
 }
 
+function ConnectorConnectCard({ connector, connected, onConnect }) {
+  if (!connector) return null;
+  return (
+    <div className="connectorConnectCard">
+      <div className="connectorConnectIcon">{connector.icon}</div>
+      <div className="connectorConnectBody">
+        <strong>{connector.name}</strong>
+        <span>{connector.detail}</span>
+        <small>
+          {connected ? "Connected to Fetch" : "Fetch needs this capability to continue the task."}
+        </small>
+      </div>
+      <button
+        type="button"
+        className={`connectorConnectButton ${connected ? "connected" : ""}`}
+        onClick={onConnect}
+        disabled={connected}
+      >
+        {connected ? "Connected ✓" : "Connect"}
+      </button>
+    </div>
+  );
+}
+
 function FormattedAssistantMessage({ text }) {
   const normalized = normalizeAssistantText(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   if (!normalized) return null;
@@ -528,6 +646,8 @@ export default function App() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
+  const [connectionStates, setConnectionStates] = useState(() => getStoredConnectorStates());
+  const [pendingConnectorTask, setPendingConnectorTask] = useState(null);
   const [task, setTask] = useState(null);
   const [agentTasks, setAgentTasks] = useState([]);
   const [agentTaskId, setAgentTaskId] = useState(null);
@@ -575,6 +695,24 @@ export default function App() {
       console.error("FETCH TASK ERROR", error);
     }
   }
+
+  useEffect(() => {
+    const syncConnectorState = () => setConnectionStates(getStoredConnectorStates());
+    const onConnectorConnected = (event) => {
+      const next = saveConnectorState(event?.detail?.connectorId, "connected");
+      setConnectionStates(next);
+      setPendingConnectorTask((pending) => {
+        if (!pending || pending.connectorId !== event?.detail?.connectorId) return pending;
+        return pending;
+      });
+    };
+    window.addEventListener("storage", syncConnectorState);
+    window.addEventListener("fetch-connector-connected", onConnectorConnected);
+    return () => {
+      window.removeEventListener("storage", syncConnectorState);
+      window.removeEventListener("fetch-connector-connected", onConnectorConnected);
+    };
+  }, []);
 
   useEffect(() => {
     refreshAgentTasks();
@@ -628,10 +766,62 @@ export default function App() {
     await openAgentTask(selectedAgentTask.id);
   }
 
-  async function send(rawText) {
+  async function send(rawText, options = {}) {
     const text = String(rawText || "").trim();
+    const resume = Boolean(options.resume);
+    const suppressUserMessage = Boolean(options.suppressUserMessage);
 
     if (!text || busy) {
+      return;
+    }
+
+    const requiredConnector = !resume ? getConnectorForRequest(text) : null;
+    const connectorConnected = requiredConnector
+      ? connectionStates[requiredConnector.id] === "connected"
+      : true;
+
+    if (requiredConnector && !connectorConnected) {
+      if (!suppressUserMessage) {
+        setMessages((current) => [
+          ...current,
+          { id: makeId(), role: "user", text, meta: null }
+        ]);
+      }
+
+      localStorage.setItem(PENDING_CONNECTOR_TASK_KEY, JSON.stringify({
+        text,
+        connectorId: requiredConnector.id,
+        createdAt: Date.now()
+      }));
+      setPendingConnectorTask({
+        text,
+        connectorId: requiredConnector.id,
+        createdAt: Date.now()
+      });
+
+      setInput("");
+      setTask({
+        text,
+        stage: "connector needed",
+        status: "awaiting_connector",
+        network: requiredConnector.name
+      });
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: makeId(),
+          role: "assistant",
+          text: requiredConnector.id === "instamart"
+            ? "I can get that for you through Instamart. Connect it once and I’ll continue automatically."
+            : `I can handle that through ${requiredConnector.name}. Connect it once and I’ll continue automatically.`,
+          meta: {
+            status: "awaiting_connector",
+            network: requiredConnector.name,
+            connectorId: requiredConnector.id
+          }
+        }
+      ]);
       return;
     }
 
@@ -1262,6 +1452,33 @@ export default function App() {
                       <FormattedAssistantMessage text={message.text} />
                     ) : (
                       message.text
+                    )}
+
+                    {message.meta?.status === "awaiting_connector" && message.meta?.connectorId && (
+                      <ConnectorConnectCard
+                        connector={fetchConnectors.find((item) => item.id === message.meta.connectorId)}
+                        connected={connectionStates[message.meta.connectorId] === "connected"}
+                        pendingTask={pendingConnectorTask}
+                        onConnect={() => {
+                          const connectorId = message.meta.connectorId;
+                          const connector = fetchConnectors.find((item) => item.id === connectorId);
+                          if (!connector) return;
+                          saveConnectorState(connectorId, "connected");
+                          setConnectionStates(getStoredConnectorStates());
+                          setPendingConnectorTask(null);
+                          localStorage.removeItem(PENDING_CONNECTOR_TASK_KEY);
+                          setMessages((current) => [
+                            ...current,
+                            {
+                              id: makeId(),
+                              role: "assistant",
+                              text: `${connector.name} is connected. I’m continuing your original request now.`,
+                              meta: { status: "connector_connected", network: connector.name }
+                            }
+                          ]);
+                          window.setTimeout(() => send(message.text, { resume: true, suppressUserMessage: true }), 250);
+                        }}
+                      />
                     )}
 
                     {(
