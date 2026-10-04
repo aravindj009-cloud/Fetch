@@ -17,7 +17,7 @@ const fetchConnectors = [
     detail: "Groceries & everyday essentials",
     icon: "I",
     capabilities: ["search_products", "check_availability", "build_basket"],
-    trigger: /\\b(groceries|grocery|milk|vegetables|snacks|essentials|kitkat|munch|chicken|food items?)\\b/i,
+    trigger: /\b(groceries|grocery|milk|vegetables|snacks|essentials|kitkat|munch|chicken|food items?)\b/i,
     connectLabel: "Connect Instamart",
   },
   {
@@ -26,7 +26,7 @@ const fetchConnectors = [
     detail: "Food, groceries & local delivery",
     icon: "S",
     capabilities: ["search_food", "search_groceries", "build_order"],
-    trigger: /\\b(order food|restaurant food|biryani|pizza|burger|meals?|swiggy)\\b/i,
+    trigger: /\b(order food|restaurant food|biryani|pizza|burger|meals?|swiggy)\b/i,
     connectLabel: "Connect Swiggy",
   },
   {
@@ -35,7 +35,7 @@ const fetchConnectors = [
     detail: "Rides & mobility",
     icon: "U",
     capabilities: ["request_ride", "estimate_fare", "track_ride"],
-    trigger: /\\b(uber|cab|taxi|ride|airport pickup|pick me up|drop me)\\b/i,
+    trigger: /\b(uber|cab|taxi|ride|airport pickup|pick me up|drop me)\b/i,
     connectLabel: "Connect Uber",
   },
   {
@@ -44,7 +44,7 @@ const fetchConnectors = [
     detail: "Bike, auto & cab rides",
     icon: "R",
     capabilities: ["request_ride", "estimate_fare", "track_ride"],
-    trigger: /\\b(rapido|bike taxi|auto ride)\\b/i,
+    trigger: /\b(rapido|bike taxi|auto ride)\b/i,
     connectLabel: "Connect Rapido",
   },
   {
