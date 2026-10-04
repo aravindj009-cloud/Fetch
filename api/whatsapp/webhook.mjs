@@ -2240,6 +2240,65 @@ async function saveMessage({
 }
 
 /* =========================================================
+   CUSTOMER ONBOARDING
+========================================================= */
+
+async function maybeSendCustomerWelcome({
+  customer,
+  phone,
+  userMessage,
+}) {
+  const text = String(userMessage || "").trim();
+  if (!customer?.id || !phone || !/^(hi|hello|hey|helo|hii|hiii|namaste|namaskaram)$/i.test(text)) {
+    return false;
+  }
+
+  try {
+    const rows = await supabaseRequest(
+      `messages?customer_id=eq.${encodeURIComponent(customer.id)}&select=id&limit=1`
+    );
+
+    // The current incoming message has not been saved yet. An empty history
+    // therefore means this is the user's first Fetch conversation.
+    if (Array.isArray(rows) && rows.length) {
+      return false;
+    }
+
+    const welcome =
+      "Hi 👋 I’m Fetch, your personal assistant.";
+
+    const onboarding =
+      "Connect Fetch here — it only takes a few seconds:\n" +
+      "https://tryfetch.in/?onboarding=whatsapp\n\n" +
+      "Once you’re connected, just tell me what you need. I’ll figure out the rest.";
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone,
+      role: "assistant",
+      message: welcome,
+    });
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone,
+      role: "assistant",
+      message: onboarding,
+    });
+
+    await sendWhatsAppMessage(phone, welcome);
+    await sendWhatsAppMessage(phone, onboarding);
+
+    return true;
+  } catch (error) {
+    console.error("FETCH CUSTOMER ONBOARDING ERROR:", error);
+    return false;
+  }
+}
+
+/* =========================================================
    SHOPPER JOBS
 ========================================================= */
 
@@ -6758,6 +6817,17 @@ async function handleCustomerMessage({
     await getActiveOrder(
       customer
     );
+
+  const welcomed =
+    await maybeSendCustomerWelcome({
+      customer,
+      phone: normalizedPhone,
+      userMessage,
+    });
+
+  if (welcomed) {
+    return;
+  }
 
   const latestOrder =
     await getLatestOrder(
