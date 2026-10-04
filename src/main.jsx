@@ -1448,7 +1448,7 @@ function FetchMainApp() {
                             const param = connectorId === "email" ? "google_connect=1" : connectorId === "swiggy" ? "swiggy_connect=1" : "instamart_connect=1";
                             window.location.assign("/api/fetch/connectors.mjs?" + param + "&conversation_id=" + encodeURIComponent(conversationRef.current));
                           }
-                        }
+                        }}
                       />
                     )}
 
