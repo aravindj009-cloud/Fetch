@@ -77,6 +77,13 @@ const fetchConnectors = [
     state: "Coming soon",
   },
   {
+    id: "astrotalk",
+    name: "AstroTalk",
+    detail: "Astrology consultations & expert guidance",
+    icon: "A",
+    state: "Web handoff",
+  },
+  {
     id: "partners",
     name: "Fetch Partners",
     detail: "Local stores & service providers",
