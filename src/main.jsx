@@ -81,7 +81,8 @@ const fetchConnectors = [
     name: "AstroTalk",
     detail: "Astrology consultations & expert guidance",
     icon: "A",
-    state: "Web handoff",
+    connectLabel: "Open",
+    setup: true,
   },
   {
     id: "partners",
