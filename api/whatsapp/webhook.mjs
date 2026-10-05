@@ -6977,7 +6977,11 @@ async function tryUniversalFetchCustomerRequest({
     if (
       resourceType === "partner_store" ||
       resourceType === "physical_network" ||
-      result?.status === "awaiting_physical_order"
+      result?.status === "awaiting_physical_order" ||
+      (
+        String(result?.atc?.route_type || "").toLowerCase() === "physical" &&
+        String(result?.atc?.status || "").toLowerCase() === "fallback_required"
+      )
     ) {
       return {
         handled: false,
