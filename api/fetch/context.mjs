@@ -252,15 +252,19 @@ async function handleSwiggyCallback(req, res) {
     console.error("FETCH SWIGGY TOKEN ERROR", tokenResponse.status, JSON.stringify(data).slice(0, 500));
     return sendHtml(res, 502, onboardingPage("Provider could not connect", "The authorization reached the provider, but the token exchange was rejected. The provider may need Fetch's callback URL allowlisted.", false));
   }
-  await saveProviderConnection({
+  const connectionPayload = {
     conversationId: stateRow.conversation_id,
-    providerId: stateRow.provider_id,
     accessToken: data.access_token,
     refreshToken: data.refresh_token || null,
     tokenType: data.token_type || "Bearer",
     expiresIn: data.expires_in,
     scopes: String(data.scope || "").split(/\s+/).filter(Boolean),
-  });
+  };
+
+  // One Swiggy OAuth grant covers both Food and Instamart.
+  await saveProviderConnection({ ...connectionPayload, providerId: "swiggy" });
+  await saveProviderConnection({ ...connectionPayload, providerId: "instamart" });
+  await saveProviderConnection({ ...connectionPayload, providerId: "swiggy_instamart" });
   return sendHtml(res, 200, onboardingPage(
     stateRow.provider_id === "instamart" ? "Instamart is connected." : "Swiggy is connected.",
     "Fetch securely stored the provider connection. You can return to Fetch and continue your task.",
@@ -324,7 +328,7 @@ async function handleConnectorStatus(req, res) {
   const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
   if (!conversationId) return res.status(400).json({ success: false, error: "conversation_id_required" });
   const result = {};
-  for (const providerId of ["swiggy", "instamart", "email", "uber"]) {
+  for (const providerId of ["swiggy", "instamart", "swiggy_instamart", "email", "uber"]) {
     const connection = await getProviderConnection({ conversationId, providerId });
     result[providerId] = Boolean(connection?.access_token);
   }
