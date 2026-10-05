@@ -29,24 +29,17 @@ const fetchConnectors = [
     state: "Coming soon",
   },
   {
-    id: "linear",
-    name: "Linear",
-    detail: "Search and update Linear issues",
-    icon: "L",
-    state: "Coming soon",
-  },
-  {
-    id: "notion",
-    name: "Notion",
-    detail: "Search, read and manage Notion pages",
-    icon: "N",
-    state: "Coming soon",
-  },
-  {
     id: "github",
     name: "GitHub",
     detail: "Read repositories, issues, pull requests and code",
     icon: "GH",
+    state: "Coming soon",
+  },
+  {
+    id: "astrotalk",
+    name: "AstroTalk",
+    detail: "Astrology, consultations & expert guidance",
+    icon: "A",
     state: "Coming soon",
   },
   {
