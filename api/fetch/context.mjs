@@ -2,6 +2,13 @@
 import crypto from "node:crypto";
 import { createOAuthState, consumeOAuthState, saveProviderConnection, getProviderConnection } from "../../lib/fetch-provider-connections.mjs";
 import { processFetchV8Request } from "../../lib/fetch-v8.mjs";
+import {
+  prepareInstamartOrder,
+  applyInstamartSelection,
+  confirmInstamartCheckout,
+  checkInstamartPaymentStatus,
+  trackInstamartOrder,
+} from "../../lib/fetch-instamart-execution.mjs";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://skfxzagxlxputwpwxwbe.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE;
@@ -387,6 +394,78 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   try {
     const body = req.body || {};
+
+    /*
+     * Existing endpoint, new action seam:
+     * keep Instamart execution inside this already-deployed serverless
+     * function so the Hobby-plan 12-function limit is not increased.
+     */
+    const action = String(body.action || "").trim();
+    if (action.startsWith("instamart_")) {
+      const conversationId = String(body.conversation_id || body.conversationId || "").trim();
+      if (!conversationId) return res.status(400).json({ success: false, error: "conversation_id_required" });
+
+      const connection =
+        await getProviderConnection({ conversationId, providerId: "swiggy_instamart" }) ||
+        await getProviderConnection({ conversationId, providerId: "instamart" }) ||
+        await getProviderConnection({ conversationId, providerId: "swiggy" });
+
+      const accessToken = connection?.access_token;
+      if (!accessToken) {
+        return res.status(401).json({
+          success: false,
+          status: "connection_required",
+          provider: "swiggy_instamart",
+          message: "Connect Swiggy to Fetch before using Instamart."
+        });
+      }
+
+      if (action === "instamart_prepare") {
+        return res.status(200).json(await prepareInstamartOrder({
+          accessToken,
+          items: Array.isArray(body.items) ? body.items : [],
+          addressId: String(body.addressId || "").trim(),
+          autoSelect: body.autoSelect === true
+        }));
+      }
+
+      if (action === "instamart_selection") {
+        return res.status(200).json(await applyInstamartSelection({
+          accessToken,
+          addressId: String(body.addressId || "").trim(),
+          items: Array.isArray(body.items) ? body.items : []
+        }));
+      }
+
+      if (action === "instamart_checkout") {
+        return res.status(200).json(await confirmInstamartCheckout({
+          accessToken,
+          addressId: String(body.addressId || "").trim(),
+          paymentMethod: String(body.paymentMethod || "").trim(),
+          intentApp: String(body.intentApp || "").trim() || undefined,
+          generateUPIQR: body.generateUPIQR === true,
+          confirmed: body.confirmed === true
+        }));
+      }
+
+      if (action === "instamart_payment_status") {
+        return res.status(200).json(await checkInstamartPaymentStatus({
+          accessToken,
+          paasId: String(body.paasId || "").trim(),
+          orderId: String(body.orderId || "").trim()
+        }));
+      }
+
+      if (action === "instamart_track") {
+        return res.status(200).json(await trackInstamartOrder({
+          accessToken,
+          orderId: String(body.orderId || "").trim()
+        }));
+      }
+
+      return res.status(400).json({ success: false, error: "unknown_instamart_action" });
+    }
+
     if (!body.text || typeof body.text !== "string") return res.status(400).json({ error: "text is required" });
     const result = await processFetchV8Request({ text: body.text, customerId: body.customer_id || null, conversationId: body.conversation_id || null, channel: body.channel || "api", activeTaskId: body.active_task_id || null, suppliedIntent: body.intent || null, suppliedContext: body.context || {} });
     return res.status(200).json(result);
