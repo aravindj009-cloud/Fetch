@@ -6825,6 +6825,31 @@ async function tryUniversalFetchCustomerRequest({
         physical_order: activeOrder || null,
         source: "whatsapp_customer",
         conversation_history: conversationHistory,
+        customer: {
+          name: customer?.name || null,
+          address: customer?.address || null,
+        },
+        customer_location: {
+          latitude:
+            customer?.latitude ??
+            customer?.customer_latitude ??
+            activeOrder?.customer_latitude ??
+            null,
+          longitude:
+            customer?.longitude ??
+            customer?.customer_longitude ??
+            activeOrder?.customer_longitude ??
+            null,
+          city:
+            customer?.city ||
+            customer?.location_city ||
+            null,
+          address:
+            customer?.address ||
+            activeOrder?.delivery_address ||
+            null,
+          country: customer?.country || "India",
+        },
       },
     });
 
