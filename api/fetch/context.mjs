@@ -188,9 +188,7 @@ function makePkce() {
 }
 
 function connectorCallbackUrl(provider) {
-  return provider === "google"
-    ? FETCH_BASE + "/api/fetch/context.mjs?google_callback=1"
-    : String(process.env.SWIGGY_OAUTH_CALLBACK_URL || "https://fetch-website-tan.vercel.app/api/fetch/swiggy/callback.mjs").trim();
+  return FETCH_BASE + "/api/fetch/context.mjs?" + (provider === "google" ? "google_callback=1" : "swiggy_callback=1");
 }
 
 async function registerSwiggyClient(redirectUri) {
