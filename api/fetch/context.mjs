@@ -188,16 +188,9 @@ function makePkce() {
 }
 
 function connectorCallbackUrl(provider) {
-  if (provider === "swiggy" || provider === "instamart") {
-    // Swiggy requires an exact allowlisted redirect URI. The existing
-    // Fetch website callback is the production URI already proven to work.
-    return String(
-      process.env.SWIGGY_OAUTH_CALLBACK_URL ||
-      "https://fetch-website-tan.vercel.app/api/fetch/swiggy/callback.mjs"
-    ).trim();
-  }
-
-  return FETCH_BASE + "/api/fetch/context.mjs?google_callback=1";
+  return provider === "google"
+    ? FETCH_BASE + "/api/fetch/context.mjs?google_callback=1"
+    : String(process.env.SWIGGY_OAUTH_CALLBACK_URL || "https://fetch-website-tan.vercel.app/api/fetch/swiggy/callback.mjs").trim();
 }
 
 async function registerSwiggyClient(redirectUri) {
