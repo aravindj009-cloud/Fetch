@@ -7788,7 +7788,9 @@ async function maybeHandleFetchPartnerDiscovery({
     return { handled: true, status: "partner_selected", partner: selected };
   }
 
-  const service = detectFetchPartnerService(userMessage);
+  const service =
+    detectFetchPartnerService(userMessage) ||
+    (partnerState?.status === "awaiting_location" ? partnerState.service : null);
   if (!service) return { handled: false, reason: "not_partner_service" };
 
   const latitude = Number(location?.latitude);
