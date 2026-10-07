@@ -7860,8 +7860,19 @@ async function maybeHandleFetchPartnerDiscovery({
     (partnerState?.status === "awaiting_location" ? partnerState.service : null);
   if (!service) return { handled: false, reason: "not_partner_service" };
 
-  const latitude = Number(location?.latitude);
-  const longitude = Number(location?.longitude);
+  let latitude = Number(location?.latitude);
+  let longitude = Number(location?.longitude);
+
+  if (!(Number.isFinite(latitude) && Number.isFinite(longitude) && latitude !== 0 && longitude !== 0)) {
+    const customer = await getCustomer(phone);
+    const prefs = customer?.connector_preferences && typeof customer.connector_preferences === "object"
+      ? customer.connector_preferences
+      : {};
+    const profile = prefs.profile && typeof prefs.profile === "object" ? prefs.profile : {};
+    latitude = Number(profile.latitude);
+    longitude = Number(profile.longitude);
+  }
+
   const hasLocation =
     Number.isFinite(latitude) &&
     Number.isFinite(longitude) &&
