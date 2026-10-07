@@ -2366,6 +2366,17 @@ async function maybeSendCustomerWelcome({
       message: welcome,
     });
     await sendWhatsAppMessage(phone, welcome);
+
+    const token = await createWhatsAppOnboardingToken(phone);
+    await sendWhatsAppButtons(
+      phone,
+      "You can set up your Fetch profile once — name, address and location. Fetch will use it automatically when finding nearby partners.",
+      [
+        { id: "fetch_profile", title: "My Fetch Profile" },
+        { id: "fetch_connectors", title: "Connectors" }
+      ],
+      { header: "Fetch Profile" }
+    );
     return true;
   } catch (error) {
     console.error("FETCH CUSTOMER WELCOME ERROR:", error);
