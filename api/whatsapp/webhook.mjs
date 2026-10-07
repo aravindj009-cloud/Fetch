@@ -7606,7 +7606,21 @@ async function maybeHandleConnectedInstamart({
   if (!genericStore) return { handled: false, reason: "named_store" };
 
   const connection = await getWhatsAppInstamartConnection(phone);
-  if (!connection?.access_token) return { handled: false, reason: "not_connected" };
+  if (!connection?.access_token) {
+    const token = await createWhatsAppOnboardingToken(phone);
+    const link =
+      "https://tryfetch.in/api/fetch/context?token=" +
+      encodeURIComponent(token) +
+      "&connector=instamart";
+
+    await sendWhatsAppMessage(
+      phone,
+      "I can get this from Instamart through Fetch. Connect your Instamart account here:\n\n" +
+      link +
+      "\n\nAfter connecting, come back here and send the same request again. I won't place an order without your confirmation."
+    );
+    return { handled: true, status: "instamart_connection_required" };
+  }
 
   return startConnectedInstamartOrder({
     phone,
