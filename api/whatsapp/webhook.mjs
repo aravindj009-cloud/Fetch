@@ -7631,6 +7631,252 @@ async function maybeHandleConnectedInstamart({
 }
 
 /* =========================================================
+   FETCH PARTNER DISCOVERY
+   Customer-facing discovery of approved local service partners.
+========================================================= */
+
+const FETCH_PARTNER_SERVICE_PATTERNS = [
+  { key: "electrician", label: "Electrician", patterns: [/\belectrician\b/i, /\belectrical\b/i, /\belectric work\b/i], subcategory: ["electrician", "electrical"] },
+  { key: "plumber", label: "Plumber", patterns: [/\bplumber\b/i, /\bplumbing\b/i], subcategory: ["plumber", "plumbing"] },
+  { key: "ac_repair", label: "AC repair", patterns: [/\bac repair\b/i, /\bair conditioner\b/i, /\bac service\b/i], subcategory: ["ac", "air conditioner", "air conditioning"] },
+  { key: "cleaning", label: "Home cleaning", patterns: [/\bhome cleaning\b/i, /\bhouse cleaning\b/i, /\bcleaner\b/i, /\bcleaning service\b/i], subcategory: ["cleaning", "home cleaning", "house cleaning"] },
+  { key: "carpenter", label: "Carpenter", patterns: [/\bcarpenter\b/i, /\bcarpentry\b/i], subcategory: ["carpenter", "carpentry"] },
+  { key: "painter", label: "Painter", patterns: [/\bpainter\b/i, /\bpainting service\b/i], subcategory: ["painter", "painting"] },
+  { key: "appliance_repair", label: "Appliance repair", patterns: [/\bappliance repair\b/i, /\bwashing machine repair\b/i, /\bfridge repair\b/i, /\brefrigerator repair\b/i], subcategory: ["appliance", "washing machine", "fridge", "refrigerator"] },
+];
+
+function detectFetchPartnerService(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return null;
+
+  return FETCH_PARTNER_SERVICE_PATTERNS.find((service) =>
+    service.patterns.some((pattern) => pattern.test(normalized))
+  ) || null;
+}
+
+function haversineDistanceKm(lat1, lon1, lat2, lon2) {
+  const a = Number(lat1);
+  const b = Number(lon1);
+  const c = Number(lat2);
+  const d = Number(lon2);
+  if (![a, b, c, d].every(Number.isFinite)) return null;
+
+  const R = 6371;
+  const rad = (value) => value * Math.PI / 180;
+  const dLat = rad(c - a);
+  const dLon = rad(d - b);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(a)) * Math.cos(rad(c)) * Math.sin(dLon / 2) ** 2;
+
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+async function searchFetchServicePartners({ service, latitude, longitude }) {
+  const rows = await supabaseRequest(
+    "fetch_partner_applications?status=eq.active&select=id,business_name,contact_name,whatsapp_phone,category,subcategory,address,latitude,longitude,service_area,capabilities,operating_hours,metadata&limit=100"
+  );
+
+  const partners = Array.isArray(rows) ? rows : [];
+  const requestedTerms = service.subcategory.map((value) => value.toLowerCase());
+
+  return partners
+    .filter((partner) => {
+      const haystack = [
+        partner.category,
+        partner.subcategory,
+        ...(Array.isArray(partner.capabilities) ? partner.capabilities : []),
+        partner.notes,
+      ].filter(Boolean).join(" ").toLowerCase();
+
+      return requestedTerms.some((term) => haystack.includes(term));
+    })
+    .map((partner) => {
+      const distanceKm = haversineDistanceKm(
+        latitude,
+        longitude,
+        partner.latitude,
+        partner.longitude
+      );
+      const metadata = partner.metadata && typeof partner.metadata === "object"
+        ? partner.metadata
+        : {};
+
+      return {
+        ...partner,
+        distanceKm,
+        rating: Number(metadata.rating || metadata.customer_rating || 0) || null,
+        availableNow: metadata.available_now !== false && metadata.available !== false,
+      };
+    })
+    .filter((partner) => Number.isFinite(partner.distanceKm))
+    .sort((a, b) => {
+      if (a.availableNow !== b.availableNow) return a.availableNow ? -1 : 1;
+      if ((a.rating || 0) !== (b.rating || 0)) return (b.rating || 0) - (a.rating || 0);
+      return a.distanceKm - b.distanceKm;
+    })
+    .slice(0, 10);
+}
+
+function formatPartnerDiscoveryMessage(service, partners) {
+  const lines = [
+    "🔎 I found " + partners.length + " Fetch " + service.label.toLowerCase() + (partners.length === 1 ? "" : "s") + " near you.",
+    "",
+  ];
+
+  partners.slice(0, 5).forEach((partner, index) => {
+    const distance = partner.distanceKm < 1
+      ? Math.round(partner.distanceKm * 1000) + " m"
+      : partner.distanceKm.toFixed(1) + " km";
+    const availability = partner.availableNow ? "🟢 Available now" : "⚪ Currently unavailable";
+    const rating = partner.rating ? " ⭐ " + partner.rating.toFixed(1) : "";
+    lines.push(
+      (index + 1) + ". *" + String(partner.business_name || "Fetch Partner") + "*",
+      "📍 " + (partner.address || partner.service_area || "Location not provided") + " — " + distance,
+      availability + rating,
+      "📞 " + (partner.whatsapp_phone || "Contact through Fetch"),
+      ""
+    );
+  });
+
+  lines.push("Tap a partner below to select them.");
+  return lines.join("\n");
+}
+
+async function maybeHandleFetchPartnerDiscovery({
+  phone,
+  userMessage,
+  location,
+  interactiveChoice = null,
+}) {
+  const choiceId = String(interactiveChoice?.id || "").trim();
+  const current = await getWhatsAppConversationContext(phone);
+  const context = current?.context && typeof current.context === "object" ? current.context : {};
+  const partnerState = context.fetch_partner;
+
+  if (partnerState?.status === "selection") {
+    const selectedId = partnerState.partnerMap?.[choiceId];
+    if (!selectedId) return { handled: false, reason: "not_partner_choice" };
+
+    const selected = (partnerState.partners || []).find((partner) => String(partner.id) === String(selectedId));
+    if (!selected) return { handled: false, reason: "partner_not_found" };
+
+    await saveWhatsAppConversationContext(phone, {
+      ...context,
+      fetch_partner: {
+        status: "selected",
+        service: partnerState.service,
+        partnerId: selected.id,
+        partner: selected,
+      },
+    });
+
+    const distance = Number(selected.distanceKm);
+    const distanceText = Number.isFinite(distance)
+      ? (distance < 1 ? Math.round(distance * 1000) + " m" : distance.toFixed(1) + " km")
+      : "nearby";
+
+    await sendWhatsAppMessage(
+      phone,
+      "You selected *" + String(selected.business_name || "Fetch Partner") + "* ✅\n\n" +
+      "📍 " + (selected.address || selected.service_area || "Location not provided") + "\n" +
+      "📏 " + distanceText + "\n" +
+      "📞 " + (selected.whatsapp_phone || "Contact will be shared through Fetch") +
+      "\n\nI can now send your request to this partner."
+    );
+
+    return { handled: true, status: "partner_selected", partner: selected };
+  }
+
+  const service = detectFetchPartnerService(userMessage);
+  if (!service) return { handled: false, reason: "not_partner_service" };
+
+  const latitude = Number(location?.latitude);
+  const longitude = Number(location?.longitude);
+  const hasLocation =
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude !== 0 &&
+    longitude !== 0;
+
+  if (!hasLocation) {
+    await saveWhatsAppConversationContext(phone, {
+      ...context,
+      fetch_partner: {
+        status: "awaiting_location",
+        service,
+      },
+    });
+    await sendWhatsAppMessage(
+      phone,
+      "Sure — I can find nearby " + service.label.toLowerCase() + "s through Fetch. 📍\n\n" +
+      "Please send your current WhatsApp location so I can rank the nearest available partners."
+    );
+    return { handled: true, status: "awaiting_location" };
+  }
+
+  const partners = await searchFetchServicePartners({
+    service,
+    latitude,
+    longitude,
+  });
+
+  if (!partners.length) {
+    await sendWhatsAppMessage(
+      phone,
+      "I don't have an active Fetch " + service.label.toLowerCase() + " partner near this location yet.\n\n" +
+      "I'm keeping your request within Fetch instead of sending you to an unrelated directory."
+    );
+    return { handled: true, status: "no_partners" };
+  }
+
+  const partnerMap = {};
+  const rows = partners.slice(0, 5).map((partner, index) => {
+    const key = "fetch_partner_" + index;
+    partnerMap[key] = String(partner.id);
+    const distance = partner.distanceKm < 1
+      ? Math.round(partner.distanceKm * 1000) + " m"
+      : partner.distanceKm.toFixed(1) + " km";
+    return {
+      id: key,
+      title: String(partner.business_name || "Fetch Partner").slice(0, 24),
+      description: (
+        (partner.address || partner.service_area || "Nearby") +
+        " · " + distance +
+        (partner.availableNow ? " · Available" : "")
+      ).slice(0, 72),
+    };
+  });
+
+  await saveWhatsAppConversationContext(phone, {
+    ...context,
+    fetch_partner: {
+      status: "selection",
+      service,
+      partnerMap,
+      partners: partners.slice(0, 5),
+      customerLatitude: latitude,
+      customerLongitude: longitude,
+    },
+  });
+
+  await sendWhatsAppMessage(phone, formatPartnerDiscoveryMessage(service, partners));
+
+  await sendWhatsAppList(
+    phone,
+    "Choose a " + service.label.toLowerCase() + " to continue.",
+    rows,
+    {
+      header: "Fetch Partners",
+      buttonText: "Choose partner",
+      sectionTitle: service.label,
+    }
+  );
+
+  return { handled: true, status: "partner_discovery", partners };
+}
+
+/* =========================================================
    CUSTOMER ENGINE
 ========================================================= */
 
@@ -7649,6 +7895,23 @@ async function handleCustomerMessage({
       normalizedPhone,
       profileName
     );
+
+  /*
+    Fetch Partner Network owns customer-facing local service discovery.
+    This runs before generic commerce so requests like "I need an electrician"
+    become real partner discovery instead of a digital-agent answer.
+  */
+  try {
+    const partnerResult = await maybeHandleFetchPartnerDiscovery({
+      phone: normalizedPhone,
+      userMessage,
+      location,
+      interactiveChoice,
+    });
+    if (partnerResult?.handled) return;
+  } catch (error) {
+    console.error("FETCH PARTNER DISCOVERY ERROR:", error);
+  }
 
   /*
     Connected Instamart owns generic grocery execution on WhatsApp.
