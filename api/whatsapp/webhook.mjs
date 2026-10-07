@@ -711,6 +711,40 @@ async function getOrCreateCustomer(
 }
 
 
+async function saveWhatsAppCustomerLocation(phone, location) {
+  const normalizedPhone = normalizePhone(phone);
+  const latitude = Number(location?.latitude);
+  const longitude = Number(location?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+  const customer = await getCustomer(normalizedPhone);
+  if (!customer?.id) return;
+
+  const prefs = customer.connector_preferences && typeof customer.connector_preferences === "object"
+    ? customer.connector_preferences
+    : {};
+  const profile = prefs.profile && typeof prefs.profile === "object" ? prefs.profile : {};
+
+  await supabaseRequest(`customers?id=eq.${encodeURIComponent(customer.id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      connector_preferences: {
+        ...prefs,
+        profile: {
+          ...profile,
+          latitude,
+          longitude,
+          location_updated_at: new Date().toISOString(),
+          location_source: "whatsapp_location_pin",
+          location_name: location?.name || profile.location_name || null,
+          location_address: location?.address || profile.location_address || null,
+        },
+      },
+    }),
+  });
+}
+
 async function getCustomerCurrentOrderId(
   customerId
 ) {
@@ -14299,6 +14333,37 @@ export default async function handler(
         text,
       })
     );
+
+    // A WhatsApp location pin becomes persistent Fetch profile context.
+    // This lets future nearby-partner searches use the saved location.
+    if (location) {
+      try {
+        await saveWhatsAppCustomerLocation(from, location);
+      } catch (error) {
+        console.error("FETCH WHATSAPP PROFILE LOCATION SAVE ERROR:", error);
+      }
+    }
+
+    if (interactiveChoice?.id === "fetch_profile") {
+      const token = await createWhatsAppOnboardingToken(from);
+      await sendWhatsAppMessage(
+        from,
+        "Your Fetch profile:\n\nhttps://tryfetch.in/api/fetch/context?profile=1&token=" +
+          encodeURIComponent(token) +
+          "\n\nSave your details and location once. Fetch will use your saved location automatically for nearby partners."
+      );
+      return res.status(200).json({ success: true, action: "profile_link_sent" });
+    }
+
+    if (interactiveChoice?.id === "fetch_connectors") {
+      const token = await createWhatsAppOnboardingToken(from);
+      await sendWhatsAppMessage(
+        from,
+        "Fetch Connectors:\n\nhttps://tryfetch.in/api/fetch/context?token=" +
+          encodeURIComponent(token)
+      );
+      return res.status(200).json({ success: true, action: "connectors_link_sent" });
+    }
 
     /*
       =======================================================
