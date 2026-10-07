@@ -2294,7 +2294,7 @@ async function ensureWhatsAppBusinessProfile() {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          websites: ["https://tryfetch.in/api/fetch/context?partner=1", "https://tryfetch.in/connectors"],
+          websites: ["https://tryfetch.in/partneronboarding", "https://tryfetch.in/connectors"],
         }),
       }
     );
