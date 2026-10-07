@@ -6817,13 +6817,24 @@ async function tryUniversalFetchCustomerRequest({
   */
   try {
     const physicalIntent = classifyIntent(userMessage);
-    if (physicalIntent?.domain === "physical") {
+
+    const activePhysicalOrderNeedsInput =
+      activeOrder &&
+      ["collecting_details", "awaiting_location", "intake"].includes(
+        String(activeOrder.status || "").toLowerCase()
+      );
+
+    if (
+      physicalIntent?.domain === "physical" ||
+      activePhysicalOrderNeedsInput
+    ) {
       console.log(
-        "FETCH WHATSAPP ROUTING: physical request -> existing order engine",
+        "FETCH WHATSAPP ROUTING: existing physical order engine",
         JSON.stringify({
           customerId: customer.id,
-          domain: physicalIntent.domain,
-          confidence: physicalIntent.confidence,
+          domain: physicalIntent?.domain || null,
+          confidence: physicalIntent?.confidence || null,
+          activeOrderStatus: activeOrder?.status || null,
         })
       );
       return {
