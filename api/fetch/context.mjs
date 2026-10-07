@@ -66,6 +66,45 @@ async function handlePartnerApplication(req, res) {
   return sendHtml(res, 200, partnerPortalPage("Application received. Fetch will review it and contact you on WhatsApp before activation.", true));
 }
 
+function customerProfilePage(customer, token, message = "", success = false) {
+  const safe = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[m]));
+  const prefs = customer?.connector_preferences && typeof customer.connector_preferences === "object" ? customer.connector_preferences : {};
+  const profile = prefs.profile && typeof prefs.profile === "object" ? prefs.profile : {};
+  const notice = message ? '<div class="notice ' + (success ? "ok" : "error") + '">' + safe(message) + "</div>" : "";
+  const lat = profile.latitude ?? "";
+  const lng = profile.longitude ?? "";
+  const updated = profile.location_updated_at ? new Date(profile.location_updated_at).toLocaleString() : "";
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fetch · My Profile</title><style>body{margin:0;background:#0b0d0e;color:#f5f7f8;font-family:system-ui,sans-serif;padding:22px}.wrap{max-width:560px;margin:auto}.card{background:#111516;border:1px solid #293033;border-radius:26px;padding:28px}.logo{width:50px;height:50px;border-radius:50%;background:#eaffef;color:#159447;display:grid;place-items:center;font:700 26px Georgia;margin-bottom:22px}h1{margin:0 0 8px;font-size:30px}p{color:#aeb8bb;line-height:1.5}.field{margin-top:17px}label{display:block;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#899396;margin-bottom:7px}input,textarea{width:100%;box-sizing:border-box;padding:13px 14px;border-radius:12px;border:1px solid #30383b;background:#0d1011;color:#fff;font:inherit}textarea{min-height:82px;resize:vertical}.location{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid #30383b;border-radius:14px;margin-top:17px}.pin{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#1c2722;color:#52d58b;font-size:19px}.loccopy{flex:1}.loccopy strong,.loccopy small{display:block}.loccopy small{margin-top:3px;color:#899396;font-size:12px}.location button{width:auto;margin:0;padding:9px 12px;font-size:12px}button{width:100%;margin-top:22px;padding:14px;border:0;border-radius:13px;background:#f5f7f8;color:#101314;font-weight:800;font-size:15px}.notice{padding:12px 14px;border-radius:12px;margin:15px 0;font-size:14px}.ok{background:#173126;color:#7ee2ba}.error{background:#351b1b;color:#ff9c9c}.back{display:block;text-align:center;color:#8fe0b5;margin-top:18px;text-decoration:none;font-size:13px}</style></head><body><main class="wrap"><section class="card"><div class="logo">F</div><div style="font-size:11px;font-weight:800;letter-spacing:.16em;color:#7e8a8e">MY FETCH PROFILE</div><h1>Your profile, your context.</h1><p>Save your details and location once. Fetch will use them when finding nearby partners and services.</p>' + notice + '<form method="POST" action="/api/fetch/context"><input type="hidden" name="action" value="profile_update"><input type="hidden" name="token" value="' + safe(token) + '"><div class="field"><label>Name</label><input name="name" value="' + safe(customer?.name) + '"></div><div class="field"><label>Phone</label><input value="' + safe(customer?.phone) + '" disabled></div><div class="field"><label>Address</label><textarea name="address" placeholder="Your usual address">' + safe(customer?.address) + '</textarea></div><div class="field"><label>City</label><input name="city" value="' + safe(profile.city) + '"></div><input type="hidden" id="latitude" name="latitude" value="' + safe(lat) + '"><input type="hidden" id="longitude" name="longitude" value="' + safe(lng) + '"><div class="location"><div class="pin">⌖</div><div class="loccopy"><strong>Fetch location</strong><small id="locationStatus">' + safe(updated ? "Saved · " + updated : "Not saved yet") + '</small></div><button type="button" onclick="getLocation()">Update</button></div><button type="submit">Save my Fetch profile</button></form><a class="back" href="https://wa.me/919074559146">← Back to Fetch on WhatsApp</a></section></main><script>function getLocation(){const s=document.getElementById("locationStatus");if(!navigator.geolocation){s.textContent="Location is not supported";return}s.textContent="Requesting location…";navigator.geolocation.getCurrentPosition(p=>{document.getElementById("latitude").value=p.coords.latitude;document.getElementById("longitude").value=p.coords.longitude;s.textContent="Location ready · Fetch will use it for nearby matching";},()=>{s.textContent="Location permission was not granted";},{enableHighAccuracy:true,timeout:10000,maximumAge:60000})}</script></body></html>';
+}
+async function handleCustomerProfile(req, res) {
+  const url = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
+  const token = String(url.searchParams.get("token") || "").trim();
+  const verified = verifyOnboardingToken(token);
+  if (!verified) return sendHtml(res, 400, customerProfilePage({}, "", "This profile link has expired. Return to Fetch on WhatsApp and ask for your profile link again.", false));
+  const rows = await supabaseRequest(`customers?phone=eq.${encodeURIComponent(verified.phone)}&select=*&limit=1`);
+  const customer = Array.isArray(rows) && rows.length ? rows[0] : null;
+  if (!customer) return sendHtml(res, 404, customerProfilePage({}, token, "We couldn't find your Fetch account.", false));
+  return sendHtml(res, 200, customerProfilePage(customer, token));
+}
+async function handleCustomerProfileUpdate(req, res) {
+  const body = req.body || {};
+  const verified = verifyOnboardingToken(String(body.token || ""));
+  if (!verified) return sendHtml(res, 400, customerProfilePage({}, "", "This profile link has expired.", false));
+  const rows = await supabaseRequest(`customers?phone=eq.${encodeURIComponent(verified.phone)}&select=*&limit=1`);
+  const customer = Array.isArray(rows) && rows.length ? rows[0] : null;
+  if (!customer) return sendHtml(res, 404, customerProfilePage({}, String(body.token || ""), "We couldn't find your Fetch account.", false));
+  const name = String(body.name || "").trim().slice(0, 120);
+  const address = String(body.address || "").trim().slice(0, 500);
+  const city = String(body.city || "").trim().slice(0, 120);
+  const latitude = Number(body.latitude);
+  const longitude = Number(body.longitude);
+  const prefs = customer.connector_preferences && typeof customer.connector_preferences === "object" ? customer.connector_preferences : {};
+  const oldProfile = prefs.profile && typeof prefs.profile === "object" ? prefs.profile : {};
+  const profile = { ...oldProfile, city: city || null, latitude: Number.isFinite(latitude) ? latitude : (oldProfile.latitude ?? null), longitude: Number.isFinite(longitude) ? longitude : (oldProfile.longitude ?? null), location_updated_at: Number.isFinite(latitude) && Number.isFinite(longitude) ? new Date().toISOString() : (oldProfile.location_updated_at || null), location_source: Number.isFinite(latitude) && Number.isFinite(longitude) ? "whatsapp_profile" : (oldProfile.location_source || null) };
+  const updated = await supabaseRequest(`customers?id=eq.${encodeURIComponent(customer.id)}`, { method:"PATCH", headers:{Prefer:"return=representation"}, body:JSON.stringify({name:name || customer.name || null,address:address || customer.address || null,connector_preferences:{...prefs,profile}}) });
+  const next = Array.isArray(updated) && updated.length ? updated[0] : {...customer,name,address,connector_preferences:{...prefs,profile}};
+  return sendHtml(res, 200, customerProfilePage(next, String(body.token || ""), "Your Fetch profile is saved. Nearby partner searches will use your saved location.", true));
+}
 function sendHtml(res, statusCode, html) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -380,7 +419,7 @@ async function handleConnectorStatus(req, res) {
 export default async function handler(req, res) {
   if (req.method === "GET") {
     const requestUrl = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
-    if (requestUrl.searchParams.get("partner") === "1") return sendHtml(res, 200, partnerPortalPage());
+    if (requestUrl.searchParams.get("partner") === "1") return sendHtml(res, 200, partnerPortalPage());\n    if (requestUrl.searchParams.get("profile") === "1") return await handleCustomerProfile(req, res);
     if (requestUrl.searchParams.get("status") === "1") {
       try { return await handleConnectorStatus(req, res); }
       catch (error) { console.error("FETCH CONNECTOR STATUS ERROR:", error); return res.status(500).json({ success:false, error:"connector_status_failed" }); }
@@ -436,7 +475,7 @@ export default async function handler(req, res) {
      * keep Instamart execution inside this already-deployed serverless
      * function so the Hobby-plan 12-function limit is not increased.
      */
-    const action = String(body.action || "").trim();
+    const action = String(body.action || "").trim();\n    if (action === "profile_update") return await handleCustomerProfileUpdate(req, res);
     if (action.startsWith("instamart_")) {
       const conversationId = String(body.conversation_id || body.conversationId || "").trim();
       if (!conversationId) return res.status(400).json({ success: false, error: "conversation_id_required" });
