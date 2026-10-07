@@ -25,7 +25,11 @@ function verifyOnboardingToken(token) {
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     if (!decoded?.phone || Number(decoded.exp) < Math.floor(Date.now() / 1000)) return null;
-    return { phone: String(decoded.phone).replace(/\D/g, "") };
+    const phone = String(decoded.phone).replace(/\D/g, "");
+    return {
+      phone,
+      conversationId: String(decoded.conversation_id || ("whatsapp:" + phone)).trim()
+    };
   } catch { return null; }
 }
 
@@ -53,9 +57,14 @@ function onboardingPage(heading, body, success = true, options = {}) {
   ];
   const selected = options.selected || {};
   const token = String(options.token || "");
+  const conversationId = String(options.conversationId || "").trim();
   const connectorRows = connectors.map((item) => {
     const connected = Boolean(selected[item.id]);
-    const href = "/api/fetch/context?token=" + encodeURIComponent(token) + "&connector=" + encodeURIComponent(item.id);
+    let href = "/api/fetch/context?token=" + encodeURIComponent(token) + "&connector=" + encodeURIComponent(item.id);
+    if (token && conversationId) {
+      const connectParam = item.id === "email" ? "google_connect" : item.id === "instamart" ? "instamart_connect" : "swiggy_connect";
+      href = "/api/fetch/context?" + connectParam + "=1&token=" + encodeURIComponent(token);
+    }
     return '<div class="connector '+(connected ? "connected" : "")+'"><div class="icon">'+item.icon+'</div><div class="copy"><strong>'+item.name+'</strong><span>'+item.detail+'</span></div><a class="'+(connected ? "done" : "")+'" href="'+href+'">'+(connected ? "Connected ✓" : "Connect")+'</a></div>';
   }).join("");
   const connectorBlock = options.showConnectors ? '<section class="connectors"><div class="sectionTitle">CONNECTORS</div><p class="sub">Tools your Fetch agent can use. Choose the services you want available to Fetch.</p>'+connectorRows+'</section>' : "";
@@ -174,7 +183,7 @@ async function handleOnboarding(req, res) {
   return sendHtml(
     res,
     200,
-    onboardingPage(title, body, true, { showConnectors: true, selected, token })
+    onboardingPage(title, body, true, { showConnectors: true, selected, token, conversationId: verified.conversationId })
   );
 }
 
@@ -215,7 +224,9 @@ async function registerSwiggyClient(redirectUri) {
 
 async function handleSwiggyConnect(req, res, provider) {
   const url = new URL(req.url, FETCH_BASE);
-  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  const onboardingToken = String(url.searchParams.get("token") || "").trim();
+  const verified = onboardingToken ? verifyOnboardingToken(onboardingToken) : null;
+  const conversationId = verified?.conversationId || String(url.searchParams.get("conversation_id") || "").trim();
   if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open Fetch in this browser first, then return to Connectors.", false));
   const redirectUri = connectorCallbackUrl(provider);
   const { verifier, challenge } = makePkce();
@@ -275,7 +286,8 @@ async function handleSwiggyCallback(req, res) {
   return sendHtml(res, 200, onboardingPage(
     stateRow.provider_id === "instamart" ? "Instamart is connected." : "Swiggy is connected.",
     "Fetch securely stored the provider connection. You can return to Fetch and continue your task.",
-    true
+    true,
+    { showConnectors: true, selected: { swiggy: true, instamart: true }, token: onboardingToken, conversationId: stateRow.conversation_id }
   ));
 }
 
