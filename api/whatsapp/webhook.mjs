@@ -7284,7 +7284,23 @@ function normalizeInstamartPaymentMethods(result) {
     (Array.isArray(source?.allMethods) && source.allMethods) ||
     (Array.isArray(source?.availablePaymentMethods) && source.availablePaymentMethods) ||
     [];
-  return methods.filter((method) => method && method.id);
+
+  return methods
+    .filter((method) => method && method.id)
+    .map((method) => {
+      const label = String(method.displayName || method.name || method.groupName || method.id).trim();
+      const lower = label.toLowerCase();
+      const paymentMethod =
+        /swiggy\s*money|swiggypay/.test(lower) ? "SwiggyPay" :
+        /cash|cod|cash on delivery/.test(lower) ? "COD" :
+        /upi/.test(lower) || method.kind === "intent" || method.kind === "qr" ? "UPI" :
+        String(method.paymentMethod || method.groupName || method.id);
+
+      return {
+        ...method,
+        paymentMethod,
+      };
+    });
 }
 
 async function startConnectedInstamartOrder({ phone, customer, userMessage, itemsText }) {
@@ -7393,7 +7409,8 @@ async function continueConnectedInstamartOrder({ phone, customer, userMessage, i
       const key = "fetch_im_payment_" + index;
       paymentMap[key] = {
         id: String(method.id),
-        paymentMethod: String(method.paymentMethod || method.groupName || method.kind || method.id),
+        paymentMethod: String(method.paymentMethod || method.groupName || method.id),
+        kind: method.kind || null,
       };
       return {
         id: key,
