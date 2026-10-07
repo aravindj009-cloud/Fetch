@@ -2402,14 +2402,11 @@ async function maybeSendCustomerWelcome({
     await sendWhatsAppMessage(phone, welcome);
 
     const token = await createWhatsAppOnboardingToken(phone);
-    await sendWhatsAppButtons(
+    await sendWhatsAppMessage(
       phone,
-      "You can set up your Fetch profile once — name, address and location. Fetch will use it automatically when finding nearby partners.",
-      [
-        { id: "fetch_profile", title: "My Fetch Profile" },
-        { id: "fetch_connectors", title: "Connectors" }
-      ],
-      { header: "Fetch Profile" }
+      "Set up your Fetch profile once — name, address and 📍 location. Fetch will use it automatically when finding nearby partners.\n\n" +
+      "👤 My Fetch Profile\nhttps://tryfetch.in/api/fetch/context?profile=1&token=" + encodeURIComponent(token) +
+      "\n\n🔌 Connectors\nhttps://tryfetch.in/connectors"
     );
     return true;
   } catch (error) {
