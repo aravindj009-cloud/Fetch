@@ -7761,6 +7761,28 @@ async function maybeHandleFetchPartnerDiscovery({
   interactiveChoice = null,
 }) {
   const choiceId = String(interactiveChoice?.id || "").trim();
+
+  if (choiceId === "fetch_profile") {
+    const token = await createWhatsAppOnboardingToken(phone);
+    await sendWhatsAppMessage(
+      phone,
+      "Your Fetch profile is here:\n\nhttps://tryfetch.in/api/fetch/context?profile=1&token=" +
+        encodeURIComponent(token) +
+        "\n\nSave your details and location once. Fetch will use them automatically for nearby partner searches."
+    );
+    return { handled: true, status: "profile_link_sent" };
+  }
+
+  if (choiceId === "fetch_connectors") {
+    const token = await createWhatsAppOnboardingToken(phone);
+    await sendWhatsAppMessage(
+      phone,
+      "Connect Fetch to the services you use:\n\nhttps://tryfetch.in/api/fetch/context?token=" +
+        encodeURIComponent(token)
+    );
+    return { handled: true, status: "connectors_link_sent" };
+  }
+
   const current = await getWhatsAppConversationContext(phone);
   const context = current?.context && typeof current.context === "object" ? current.context : {};
   const partnerState = context.fetch_partner;
