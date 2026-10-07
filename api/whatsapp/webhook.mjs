@@ -115,6 +115,8 @@ import {
   executeUniversalFetchRequest,
 } from "../../lib/fetch-universal-execution.mjs";
 
+import { classifyIntent } from "../../lib/fetch-intelligence.mjs";
+
 function sleep(ms) {
   return new Promise((resolve) =>
     setTimeout(resolve, ms)
@@ -6800,6 +6802,41 @@ async function tryUniversalFetchCustomerRequest({
   }
 
   const normalizedPhone = normalizePhone(phone);
+
+  /*
+    LAUNCH-STABILITY BOUNDARY
+
+    Physical commerce already has a mature WhatsApp order state machine
+    (order creation, address collection, ATC partner-store selection,
+    shopper fallback, pricing and customer approval). Do not put that
+    launch-critical path behind the Universal Agent.
+
+    The Universal Agent remains responsible for non-physical requests.
+    This prevents an agent/persistence/connector failure from turning a
+    valid shopping request into the generic "couldn't complete" response.
+  */
+  try {
+    const physicalIntent = classifyIntent(userMessage);
+    if (physicalIntent?.domain === "physical") {
+      console.log(
+        "FETCH WHATSAPP ROUTING: physical request -> existing order engine",
+        JSON.stringify({
+          customerId: customer.id,
+          domain: physicalIntent.domain,
+          confidence: physicalIntent.confidence,
+        })
+      );
+      return {
+        handled: false,
+        result: null,
+      };
+    }
+  } catch (classificationError) {
+    console.warn(
+      "FETCH PHYSICAL ROUTING CHECK FAILED:",
+      classificationError?.message || classificationError
+    );
+  }
 
   let conversationHistory = [];
   try {
