@@ -43,6 +43,29 @@ async function supabaseRequest(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+function partnerPortalPage(message = "", success = false) {
+  const safe = String(message).replace(/[&<>"]/g, (m) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[m]));
+  const notice = message ? '<div class="notice ' + (success ? "ok" : "error") + '">' + safe + "</div>" : "";
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fetch Partners</title><style>body{margin:0;background:#f6f4ef;color:#151515;font-family:system-ui,sans-serif;padding:24px}.wrap{max-width:760px;margin:auto}.brand{font-size:28px;font-weight:800;margin:8px 0 28px}.brand span{color:#ff5a00}.card{background:white;border:1px solid #e4e0d8;border-radius:22px;padding:28px}h1{font-size:36px;line-height:1.05;margin:0 0 10px}p{color:#666;line-height:1.5}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.field{margin-top:16px}.full{grid-column:1/-1}label{display:block;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;color:#555}input,select,textarea{width:100%;padding:12px;border:1px solid #d8d4cc;border-radius:10px;font:inherit;box-sizing:border-box}textarea{min-height:90px}.checks{display:flex;flex-wrap:wrap;gap:8px}.check{border:1px solid #ddd8d0;border-radius:9px;padding:8px;font-size:13px;text-transform:none;letter-spacing:0}.check input{width:auto}button{width:100%;margin-top:22px;padding:14px;border:0;border-radius:11px;background:#111;color:#fff;font-weight:700}.notice{padding:12px;border-radius:10px;margin:16px 0}.ok{background:#eaf8f0;color:#17633d}.error{background:#fff0ed;color:#9a2f1f}@media(max-width:600px){.grid{grid-template-columns:1fr}.full{grid-column:auto}h1{font-size:30px}}</style></head><body><main class="wrap"><div class="brand">fetch<span>.</span></div><section class="card"><div style="font-size:11px;font-weight:800;letter-spacing:.15em;color:#888">FETCH PARTNER NETWORK</div><h1>Become a Fetch partner.</h1><p>Receive relevant customer requests through Fetch. Applications are reviewed before activation.</p>' + notice + '<form method="POST" action="/api/fetch/context"><input type="hidden" name="action" value="partner_apply"><div class="grid"><div class="field"><label>Business / service name</label><input name="business_name" required></div><div class="field"><label>Contact person</label><input name="contact_name" required></div><div class="field"><label>WhatsApp number</label><input name="whatsapp_phone" required placeholder="+91..."></div><div class="field"><label>Category</label><select name="category" required><option value="">Select</option><option>Local Commerce</option><option>Home Services</option><option>Mobility</option><option>Assisted Services</option></select></div><div class="field"><label>Service / business type</label><input name="subcategory" placeholder="Grocery, electrician, taxi..."></div><div class="field"><label>Service area</label><input name="service_area" placeholder="Area / radius"></div><div class="field full"><label>Address</label><textarea name="address" required></textarea></div><div class="field full"><label>Capabilities</label><div class="checks"><label class="check"><input type="checkbox" name="capabilities" value="inventory_check"> Inventory</label><label class="check"><input type="checkbox" name="capabilities" value="price_quote"> Price quotes</label><label class="check"><input type="checkbox" name="capabilities" value="order_fulfillment"> Fulfillment</label><label class="check"><input type="checkbox" name="capabilities" value="phone_service"> Phone</label><label class="check"><input type="checkbox" name="capabilities" value="human_service"> Human service</label></div></div><div class="field full"><label>Notes</label><textarea name="notes"></textarea></div></div><button type="submit">Apply to become a partner →</button></form></section></main></body></html>';
+}
+
+async function handlePartnerApplication(req, res) {
+  const body = req.body && typeof req.body === "object" ? req.body : Object.fromEntries(new URLSearchParams(String(req.body || "")));
+  const businessName = String(body.business_name || "").trim();
+  const contactName = String(body.contact_name || "").trim();
+  const whatsappPhone = String(body.whatsapp_phone || "").replace(/\D/g, "");
+  const category = String(body.category || "").trim();
+  const address = String(body.address || "").trim();
+  const subcategory = String(body.subcategory || "").trim();
+  const serviceArea = String(body.service_area || "").trim();
+  const notes = String(body.notes || "").trim();
+  const raw = body.capabilities;
+  const capabilities = Array.isArray(raw) ? raw.map(String) : raw ? [String(raw)] : [];
+  if (!businessName || !contactName || whatsappPhone.length < 10 || !category || !address) return sendHtml(res, 400, partnerPortalPage("Please complete all required fields.", false));
+  await supabaseRequest("fetch_partner_applications", { method:"POST", headers:{Prefer:"return=minimal"}, body:JSON.stringify({business_name:businessName,contact_name:contactName,whatsapp_phone:whatsappPhone,category,subcategory:subcategory||null,address,service_area:serviceArea||null,capabilities,notes:notes||null,status:"pending",source:"partner_portal"}) });
+  return sendHtml(res, 200, partnerPortalPage("Application received. Fetch will review it and contact you on WhatsApp before activation.", true));
+}
+
 function sendHtml(res, statusCode, html) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -357,6 +380,7 @@ async function handleConnectorStatus(req, res) {
 export default async function handler(req, res) {
   if (req.method === "GET") {
     const requestUrl = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
+    if (requestUrl.searchParams.get("partner") === "1") return sendHtml(res, 200, partnerPortalPage());
     if (requestUrl.searchParams.get("status") === "1") {
       try { return await handleConnectorStatus(req, res); }
       catch (error) { console.error("FETCH CONNECTOR STATUS ERROR:", error); return res.status(500).json({ success:false, error:"connector_status_failed" }); }
