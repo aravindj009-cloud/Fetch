@@ -2294,7 +2294,7 @@ async function ensureWhatsAppBusinessProfile() {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          websites: ["https://tryfetch.in/connectors"],
+          websites: ["https://tryfetch.in/connectors", "https://tryfetch.in/api/fetch/context?partner=1"],
         }),
       }
     );
@@ -2305,7 +2305,7 @@ async function ensureWhatsAppBusinessProfile() {
       return;
     }
 
-    console.log("FETCH WHATSAPP PROFILE: Connectors link configured");
+    console.log("FETCH WHATSAPP PROFILE: Connectors + partner onboarding links configured");
   } catch (error) {
     console.warn("FETCH WHATSAPP PROFILE SYNC ERROR:", error?.message || error);
   }
