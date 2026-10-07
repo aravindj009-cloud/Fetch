@@ -116,6 +116,12 @@ import {
 } from "../../lib/fetch-universal-execution.mjs";
 
 import { classifyIntent } from "../../lib/fetch-intelligence.mjs";
+import { getProviderConnection } from "../../lib/fetch-provider-connections.mjs";
+import {
+  prepareInstamartOrder,
+  confirmInstamartCheckout,
+  checkInstamartPaymentStatus,
+} from "../../lib/fetch-instamart-execution.mjs";
 
 function sleep(ms) {
   return new Promise((resolve) =>
@@ -2311,6 +2317,7 @@ async function ensureWhatsAppBusinessProfile() {
 
 async function createWhatsAppOnboardingToken(phone) {
   const normalizedPhone = normalizePhone(phone);
+  const conversationId = "whatsapp:" + normalizedPhone;
   const expiresAt = Math.floor(Date.now() / 1000) + 15 * 60;
   const secret =
     String(process.env.FETCH_ONBOARDING_SECRET || "").trim() ||
@@ -2319,6 +2326,7 @@ async function createWhatsAppOnboardingToken(phone) {
   const payload = Buffer.from(
     JSON.stringify({
       phone: normalizedPhone,
+      conversation_id: conversationId,
       exp: expiresAt,
     }),
     "utf8"
@@ -7153,6 +7161,445 @@ async function tryUniversalFetchCustomerRequest({
 }
 
 /* =========================================================
+   WHATSAPP INSTAMART EXECUTION
+   Connected Instamart is an execution path for generic physical
+   commerce. Existing local-store/shopper routing remains the fallback.
+========================================================= */
+
+function instamartConversationId(phone) {
+  return "whatsapp:" + normalizePhone(phone);
+}
+
+async function getWhatsAppInstamartConnection(phone) {
+  const conversationId = instamartConversationId(phone);
+  return (
+    await getProviderConnection({ conversationId, providerId: "swiggy_instamart" }) ||
+    await getProviderConnection({ conversationId, providerId: "instamart" }) ||
+    await getProviderConnection({ conversationId, providerId: "swiggy" })
+  );
+}
+
+async function getWhatsAppConversationContext(phone) {
+  const conversationId = instamartConversationId(phone);
+  try {
+    const rows = await supabaseRequest(
+      "fetch_conversation_context?conversation_id=eq." +
+      encodeURIComponent(conversationId) +
+      "&select=id,conversation_id,context&limit=1"
+    );
+    return Array.isArray(rows) && rows.length ? rows[0] : null;
+  } catch (error) {
+    console.warn("FETCH WHATSAPP CONTEXT READ ERROR:", error?.message || error);
+    return null;
+  }
+}
+
+async function saveWhatsAppConversationContext(phone, context) {
+  const conversationId = instamartConversationId(phone);
+  const existing = await getWhatsAppConversationContext(phone);
+  const payload = {
+    conversation_id: conversationId,
+    channel: "whatsapp",
+    context: context && typeof context === "object" ? context : {},
+    last_user_text: null,
+    updated_at: new Date().toISOString(),
+  };
+
+  try {
+    if (existing?.id) {
+      await supabaseRequest(
+        "fetch_conversation_context?id=eq." + encodeURIComponent(existing.id),
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify(payload),
+        }
+      );
+    } else {
+      await supabaseRequest("fetch_conversation_context", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(payload),
+      });
+    }
+  } catch (error) {
+    console.warn("FETCH WHATSAPP CONTEXT WRITE ERROR:", error?.message || error);
+  }
+}
+
+function parseInstamartItems(itemsText) {
+  const raw = String(itemsText || "")
+    .replace(/\b(?:please|can you|could you)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!raw) return [];
+
+  const parts = raw
+    .split(/\s*,\s*|\s+and\s+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts.map((part) => {
+    const match = part.match(
+      /^(?:about\s+)?(\d+(?:\.\d+)?)\s*(kg|kgs|g|gram|grams|l|ltr|litre|litres|ml|pcs?|pieces?)\s*(?:of\s+)?(.+)$/i
+    );
+
+    if (!match) {
+      return { item: part.replace(/^of\s+/i, "").trim(), quantity: 1, unit: null };
+    }
+
+    return {
+      item: match[3].trim(),
+      quantity: Number(match[1]),
+      unit: match[2].toLowerCase(),
+    };
+  }).filter((item) => item.item);
+}
+
+function formatInstamartCartForWhatsApp(result) {
+  const cart = result?.cart || {};
+  const items = Array.isArray(cart?.items) ? cart.items : [];
+  const pricing = cart?.pricing || {};
+  const lines = items.map((item) => {
+    const qty = Number(item?.quantity || 1);
+    const price = item?.subtotal ?? item?.total ?? item?.final_price ?? item?.price;
+    const priceText = price != null ? " — ₹" + Number(price).toFixed(0) : "";
+    return "• " + (item?.name || "Instamart item") + " × " + qty + priceText;
+  });
+
+  const total = pricing?.to_pay ?? pricing?.total ?? pricing?.grandTotal ?? null;
+  const delivery = cart?.address?.addressLine || cart?.address?.displayAddress || cart?.address?.label || "";
+
+  return (
+    (lines.length ? lines.join("\n") : "• Your selected Instamart items") +
+    (delivery ? "\n\n📍 " + delivery : "") +
+    (total != null ? "\n\n💰 Total: ₹" + Number(total).toFixed(0) : "")
+  );
+}
+
+function normalizeInstamartPaymentMethods(result) {
+  const source = result?.paymentOptions || result?.cart?.paymentOptions || {};
+  const methods =
+    (Array.isArray(source?.allMethods) && source.allMethods) ||
+    (Array.isArray(source?.availablePaymentMethods) && source.availablePaymentMethods) ||
+    [];
+  return methods.filter((method) => method && method.id);
+}
+
+async function startConnectedInstamartOrder({ phone, customer, userMessage, itemsText }) {
+  const connection = await getWhatsAppInstamartConnection(phone);
+  if (!connection?.access_token) return { handled: false, reason: "not_connected" };
+
+  const items = parseInstamartItems(itemsText);
+  if (!items.length) return { handled: false, reason: "no_items" };
+
+  const prepared = await prepareInstamartOrder({
+    accessToken: connection.access_token,
+    items,
+    autoSelect: false,
+  });
+
+  if (!prepared?.success) {
+    console.warn("FETCH INSTAMART PREPARE ERROR:", JSON.stringify(prepared).slice(0, 1200));
+    return { handled: false, reason: "provider_error", prepared };
+  }
+
+  if (prepared.status === "address_selection_required") {
+    const addresses = Array.isArray(prepared.addresses) ? prepared.addresses : [];
+    if (!addresses.length) {
+      return { handled: false, reason: "no_saved_address", prepared };
+    }
+
+    const addressMap = {};
+    const rows = addresses.slice(0, 10).map((address, index) => {
+      const key = "fetch_im_address_" + index;
+      addressMap[key] = String(address.id || address.addressId || "");
+      return {
+        id: key,
+        title: String(address.addressTag || address.addressCategory || ("Address " + (index + 1))).slice(0, 24),
+        description: String(address.addressLine || address.displayAddress || address.address || "").slice(0, 72),
+      };
+    });
+
+    const current = await getWhatsAppConversationContext(phone);
+    const context = current?.context && typeof current.context === "object" ? current.context : {};
+    context.instamart = {
+      status: "address_selection",
+      items,
+      addressMap,
+      customerId: customer?.id || null,
+    };
+    await saveWhatsAppConversationContext(phone, context);
+
+    await sendWhatsAppList(
+      phone,
+      "I found your Instamart account. Which delivery address should I use?",
+      rows,
+      { header: "Instamart", buttonText: "Choose address", sectionTitle: "Saved addresses" }
+    );
+    return { handled: true, status: "address_selection" };
+  }
+
+  return { handled: false, reason: "unexpected_prepare_status", prepared };
+}
+
+async function continueConnectedInstamartOrder({ phone, customer, userMessage, interactiveChoice }) {
+  const connection = await getWhatsAppInstamartConnection(phone);
+  if (!connection?.access_token) return { handled: false, reason: "not_connected" };
+
+  const current = await getWhatsAppConversationContext(phone);
+  const context = current?.context && typeof current.context === "object" ? current.context : {};
+  const state = context.instamart;
+  if (!state) return { handled: false, reason: "no_state" };
+
+  const choiceId = String(interactiveChoice?.id || "").trim();
+  const text = String(userMessage || "").trim();
+
+  if (state.status === "address_selection") {
+    const addressId = state.addressMap?.[choiceId];
+    if (!addressId) return { handled: false, reason: "not_address_choice" };
+
+    const prepared = await prepareInstamartOrder({
+      accessToken: connection.access_token,
+      items: state.items || [],
+      addressId,
+      autoSelect: true,
+    });
+
+    if (!prepared?.success) {
+      await sendWhatsAppMessage(phone, "I couldn't prepare that Instamart cart right now. I haven't placed anything. Please try the request again.");
+      return { handled: true, status: "provider_error" };
+    }
+
+    if (prepared.status === "awaiting_product_selection") {
+      await sendWhatsAppMessage(
+        phone,
+        "I found more than one suitable Instamart variant for " +
+        (prepared.unresolvedItems || []).join(", ") +
+        ". Please tell me which exact pack you want."
+      );
+      return { handled: true, status: "product_selection" };
+    }
+
+    if (prepared.status !== "awaiting_checkout_confirmation") {
+      await sendWhatsAppMessage(phone, prepared.message || "I couldn't finish preparing the Instamart cart.");
+      return { handled: true, status: prepared.status || "provider_error" };
+    }
+
+    const paymentMethods = normalizeInstamartPaymentMethods(prepared);
+    const paymentMap = {};
+    const paymentRows = paymentMethods.slice(0, 10).map((method, index) => {
+      const key = "fetch_im_payment_" + index;
+      paymentMap[key] = {
+        id: String(method.id),
+        paymentMethod: String(method.paymentMethod || method.groupName || method.kind || method.id),
+      };
+      return {
+        id: key,
+        title: String(method.displayName || method.name || method.id).slice(0, 24),
+        description: String(method.groupName || method.paymentMethod || "Available payment method").slice(0, 72),
+      };
+    });
+
+    const nextContext = {
+      ...context,
+      instamart: {
+        ...state,
+        status: "payment_selection",
+        addressId: prepared.addressId || addressId,
+        address: prepared.address || null,
+        cart: prepared.cart || null,
+        paymentMap,
+      },
+    };
+    await saveWhatsAppConversationContext(phone, nextContext);
+
+    const summary = formatInstamartCartForWhatsApp(prepared);
+    if (paymentRows.length) {
+      await sendWhatsAppList(
+        phone,
+        "Review your Instamart cart:\n\n" + summary + "\n\nChoose a payment method. I will ask for confirmation before checkout.",
+        paymentRows,
+        { header: "Instamart cart", buttonText: "Choose payment", sectionTitle: "Payment methods" }
+      );
+    } else {
+      await sendWhatsAppMessage(
+        phone,
+        "Review your Instamart cart:\n\n" + summary + "\n\nI couldn't retrieve the live payment methods, so I won't place the order yet."
+      );
+    }
+    return { handled: true, status: "payment_selection" };
+  }
+
+  if (state.status === "payment_selection") {
+    const selected = state.paymentMap?.[choiceId];
+    if (!selected) return { handled: false, reason: "not_payment_choice" };
+
+    const nextContext = {
+      ...context,
+      instamart: { ...state, status: "checkout_confirmation", selectedPayment: selected },
+    };
+    await saveWhatsAppConversationContext(phone, nextContext);
+
+    await sendWhatsAppButtons(
+      phone,
+      "You're about to place this Instamart order:\n\n" +
+      formatInstamartCartForWhatsApp({ cart: state.cart }) +
+      "\n\nPayment: " + selected.paymentMethod +
+      "\n\nPlace the order?",
+      [
+        { id: "fetch_im_confirm_yes", title: "Place order" },
+        { id: "fetch_im_confirm_no", title: "Cancel" },
+      ]
+    );
+    return { handled: true, status: "checkout_confirmation" };
+  }
+
+  if (state.status === "checkout_confirmation") {
+    const normalized = text.toLowerCase();
+    const yes = choiceId === "fetch_im_confirm_yes" || /^(yes|y|place|confirm|place order|confirm order)$/i.test(normalized);
+    const no = choiceId === "fetch_im_confirm_no" || /^(no|n|cancel|cancel order)$/i.test(normalized);
+
+    if (no) {
+      await saveWhatsAppConversationContext(phone, { ...context, instamart: null });
+      await sendWhatsAppMessage(phone, "Cancelled. I haven't placed the Instamart order.");
+      return { handled: true, status: "cancelled" };
+    }
+    if (!yes) return { handled: false, reason: "confirmation_required" };
+
+    const selected = state.selectedPayment;
+    const checkout = await confirmInstamartCheckout({
+      accessToken: connection.access_token,
+      addressId: state.addressId,
+      paymentMethod: selected?.paymentMethod || selected?.id,
+      intentApp: selected?.kind === "intent" ? selected.id : undefined,
+      generateUPIQR: selected?.kind === "qr",
+      confirmed: true,
+    });
+
+    if (!checkout?.success) {
+      await sendWhatsAppMessage(phone, checkout?.message || "Instamart checkout could not be completed. No order was confirmed.");
+      return { handled: true, status: "checkout_failed" };
+    }
+
+    const payment = checkout?.payment || checkout?.data || {};
+    const providerOrderId = checkout?.orderId || payment?.orderId || null;
+    const paasId = payment?.paasId || checkout?.paasId || null;
+
+    if (checkout.status === "order_placed") {
+      await saveWhatsAppConversationContext(phone, { ...context, instamart: null });
+      await sendWhatsAppMessage(
+        phone,
+        "Order placed on Instamart ✅\n\n" +
+        (providerOrderId ? "Order: " + providerOrderId + "\n" : "") +
+        formatInstamartCartForWhatsApp({ cart: state.cart })
+      );
+      return { handled: true, status: "order_placed", orderId: providerOrderId };
+    }
+
+    await saveWhatsAppConversationContext(phone, {
+      ...context,
+      instamart: {
+        ...state,
+        status: "awaiting_payment",
+        providerOrderId,
+        paasId,
+      },
+    });
+
+    const paymentUrl = payment?.upiIntentUrl || payment?.bridgeUrl || null;
+    await sendWhatsAppButtons(
+      phone,
+      "The Instamart order is waiting for payment." +
+      (paymentUrl ? "\n\nPay here: " + paymentUrl : "") +
+      "\n\nAfter you complete payment, tap the button below.",
+      [{ id: "fetch_im_paid", title: "I've paid" }]
+    );
+    return { handled: true, status: "awaiting_payment" };
+  }
+
+  if (state.status === "awaiting_payment") {
+    const paid = choiceId === "fetch_im_paid" || /^(paid|i.?ve paid|payment done|done)$/i.test(text);
+    if (!paid) return { handled: false, reason: "payment_pending" };
+
+    if (!state.paasId) {
+      await sendWhatsAppMessage(phone, "I don't have a payment reference to verify yet. Please check the Instamart order status before trying again.");
+      return { handled: true, status: "payment_reference_missing" };
+    }
+
+    const paymentStatus = await checkInstamartPaymentStatus({
+      accessToken: connection.access_token,
+      paasId: state.paasId,
+      orderId: state.providerOrderId || undefined,
+    });
+
+    if (paymentStatus?.status === "order_placed") {
+      await saveWhatsAppConversationContext(phone, { ...context, instamart: null });
+      await sendWhatsAppMessage(
+        phone,
+        "Payment received and your Instamart order is confirmed ✅" +
+        (state.providerOrderId ? "\nOrder: " + state.providerOrderId : "")
+      );
+      return { handled: true, status: "order_placed", orderId: state.providerOrderId };
+    }
+
+    await sendWhatsAppMessage(phone, paymentStatus?.message || "Payment is still pending. I won't place another order.");
+    return { handled: true, status: paymentStatus?.status || "awaiting_payment" };
+  }
+
+  return { handled: false, reason: "unknown_state" };
+}
+
+async function maybeHandleConnectedInstamart({
+  phone,
+  customer,
+  userMessage,
+  interactiveChoice = null,
+}) {
+  const normalizedText = String(userMessage || "").trim();
+  const state = await getWhatsAppConversationContext(phone);
+  const instamartState = state?.context?.instamart;
+
+  if (instamartState) {
+    return continueConnectedInstamartOrder({
+      phone,
+      customer,
+      userMessage: normalizedText,
+      interactiveChoice,
+    });
+  }
+
+  // Let users explicitly request a connector link from WhatsApp.
+  if (/\b(?:connect|link|enable)\b.*\b(?:instamart|swiggy)\b/i.test(normalizedText)) {
+    const token = await createWhatsAppOnboardingToken(phone);
+    const link = "https://tryfetch.in/api/fetch/context?token=" + encodeURIComponent(token) + "&connector=instamart";
+    await sendWhatsAppMessage(
+      phone,
+      "Connect Instamart to Fetch here:\n\n" + link + "\n\nOnce connected, come back here and send your grocery request again."
+    );
+    return { handled: true, status: "connection_link_sent" };
+  }
+
+  if (!isExplicitNewOrderRequest(normalizedText)) return { handled: false, reason: "not_new_order" };
+
+  const request = extractFlexibleShoppingRequest(normalizedText);
+  const requestedStore = cleanRequestedStoreName(String(request?.store || "").trim());
+  const genericStore = !requestedStore || looksLikeNearbyStoreRequest(requestedStore);
+  if (!genericStore) return { handled: false, reason: "named_store" };
+
+  const connection = await getWhatsAppInstamartConnection(phone);
+  if (!connection?.access_token) return { handled: false, reason: "not_connected" };
+
+  return startConnectedInstamartOrder({
+    phone,
+    customer,
+    userMessage: normalizedText,
+    itemsText: request?.items,
+  });
+}
+
+/* =========================================================
    CUSTOMER ENGINE
 ========================================================= */
 
@@ -7161,6 +7608,7 @@ async function handleCustomerMessage({
   profileName = "",
   userMessage,
   location = null,
+  interactiveChoice = null,
 }) {
   const normalizedPhone =
     normalizePhone(phone);
@@ -7170,6 +7618,25 @@ async function handleCustomerMessage({
       normalizedPhone,
       profileName
     );
+
+  /*
+    Connected Instamart owns generic grocery execution on WhatsApp.
+    If it is unavailable or the user named a specific store, fall through
+    to the existing physical order engine unchanged.
+  */
+  try {
+    const instamartResult = await maybeHandleConnectedInstamart({
+      phone: normalizedPhone,
+      customer,
+      userMessage,
+      interactiveChoice,
+    });
+    if (instamartResult?.handled) return;
+  } catch (error) {
+    console.error("FETCH WHATSAPP INSTAMART ROUTING ERROR:", error);
+    // Never break the existing local-store/shopper fallback because of
+    // a connector/provider error.
+  }
 
   // Clean WhatsApp beta handoff: the shareable public beta link opens
   // WhatsApp with "Hi Fetch!" only. Activate the customer server-side so
@@ -13466,6 +13933,7 @@ export default async function handler(
       profileName,
       text,
       location,
+      interactiveChoice,
     } = incoming;
 
     /*
@@ -13776,6 +14244,7 @@ export default async function handler(
           text ||
           "Shared a WhatsApp location pin",
         location,
+        interactiveChoice,
       });
     } else if (
       shopperIsActive &&
