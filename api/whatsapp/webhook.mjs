@@ -2406,7 +2406,7 @@ async function maybeSendCustomerWelcome({
       phone,
       "Set up your Fetch profile once — name, address and 📍 location. Fetch will use it automatically when finding nearby partners.\n\n" +
       "👤 My Fetch Profile\nhttps://tryfetch.in/api/fetch/context?profile=1&token=" + encodeURIComponent(token) +
-      "\n\n🔌 Connectors\nhttps://tryfetch.in/connectors"
+      "\n\n🔌 Connectors\nhttps://tryfetch.in/api/fetch/context?token=" + encodeURIComponent(token)
     );
     return true;
   } catch (error) {
