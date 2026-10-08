@@ -1,14 +1,7 @@
 /* V8 Context-aware decision endpoint */
 import crypto from "node:crypto";
 import { createOAuthState, consumeOAuthState, saveProviderConnection, getProviderConnection } from "../../lib/fetch-provider-connections.mjs";
-import { processFetchV8Request } from "../../lib/fetch-v8.mjs";
-import {
-  prepareInstamartOrder,
-  applyInstamartSelection,
-  confirmInstamartCheckout,
-  checkInstamartPaymentStatus,
-  trackInstamartOrder,
-} from "../../lib/fetch-instamart-execution.mjs";
+
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://skfxzagxlxputwpwxwbe.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE;
@@ -498,6 +491,14 @@ export default async function handler(req, res) {
         });
       }
 
+      const {
+        prepareInstamartOrder,
+        applyInstamartSelection,
+        confirmInstamartCheckout,
+        checkInstamartPaymentStatus,
+        trackInstamartOrder,
+      } = await import("../../lib/fetch-instamart-execution.mjs");
+
       if (action === "instamart_prepare") {
         return res.status(200).json(await prepareInstamartOrder({
           accessToken,
@@ -545,6 +546,7 @@ export default async function handler(req, res) {
     }
 
     if (!body.text || typeof body.text !== "string") return res.status(400).json({ error: "text is required" });
+    const { processFetchV8Request } = await import("../../lib/fetch-v8.mjs");
     const result = await processFetchV8Request({ text: body.text, customerId: body.customer_id || null, conversationId: body.conversation_id || null, channel: body.channel || "api", activeTaskId: body.active_task_id || null, suppliedIntent: body.intent || null, suppliedContext: body.context || {} });
     return res.status(200).json(result);
   } catch (error) {
