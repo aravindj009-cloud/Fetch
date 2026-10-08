@@ -7406,7 +7406,32 @@ async function startConnectedInstamartOrder({ phone, customer, userMessage, item
 
   if (!prepared?.success) {
     console.warn("FETCH INSTAMART PREPARE ERROR:", JSON.stringify(prepared).slice(0, 1200));
-    return { handled: false, reason: "provider_error", prepared };
+
+    const token = await createWhatsAppOnboardingToken(phone);
+    const link =
+      "https://tryfetch.in/api/fetch/context?token=" +
+      encodeURIComponent(token) +
+      "&connector=instamart";
+
+    const current = await getWhatsAppConversationContext(phone);
+    const context = current?.context && typeof current.context === "object" ? current.context : {};
+    await saveWhatsAppConversationContext(phone, {
+      ...context,
+      instamart: {
+        status: "awaiting_connection",
+        pendingRequest: userMessage,
+        items,
+        customerId: customer?.id || null,
+      },
+    });
+
+    await sendWhatsAppMessage(
+      phone,
+      "Your Instamart session needs to be refreshed. I won't switch this request to another store.\n\nReconnect Instamart here:\n" +
+        link +
+        "\n\nOnce connected, Fetch will bring you back to this WhatsApp chat."
+    );
+    return { handled: true, status: "instamart_reconnect_required" };
   }
 
   if (prepared.status === "address_selection_required") {
