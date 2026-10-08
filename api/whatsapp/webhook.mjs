@@ -7214,11 +7214,57 @@ function instamartConversationId(phone) {
 
 async function getWhatsAppInstamartConnection(phone) {
   const conversationId = instamartConversationId(phone);
-  return (
-    await getProviderConnection({ conversationId, providerId: "swiggy_instamart" }) ||
-    await getProviderConnection({ conversationId, providerId: "instamart" }) ||
-    await getProviderConnection({ conversationId, providerId: "swiggy" })
-  );
+  const providerIds = ["swiggy_instamart", "instamart", "swiggy"];
+
+  // First use the canonical WhatsApp conversation identity.
+  for (const providerId of providerIds) {
+    const direct = await getProviderConnection({ conversationId, providerId });
+    if (direct?.access_token) return direct;
+  }
+
+  // A user may have connected Swiggy/Instamart from the Fetch website.
+  // Website OAuth historically stored the connection against a web
+  // conversation ID. Resolve those connections through the same customer
+  // record so the connector is shared across web and WhatsApp.
+  try {
+    const customerRows = await supabaseRequest(
+      "customers?phone=eq." + encodeURIComponent(normalizePhone(phone)) +
+      "&select=id&limit=1"
+    );
+    const customerId = Array.isArray(customerRows) && customerRows[0]?.id
+      ? customerRows[0].id
+      : null;
+
+    if (customerId) {
+      const contextRows = await supabaseRequest(
+        "fetch_conversation_context?customer_id=eq." +
+        encodeURIComponent(customerId) +
+        "&select=conversation_id,channel,updated_at&order=updated_at.desc&limit=20"
+      );
+
+      for (const row of Array.isArray(contextRows) ? contextRows : []) {
+        const otherConversationId = String(row?.conversation_id || "").trim();
+        if (!otherConversationId || otherConversationId === conversationId) continue;
+
+        for (const providerId of providerIds) {
+          const connection = await getProviderConnection({
+            conversationId: otherConversationId,
+            providerId,
+          });
+          if (connection?.access_token) {
+            return connection;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(
+      "FETCH CROSS-CHANNEL CONNECTOR LOOKUP ERROR:",
+      error?.message || error
+    );
+  }
+
+  return null;
 }
 
 async function getWhatsAppConversationContext(phone) {
