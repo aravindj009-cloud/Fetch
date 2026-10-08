@@ -7701,11 +7701,23 @@ async function maybeHandleConnectedInstamart({
       encodeURIComponent(token) +
       "&connector=instamart";
 
+    const current = await getWhatsAppConversationContext(phone);
+    const context = current?.context && typeof current.context === "object" ? current.context : {};
+    await saveWhatsAppConversationContext(phone, {
+      ...context,
+      instamart: {
+        status: "awaiting_connection",
+        pendingRequest: normalizedText,
+        items: parseInstamartItems(request?.items),
+        customerId: customer?.id || null,
+      },
+    });
+
     await sendWhatsAppMessage(
       phone,
       "I can get this from Instamart through Fetch. Connect your Instamart account here:\n\n" +
       link +
-      "\n\nAfter connecting, come back here and send the same request again. I won't place an order without your confirmation."
+      "\n\nAfter connecting, you'll come back to this WhatsApp chat and I’ll continue your request automatically."
     );
     return { handled: true, status: "instamart_connection_required" };
   }
