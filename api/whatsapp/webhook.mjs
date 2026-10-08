@@ -7898,9 +7898,18 @@ async function maybeHandleFetchPartnerDiscovery({
     return { handled: true, status: "partner_selected", partner: selected };
   }
 
+  const detectedService = detectFetchPartnerService(userMessage);
+
+  // A previous partner request may be waiting for a location, but a new
+  // unrelated request must start a fresh Fetch task. Do not let stale
+  // partner state hijack requests such as "Get me a KitKat".
   const service =
-    detectFetchPartnerService(userMessage) ||
-    (partnerState?.status === "awaiting_location" ? partnerState.service : null);
+    detectedService ||
+    (partnerState?.status === "awaiting_location" &&
+      (!String(userMessage || "").trim()
+        ? partnerState.service
+        : null));
+
   if (!service) return { handled: false, reason: "not_partner_service" };
 
   let latitude = Number(location?.latitude);
