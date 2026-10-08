@@ -423,7 +423,8 @@ async function handleConnectorStatus(req, res) {
 export default async function handler(req, res) {
   if (req.method === "GET") {
     const requestUrl = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
-    if (requestUrl.searchParams.get("partner") === "1") return sendHtml(res, 200, partnerPortalPage());\n    if (requestUrl.searchParams.get("profile") === "1") return await handleCustomerProfile(req, res);
+    if (requestUrl.searchParams.get("partner") === "1") return sendHtml(res, 200, partnerPortalPage());
+    if (requestUrl.searchParams.get("profile") === "1") return await handleCustomerProfile(req, res);
     if (requestUrl.searchParams.get("status") === "1") {
       try { return await handleConnectorStatus(req, res); }
       catch (error) { console.error("FETCH CONNECTOR STATUS ERROR:", error); return res.status(500).json({ success:false, error:"connector_status_failed" }); }
@@ -479,7 +480,8 @@ export default async function handler(req, res) {
      * keep Instamart execution inside this already-deployed serverless
      * function so the Hobby-plan 12-function limit is not increased.
      */
-    const action = String(body.action || "").trim();\n    if (action === "profile_update") return await handleCustomerProfileUpdate(req, res);
+    const action = String(body.action || "").trim();
+    if (action === "profile_update") return await handleCustomerProfileUpdate(req, res);
     if (action.startsWith("instamart_")) {
       const conversationId = String(body.conversation_id || body.conversationId || "").trim();
       if (!conversationId) return res.status(400).json({ success: false, error: "conversation_id_required" });
