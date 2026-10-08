@@ -1,6 +1,14 @@
 /* V8 Context-aware decision endpoint */
 import crypto from "node:crypto";
-import { createOAuthState, consumeOAuthState, saveProviderConnection, getProviderConnection } from "../../lib/fetch-provider-connections.mjs";
+let providerConnectionsModulePromise;
+async function providerConnectionsModule() {
+  providerConnectionsModulePromise ||= import("../../lib/fetch-provider-connections.mjs");
+  return providerConnectionsModulePromise;
+}
+async function createOAuthState(args) { return (await providerConnectionsModule()).createOAuthState(args); }
+async function consumeOAuthState(state) { return (await providerConnectionsModule()).consumeOAuthState(state); }
+async function saveProviderConnection(args) { return (await providerConnectionsModule()).saveProviderConnection(args); }
+async function getProviderConnection(args) { return (await providerConnectionsModule()).getProviderConnection(args); }
 
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://skfxzagxlxputwpwxwbe.supabase.co";
