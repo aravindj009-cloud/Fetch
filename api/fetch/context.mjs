@@ -259,6 +259,9 @@ function makePkce() {
 }
 
 function connectorCallbackUrl(provider) {
+  if (provider === "swiggy") {
+    return "https://fetch-website-tan.vercel.app/api/fetch/swiggy/callback.mjs";
+  }
   return FETCH_BASE + "/api/fetch/context.mjs?" + (provider === "google" ? "google_callback=1" : "swiggy_callback=1");
 }
 
