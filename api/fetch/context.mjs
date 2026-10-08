@@ -288,6 +288,71 @@ async function registerSwiggyClient(redirectUri) {
   return { clientId: data.client_id, clientSecret: data.client_secret || null };
 }
 
+async function handleOAuthWhatsAppResume(req, res) {
+  const url = new URL(req.url, FETCH_BASE);
+  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  if (!conversationId.startsWith("whatsapp:")) {
+    return sendHtml(res, 400, onboardingPage("Invalid WhatsApp session", "Please return to Fetch.", false));
+  }
+
+  const phone = conversationId.slice("whatsapp:".length);
+  if (phone.length < 8 || phone.length > 15 || !/^\d+$/.test(phone)) {
+    return sendHtml(res, 400, onboardingPage("Invalid WhatsApp session", "Please return to Fetch.", false));
+  }
+
+  const contextRows = await supabaseRequest(
+    "fetch_conversation_context?conversation_id=eq." +
+    encodeURIComponent(conversationId) +
+    "&select=context&limit=1"
+  );
+  const context =
+    Array.isArray(contextRows) && contextRows[0]?.context && typeof contextRows[0].context === "object"
+      ? contextRows[0].context
+      : {};
+  const pendingRequest = String(context?.instamart?.pendingRequest || "").trim();
+
+  const message =
+    "Instamart is connected to Fetch.\n\n" +
+    (pendingRequest
+      ? "I’m ready to continue your request: " + pendingRequest + "\n\nSend it again here and I’ll continue in WhatsApp."
+      : "You can now use Instamart directly from this WhatsApp chat.\n\nFor example: Get me a KitKat.");
+
+  const response = await fetch(
+    "https://graph.facebook.com/v26.0/" +
+      String(process.env.WHATSAPP_PHONE_NUMBER_ID || "") +
+      "/messages",
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + String(process.env.WHATSAPP_ACCESS_TOKEN || ""),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: phone,
+        type: "text",
+        text: { body: message },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const raw = await response.text();
+    throw new Error("WhatsApp resume message failed: " + response.status + " " + raw.slice(0, 300));
+  }
+
+  return sendHtml(
+    res,
+    200,
+    onboardingPage(
+      "Instamart connected",
+      "Fetch has connected Instamart. Return to your WhatsApp chat — your next Instamart request will stay inside WhatsApp.",
+      true
+    )
+  );
+}
+
 async function handleSwiggyConnect(req, res, provider) {
   const url = new URL(req.url, FETCH_BASE);
   const onboardingToken = String(url.searchParams.get("token") || "").trim();
@@ -425,6 +490,13 @@ export default async function handler(req, res) {
     const requestUrl = new URL(req.url, `https://${req.headers.host || "tryfetch.in"}`);
     if (requestUrl.searchParams.get("partner") === "1") return sendHtml(res, 200, partnerPortalPage());
     if (requestUrl.searchParams.get("profile") === "1") return await handleCustomerProfile(req, res);
+    if (requestUrl.searchParams.get("oauth_resume") === "1") {
+      try { return await handleOAuthWhatsAppResume(req, res); }
+      catch (error) {
+        console.error("FETCH OAUTH WHATSAPP RESUME ERROR:", error);
+        return sendHtml(res, 500, onboardingPage("Connection saved", "Your connector was saved. Return to WhatsApp to continue.", true));
+      }
+    }
     if (requestUrl.searchParams.get("status") === "1") {
       try { return await handleConnectorStatus(req, res); }
       catch (error) { console.error("FETCH CONNECTOR STATUS ERROR:", error); return res.status(500).json({ success:false, error:"connector_status_failed" }); }
