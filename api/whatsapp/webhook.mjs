@@ -7711,11 +7711,41 @@ async function maybeHandleConnectedInstamart({
     return { handled: true, status: "connection_link_sent" };
   }
 
-  if (!isExplicitNewOrderRequest(normalizedText)) return { handled: false, reason: "not_new_order" };
-
+  // A connected Instamart account owns generic shopping requests on WhatsApp.
+  // Do not let the legacy "new order" classifier or a stale physical order
+  // state intercept the request first.
   const request = extractFlexibleShoppingRequest(normalizedText);
   const requestedStore = cleanRequestedStoreName(String(request?.store || "").trim());
   const genericStore = !requestedStore || looksLikeNearbyStoreRequest(requestedStore);
+  const parsedItems = parseInstamartItems(request?.items);
+
+  if (genericStore && parsedItems.length) {
+    const connection = await getWhatsAppInstamartConnection(phone);
+
+    console.log(
+      "FETCH WHATSAPP INSTAMART PRIORITY:",
+      JSON.stringify({
+        phone,
+        hasConnection: Boolean(connection?.access_token),
+        items: parsedItems,
+        activeLegacyOrderIgnored: true,
+      })
+    );
+
+    if (connection?.access_token) {
+      return startConnectedInstamartOrder({
+        phone,
+        customer,
+        userMessage: normalizedText,
+        itemsText: request?.items,
+      });
+    }
+  }
+
+  // If there is no connector connection, preserve the existing explicit
+  // connection/onboarding behavior below.
+  if (!isExplicitNewOrderRequest(normalizedText)) return { handled: false, reason: "not_new_order" };
+
   if (!genericStore) return { handled: false, reason: "named_store" };
 
   const connection = await getWhatsAppInstamartConnection(phone);
