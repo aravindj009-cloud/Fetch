@@ -33,7 +33,9 @@ const fetchConnectors = [
     name: "GitHub",
     detail: "Read repositories, issues, pull requests and code",
     icon: "GH",
-    state: "Coming soon",
+    capabilities: ["repositories", "issues", "pull_requests", "code"],
+    connectLabel: "Connect",
+    setup: true,
   },
   {
     id: "astrotalk",
@@ -158,6 +160,13 @@ function FetchDirectoryPage({ section = "connectors" }) {
     if (connector.id === "email") {
       window.location.assign(
         `/api/fetch/context.mjs?google_connect=1&conversation_id=${encodeURIComponent(conversationId)}`
+      );
+      return;
+    }
+
+    if (connector.id === "github") {
+      window.location.assign(
+        `/api/fetch/context.mjs?github_connect=1&conversation_id=${encodeURIComponent(conversationId)}`
       );
       return;
     }
