@@ -6838,6 +6838,37 @@ async function tryDirectCustomerMemoryQuestion({
   }
 }
 
+function isLikelyPhysicalOrderContinuation(text, activeOrder) {
+  if (!activeOrder) return false;
+
+  const value = String(text || "").trim();
+  if (!value) return false;
+
+  // A URL or a clear link-follow-up is a new conversational intent unless
+  // the customer explicitly says they are acting on the order/link.
+  if (/https?:\\/\\/|www\\./i.test(value)) return false;
+  if (/^(?:read|open|check|look at|what is|what's|what does|tell me)\\b.*(?:this|that|link|page|url)/i.test(value)) {
+    return false;
+  }
+
+  if (/\\b(?:order|delivery|deliver|shopper|payment|paid|address|location|track|tracking|status|cancel|confirm|add|remove|change|replace|same|that order)\\b/i.test(value)) {
+    return true;
+  }
+
+  const items = String(activeOrder.items || "").trim();
+  if (items) {
+    const itemTokens = items
+      .toLowerCase()
+      .replace(/[^a-z0-9\\s]+/g, " ")
+      .split(/\\s+/)
+      .filter(token => token.length >= 4);
+    const lower = value.toLowerCase();
+    if (itemTokens.some(token => lower.includes(token))) return true;
+  }
+
+  return false;
+}
+
 async function tryUniversalFetchCustomerRequest({
   customer,
   phone,
@@ -6872,7 +6903,8 @@ async function tryUniversalFetchCustomerRequest({
       activeOrder &&
       ["collecting_details", "awaiting_location", "intake"].includes(
         String(activeOrder.status || "").toLowerCase()
-      );
+      ) &&
+      isLikelyPhysicalOrderContinuation(userMessage, activeOrder);
 
     if (
       physicalIntent?.domain === "physical" ||
@@ -6907,20 +6939,20 @@ async function tryUniversalFetchCustomerRequest({
   }
 
   try {
+    const orderContextRelevant =
+      isLikelyPhysicalOrderContinuation(userMessage, activeOrder);
+
     const result = await executeUniversalFetchRequest({
       text: userMessage,
       customerId: customer.id,
       conversationId: `whatsapp:${normalizedPhone}`,
       channel: "whatsapp",
-      activeTaskId: activeOrder?.id || null,
+      // Never let a stale physical order become the task context for an
+      // unrelated link, research request, or new conversational intent.
+      activeTaskId: orderContextRelevant ? (activeOrder?.id || null) : null,
 
-      /*
-        Existing physical orders are supplied only as execution context.
-        The universal bridge explicitly refuses to create a second
-        physical order when this context is absent.
-      */
       suppliedContext: {
-        physical_order: activeOrder || null,
+        physical_order: orderContextRelevant ? (activeOrder || null) : null,
         source: "whatsapp_customer",
         conversation_history: conversationHistory,
         customer: {
@@ -6931,12 +6963,12 @@ async function tryUniversalFetchCustomerRequest({
           latitude:
             customer?.latitude ??
             customer?.customer_latitude ??
-            activeOrder?.customer_latitude ??
+            (orderContextRelevant ? activeOrder?.customer_latitude : null) ??
             null,
           longitude:
             customer?.longitude ??
             customer?.customer_longitude ??
-            activeOrder?.customer_longitude ??
+            (orderContextRelevant ? activeOrder?.customer_longitude : null) ??
             null,
           city:
             customer?.city ||
@@ -6944,7 +6976,7 @@ async function tryUniversalFetchCustomerRequest({
             null,
           address:
             customer?.address ||
-            activeOrder?.delivery_address ||
+            (orderContextRelevant ? activeOrder?.delivery_address : null) ||
             null,
           country: customer?.country || "India",
         },
