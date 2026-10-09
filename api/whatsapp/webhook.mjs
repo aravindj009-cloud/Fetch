@@ -6846,12 +6846,12 @@ function isLikelyPhysicalOrderContinuation(text, activeOrder) {
 
   // A URL or a clear link-follow-up is a new conversational intent unless
   // the customer explicitly says they are acting on the order/link.
-  if (/https?:\\/\\/|www\\./i.test(value)) return false;
-  if (/^(?:read|open|check|look at|what is|what's|what does|tell me)\\b.*(?:this|that|link|page|url)/i.test(value)) {
+  if (/https?:\/\/|www\./i.test(value)) return false;
+  if (/^(?:read|open|check|look at|what is|what's|what does|tell me)\b.*(?:this|that|link|page|url)/i.test(value)) {
     return false;
   }
 
-  if (/\\b(?:order|delivery|deliver|shopper|payment|paid|address|location|track|tracking|status|cancel|confirm|add|remove|change|replace|same|that order)\\b/i.test(value)) {
+  if (/\b(?:order|delivery|deliver|shopper|payment|paid|address|location|track|tracking|status|cancel|confirm|add|remove|change|replace|same|that order)\b/i.test(value)) {
     return true;
   }
 
@@ -6859,8 +6859,8 @@ function isLikelyPhysicalOrderContinuation(text, activeOrder) {
   if (items) {
     const itemTokens = items
       .toLowerCase()
-      .replace(/[^a-z0-9\\s]+/g, " ")
-      .split(/\\s+/)
+      .replace(/[^a-z0-9\s]+/g, " ")
+      .split(/\s+/)
       .filter(token => token.length >= 4);
     const lower = value.toLowerCase();
     if (itemTokens.some(token => lower.includes(token))) return true;
