@@ -117,6 +117,7 @@ function onboardingPage(heading, body, success = true, options = {}) {
     { id: "swiggy", name: "Swiggy", detail: "Food, groceries & local delivery", icon: "S" },
     { id: "instamart", name: "Instamart", detail: "Groceries & everyday essentials", icon: "I" },
     { id: "email", name: "Email", detail: "Send, read and manage email with Fetch", icon: "@" },
+    { id: "github", name: "GitHub", detail: "Repositories, issues, pull requests & code", icon: "GH" },
   ];
   const selected = options.selected || {};
   const token = String(options.token || "");
@@ -125,7 +126,7 @@ function onboardingPage(heading, body, success = true, options = {}) {
     const connected = Boolean(selected[item.id]);
     let href = "/api/fetch/context?token=" + encodeURIComponent(token) + "&connector=" + encodeURIComponent(item.id);
     if (token && conversationId) {
-      const connectParam = item.id === "email" ? "google_connect" : item.id === "instamart" ? "instamart_connect" : "swiggy_connect";
+      const connectParam = item.id === "email" ? "google_connect" : item.id === "instamart" ? "instamart_connect" : item.id === "github" ? "github_connect" : "swiggy_connect";
       href = "/api/fetch/context?" + connectParam + "=1&token=" + encodeURIComponent(token);
     }
     return '<div class="connector '+(connected ? "connected" : "")+'"><div class="icon">'+item.icon+'</div><div class="copy"><strong>'+item.name+'</strong><span>'+item.detail+'</span></div><a class="'+(connected ? "done" : "")+'" href="'+href+'">'+(connected ? "Connected ✓" : "Connect")+'</a></div>';
@@ -262,6 +263,9 @@ function makePkce() {
 function connectorCallbackUrl(provider) {
   if (provider === "swiggy") {
     return "https://fetch-website-tan.vercel.app/api/fetch/swiggy/callback.mjs";
+  }
+  if (provider === "github") {
+    return FETCH_BASE + "/api/fetch/context.mjs?github_callback=1";
   }
   return FETCH_BASE + "/api/fetch/context.mjs?" + (provider === "google" ? "google_callback=1" : "swiggy_callback=1");
 }
@@ -422,6 +426,99 @@ async function handleSwiggyCallback(req, res) {
   ));
 }
 
+
+function githubOAuthConfig() {
+  const clientId = String(process.env.GITHUB_CLIENT_ID || "").trim();
+  const clientSecret = String(process.env.GITHUB_CLIENT_SECRET || "").trim();
+  const redirectUri = String(process.env.GITHUB_REDIRECT_URI || (FETCH_BASE + "/api/fetch/context.mjs?github_callback=1")).trim();
+  return { clientId, clientSecret, redirectUri };
+}
+
+async function handleGitHubConnect(req, res) {
+  const { clientId, redirectUri } = githubOAuthConfig();
+  if (!clientId) {
+    return sendHtml(res, 503, onboardingPage(
+      "GitHub is not configured yet",
+      "Fetch has the GitHub connector ready, but the GitHub OAuth application credentials have not been added to Vercel yet.",
+      false
+    ));
+  }
+  const url = new URL(req.url, FETCH_BASE);
+  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open Fetch in this browser first, then return to Connectors.", false));
+  const { verifier, challenge } = makePkce();
+  const state = crypto.randomBytes(32).toString("base64url");
+  await createOAuthState({ state, conversationId, providerId: "github", redirectUri, clientId, codeVerifier: verifier });
+  const authorize = new URL("https://github.com/login/oauth/authorize");
+  authorize.searchParams.set("client_id", clientId);
+  authorize.searchParams.set("redirect_uri", redirectUri);
+  authorize.searchParams.set("scope", "read:user user:email repo");
+  authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge);
+  authorize.searchParams.set("code_challenge_method", "S256");
+  authorize.searchParams.set("allow_signup", "false");
+  res.statusCode = 302;
+  res.setHeader("Location", authorize.toString());
+  return res.end();
+}
+
+async function handleGitHubCallback(req, res) {
+  const url = new URL(req.url, FETCH_BASE);
+  const state = url.searchParams.get("state");
+  if (url.searchParams.get("error")) return sendHtml(res, 400, onboardingPage("GitHub connection cancelled", "No GitHub connection was saved. Return to Connectors and try again.", false));
+  if (!state) return sendHtml(res, 400, onboardingPage("Invalid GitHub connection", "Fetch did not receive a valid OAuth state.", false));
+  const stateRow = await consumeOAuthState(state);
+  if (!stateRow || stateRow.provider_id !== "github") return sendHtml(res, 400, onboardingPage("GitHub connection expired", "Please start the GitHub connection again.", false));
+  const code = String(url.searchParams.get("code") || "").trim();
+  if (!code) return sendHtml(res, 400, onboardingPage("GitHub authorization incomplete", "GitHub did not return an authorization code.", false));
+  const { clientId, clientSecret, redirectUri } = githubOAuthConfig();
+  if (!clientId || !clientSecret) return sendHtml(res, 503, onboardingPage("GitHub is not configured yet", "Add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET to the Fetch production environment, then try again.", false));
+  const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: redirectUri || stateRow.redirect_uri,
+      code_verifier: stateRow.code_verifier || "",
+    }),
+  });
+  const data = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !data?.access_token) {
+    console.error("FETCH GITHUB TOKEN ERROR", tokenResponse.status, JSON.stringify(data).slice(0, 500));
+    return sendHtml(res, 502, onboardingPage("GitHub could not connect", "GitHub rejected the authorization. Check the Fetch callback URL and GitHub OAuth application settings.", false));
+  }
+  const accessToken = String(data.access_token);
+  const meResponse = await fetch("https://api.github.com/user", {
+    headers: {
+      "Authorization": "Bearer " + accessToken,
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2026-03-10",
+      "User-Agent": "Fetch",
+    },
+  });
+  const me = await meResponse.json().catch(() => ({}));
+  if (!meResponse.ok || !me?.id) {
+    console.error("FETCH GITHUB IDENTITY ERROR", meResponse.status, JSON.stringify(me).slice(0, 500));
+    return sendHtml(res, 502, onboardingPage("GitHub identity could not be verified", "Fetch received a token but could not verify the GitHub account. Please reconnect.", false));
+  }
+  await saveProviderConnection({
+    conversationId: stateRow.conversation_id,
+    providerId: "github",
+    accessToken,
+    refreshToken: data.refresh_token || null,
+    tokenType: data.token_type || "Bearer",
+    expiresIn: data.expires_in,
+    scopes: String(data.scope || "").split(/[ ,]+/).filter(Boolean),
+  });
+  return sendHtml(res, 200, onboardingPage(
+    "GitHub is connected.",
+    "Fetch securely stored the GitHub connection. Repositories, issues, pull requests and code are now available as an execution path.",
+    true
+  ));
+}
+
 async function handleGoogleConnect(req, res) {
   const clientId = String(process.env.GOOGLE_CLIENT_ID || "").trim();
   const clientSecret = String(process.env.GOOGLE_CLIENT_SECRET || "").trim();
@@ -478,7 +575,7 @@ async function handleConnectorStatus(req, res) {
   const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
   if (!conversationId) return res.status(400).json({ success: false, error: "conversation_id_required" });
   const result = {};
-  for (const providerId of ["swiggy", "instamart", "swiggy_instamart", "email", "uber"]) {
+  for (const providerId of ["swiggy", "instamart", "swiggy_instamart", "email", "uber", "github"]) {
     const connection = await getProviderConnection({ conversationId, providerId });
     result[providerId] = Boolean(connection?.access_token);
   }
@@ -512,6 +609,14 @@ export default async function handler(req, res) {
     if (requestUrl.searchParams.get("swiggy_callback") === "1") {
       try { return await handleSwiggyCallback(req, res); }
       catch (error) { console.error("FETCH SWIGGY CALLBACK ERROR:", error); return sendHtml(res, 500, onboardingPage("Connection failed", "Fetch could not finish the provider connection.", false)); }
+    }
+    if (requestUrl.searchParams.get("github_connect") === "1") {
+      try { return await handleGitHubConnect(req, res); }
+      catch (error) { console.error("FETCH GITHUB CONNECT ERROR:", error); return sendHtml(res, 500, onboardingPage("Fetch could not start GitHub connection", error?.message || "Please try again.", false)); }
+    }
+    if (requestUrl.searchParams.get("github_callback") === "1") {
+      try { return await handleGitHubCallback(req, res); }
+      catch (error) { console.error("FETCH GITHUB CALLBACK ERROR:", error); return sendHtml(res, 500, onboardingPage("GitHub connection failed", "Fetch could not finish the GitHub connection.", false)); }
     }
     if (requestUrl.searchParams.get("google_connect") === "1") {
       try { return await handleGoogleConnect(req, res); }
