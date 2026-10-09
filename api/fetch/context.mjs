@@ -217,7 +217,7 @@ async function handleOnboarding(req, res) {
 
   const customer = rows[0];
   const preferences = customer.connector_preferences && typeof customer.connector_preferences === "object" ? customer.connector_preferences : {};
-  const allowed = new Set(["swiggy", "instamart", "email"]);
+  const allowed = new Set(["swiggy", "instamart", "email", "github"]);
   if (connector && allowed.has(connector)) {
     preferences[connector] = true;
     await supabaseRequest(`customers?id=eq.${encodeURIComponent(customer.id)}`, {
@@ -519,7 +519,8 @@ async function handleGitHubCallback(req, res) {
   return sendHtml(res, 200, onboardingPage(
     "GitHub is connected.",
     "Fetch securely stored the GitHub connection. Repositories, issues, pull requests and code are now available as an execution path.",
-    true
+    true,
+    { showConnectors: true, selected: { github: true }, conversationId: stateRow.conversation_id }
   ));
 }
 
