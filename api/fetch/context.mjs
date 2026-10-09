@@ -444,7 +444,11 @@ async function handleGitHubConnect(req, res) {
     ));
   }
   const url = new URL(req.url, FETCH_BASE);
-  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  const onboardingToken = String(url.searchParams.get("token") || "").trim();
+  const verified = onboardingToken ? verifyOnboardingToken(onboardingToken) : null;
+  const conversationId =
+    verified?.conversationId ||
+    String(url.searchParams.get("conversation_id") || "").trim();
   if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open Fetch in this browser first, then return to Connectors.", false));
   const { verifier, challenge } = makePkce();
   const state = crypto.randomBytes(32).toString("base64url");
