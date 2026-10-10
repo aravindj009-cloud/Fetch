@@ -6890,6 +6890,107 @@ async function tryUniversalFetchCustomerRequest({
   const normalizedPhone = normalizePhone(phone);
 
   /*
+    Deterministic weather path. Do not ask for a location already present in
+    the original request, and resolve a city-only follow-up from recent chat.
+    Open-Meteo is used directly so this path does not depend on an LLM credit.
+  */
+  let recentForWeather = [];
+  try {
+    recentForWeather = await getRecentMessages(customer.id);
+  } catch {}
+
+  const weatherContext = Array.isArray(recentForWeather) &&
+    recentForWeather.slice(-8).some((entry) =>
+      /weather|forecast|temperature|rain|humidity|wind/i.test(
+        String(entry?.message || entry?.content || "")
+      )
+    );
+
+  const weatherRequest = /\b(weather|forecast|temperature|will it rain|rain tomorrow|raining)\b/i.test(userMessage);
+  const shortLocationFollowUp = weatherContext &&
+    userMessage.trim().length <= 100 &&
+    !/\b(weather|forecast|temperature|rain|humidity|wind)\b/i.test(userMessage) &&
+    /[a-z]/i.test(userMessage) &&
+    !/^(hi|hello|hey|thanks|thank you|ok|okay)$/i.test(userMessage.trim());
+
+  if (weatherRequest || shortLocationFollowUp) {
+    const locationMatch = userMessage.match(/\b(?:in|for|at)\s+(.+?)(?:\?|$)/i);
+    const previousWeatherRequest = Array.isArray(recentForWeather)
+      ? [...recentForWeather].reverse().find((entry) =>
+          /\b(weather|forecast|temperature|will it rain|rain tomorrow|raining)\b/i.test(
+            String(entry?.message || entry?.content || "")
+          )
+        )
+      : null;
+    const previousLocationMatch = String(
+      previousWeatherRequest?.message || previousWeatherRequest?.content || ""
+    ).match(/\b(?:in|for|at)\s+(.+?)(?:\?|$)/i);
+    const location = (weatherRequest
+      ? locationMatch?.[1]
+      : userMessage.trim())?.replace(/[?.!,]+$/g, "").trim()
+      || previousLocationMatch?.[1]?.replace(/[?.!,]+$/g, "").trim();
+
+    if (location) {
+      try {
+        const geoResponse = await fetch(
+          "https://geocoding-api.open-meteo.com/v1/search?name=" +
+          encodeURIComponent(location) + "&count=1&language=en&format=json"
+        );
+        const geo = await geoResponse.json();
+        const place = geo?.results?.[0];
+        if (place) {
+          const forecastResponse = await fetch(
+            "https://api.open-meteo.com/v1/forecast?latitude=" +
+            encodeURIComponent(place.latitude) +
+            "&longitude=" + encodeURIComponent(place.longitude) +
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+            "&timezone=auto&forecast_days=2"
+          );
+          const forecast = await forecastResponse.json();
+          const tomorrow = /tomorrow|next day/i.test(
+            [userMessage, previousWeatherRequest?.message || ""].join(" ")
+          );
+          const index = tomorrow ? 1 : 0;
+          const date = forecast?.daily?.time?.[index];
+          const high = forecast?.daily?.temperature_2m_max?.[index];
+          const low = forecast?.daily?.temperature_2m_min?.[index];
+          const rain = forecast?.daily?.precipitation_probability_max?.[index];
+          const weatherCode = forecast?.daily?.weather_code?.[index];
+          const descriptions = {
+            0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
+            45: "foggy", 48: "foggy", 51: "light drizzle", 53: "drizzle",
+            55: "heavy drizzle", 61: "light rain", 63: "rain", 65: "heavy rain",
+            71: "light snow", 73: "snow", 75: "heavy snow", 80: "rain showers",
+            81: "rain showers", 82: "heavy rain showers", 95: "thunderstorms",
+            96: "thunderstorms with hail", 99: "thunderstorms with hail"
+          };
+          const dayLabel = tomorrow ? "Tomorrow" : "Today";
+          const reply = high == null
+            ? "I found " + [place.name, place.admin1, place.country].filter(Boolean).join(", ") + ", but the forecast is temporarily unavailable."
+            : dayLabel + " in " +
+              [place.name, place.admin1, place.country].filter(Boolean).join(", ") +
+              ": " + (descriptions[weatherCode] || "conditions unavailable") +
+              ", " + Math.round(low) + "–" + Math.round(high) + "°C" +
+              (rain == null ? "." : ", up to " + rain + "% chance of precipitation.") +
+              "\n\nForecast source: Open-Meteo.";
+          await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "user", message: userMessage });
+          await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "assistant", message: reply });
+          await sendWhatsAppMessage(normalizedPhone, reply);
+          return { handled: true, result: { status: "completed", domain: "weather", message: reply } };
+        }
+        const reply = "I couldn't find that location. Please send the town or city name once more.";
+        await sendWhatsAppMessage(normalizedPhone, reply);
+        return { handled: true, result: { status: "needs_clarification", domain: "weather", message: reply } };
+      } catch (weatherError) {
+        console.error("FETCH WHATSAPP WEATHER ERROR:", weatherError?.message || weatherError);
+        const reply = "I couldn't retrieve the forecast just now. Please try again shortly.";
+        await sendWhatsAppMessage(normalizedPhone, reply);
+        return { handled: true, result: { status: "failed", domain: "weather", message: reply } };
+      }
+    }
+  }
+
+  /*
     GitHub is a customer-level connector. Resolve short follow-ups such as
     "connected", "yes", "status", or "what about it?" from the recent
     conversation before handing the message to the general-purpose agent.
