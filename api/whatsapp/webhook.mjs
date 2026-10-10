@@ -8354,6 +8354,47 @@ async function handleCustomerMessage({
   }
 
   /*
+    DETERMINISTIC CONVERSATION GATE
+    Greetings and simple presence checks should never require an LLM.
+    This keeps WhatsApp responsive even when a model provider is unavailable.
+  */
+  const normalizedConversationMessage = cleanConversationText(userMessage);
+  const greetingMatch = /^(?:hi|hello|hey|hey fetch|hi fetch|hello fetch|morning|good morning|good afternoon|good evening|good night|morning fetch|good morning fetch|good afternoon fetch|good evening fetch)$/i.test(
+    normalizedConversationMessage
+  );
+
+  if (greetingMatch) {
+    const greeting =
+      /good night/i.test(normalizedConversationMessage)
+        ? "Good night 👋 I’m here whenever you need me."
+        : /good morning|morning/i.test(normalizedConversationMessage)
+          ? "Good morning 👋 I’m Fetch. What do you need help with today?"
+          : /good afternoon/i.test(normalizedConversationMessage)
+            ? "Good afternoon 👋 I’m Fetch. What can I help you with?"
+            : /good evening/i.test(normalizedConversationMessage)
+              ? "Good evening 👋 I’m Fetch. What can I help you with?"
+              : "Hey 👋 I’m Fetch. What can I help you with?";
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone: normalizedPhone,
+      role: "user",
+      message: userMessage,
+    });
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone: normalizedPhone,
+      role: "assistant",
+      message: greeting,
+    });
+    await sendWhatsAppMessage(normalizedPhone, greeting);
+
+    return;
+  }
+
+  /*
     Fetch Agent / V9 first for universal requests.
     Physical shopping intentionally falls through to the existing
     order engine; digital executions can complete here.
