@@ -115,6 +115,11 @@ import {
   executeUniversalFetchRequest,
 } from "../../lib/fetch-universal-execution.mjs";
 
+import {
+  executeGitHubRequest,
+  isGitHubRequest,
+} from "../../lib/fetch-github-execution.mjs";
+
 import { classifyIntent } from "../../lib/fetch-intelligence.mjs";
 import { getProviderConnection } from "../../lib/fetch-provider-connections.mjs";
 import {
@@ -6929,6 +6934,65 @@ async function tryUniversalFetchCustomerRequest({
       "FETCH PHYSICAL ROUTING CHECK FAILED:",
       classificationError?.message || classificationError
     );
+  }
+
+  /*
+    Deterministic connector fast-path.
+    GitHub requests do not require the conversational LLM. This keeps
+    connector execution available even if the configured fallback model
+    (currently Hugging Face) is unavailable or out of credits.
+  */
+  if (isGitHubRequest(userMessage)) {
+    try {
+      const githubResult = await executeGitHubRequest({
+        text: userMessage,
+        customerId: customer.id,
+        conversationId: `whatsapp:${normalizedPhone}`,
+      });
+
+      const reply = String(
+        githubResult?.message ||
+        "I couldn't complete the GitHub request right now."
+      ).trim();
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "user",
+        message: userMessage,
+      });
+
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "assistant",
+        message: reply,
+      });
+
+      await sendWhatsAppMessage(normalizedPhone, reply);
+
+      return {
+        handled: true,
+        result: githubResult,
+      };
+    } catch (githubError) {
+      console.error(
+        "FETCH WHATSAPP GITHUB FAST-PATH ERROR:",
+        githubError
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn't complete that GitHub request right now. Please try again."
+      );
+
+      return {
+        handled: true,
+        result: null,
+      };
+    }
   }
 
   let conversationHistory = [];
