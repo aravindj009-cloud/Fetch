@@ -450,9 +450,16 @@ async function handleGitHubConnect(req, res) {
     verified?.conversationId ||
     String(url.searchParams.get("conversation_id") || "").trim();
   if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open Fetch in this browser first, then return to Connectors.", false));
+  let customerId = null;
+  if (verified?.phone) {
+    const customerRows = await supabaseRequest(
+      `customers?phone=eq.${encodeURIComponent(verified.phone)}&select=id&limit=1`
+    ).catch(() => []);
+    customerId = Array.isArray(customerRows) ? customerRows[0]?.id || null : null;
+  }
   const { verifier, challenge } = makePkce();
   const state = crypto.randomBytes(32).toString("base64url");
-  await createOAuthState({ state, conversationId, providerId: "github", redirectUri, clientId, codeVerifier: verifier });
+  await createOAuthState({ state, conversationId, customerId, providerId: "github", redirectUri, clientId, codeVerifier: verifier });
   const authorize = new URL("https://github.com/login/oauth/authorize");
   authorize.searchParams.set("client_id", clientId);
   authorize.searchParams.set("redirect_uri", redirectUri);
@@ -509,6 +516,7 @@ async function handleGitHubCallback(req, res) {
   }
   await saveProviderConnection({
     conversationId: stateRow.conversation_id,
+    customerId: stateRow.customer_id || null,
     providerId: "github",
     accessToken,
     refreshToken: data.refresh_token || null,
