@@ -6890,62 +6890,44 @@ async function tryUniversalFetchCustomerRequest({
   const normalizedPhone = normalizePhone(phone);
 
   /*
-    LAUNCH-STABILITY BOUNDARY
-
-    Physical commerce already has a mature WhatsApp order state machine
-    (order creation, address collection, ATC partner-store selection,
-    shopper fallback, pricing and customer approval). Do not put that
-    launch-critical path behind the Universal Agent.
-
-    The Universal Agent remains responsible for non-physical requests.
-    This prevents an agent/persistence/connector failure from turning a
-    valid shopping request into the generic "couldn't complete" response.
+    GitHub is a customer-level connector. Resolve short follow-ups such as
+    "connected", "yes", "status", or "what about it?" from the recent
+    conversation before handing the message to the general-purpose agent.
   */
+  let recentConversationForRouting = [];
   try {
-    const physicalIntent = classifyIntent(userMessage);
-
-    const activePhysicalOrderNeedsInput =
-      activeOrder &&
-      ["collecting_details", "awaiting_location", "intake"].includes(
-        String(activeOrder.status || "").toLowerCase()
-      ) &&
-      isLikelyPhysicalOrderContinuation(userMessage, activeOrder);
-
-    if (
-      physicalIntent?.domain === "physical" ||
-      activePhysicalOrderNeedsInput
-    ) {
-      console.log(
-        "FETCH WHATSAPP ROUTING: existing physical order engine",
-        JSON.stringify({
-          customerId: customer.id,
-          domain: physicalIntent?.domain || null,
-          confidence: physicalIntent?.confidence || null,
-          activeOrderStatus: activeOrder?.status || null,
-        })
-      );
-      return {
-        handled: false,
-        result: null,
-      };
-    }
-  } catch (classificationError) {
+    recentConversationForRouting = await getRecentMessages(customer.id);
+  } catch (routingHistoryError) {
     console.warn(
-      "FETCH PHYSICAL ROUTING CHECK FAILED:",
-      classificationError?.message || classificationError
+      "FETCH GITHUB ROUTING HISTORY ERROR:",
+      routingHistoryError?.message || routingHistoryError
     );
   }
 
-  /*
-    Deterministic connector fast-path.
-    GitHub requests do not require the conversational LLM. This keeps
-    connector execution available even if the configured fallback model
-    (currently Hugging Face) is unavailable or out of credits.
-  */
-  if (isGitHubRequest(userMessage)) {
+  const recentGitHubContext = Array.isArray(recentConversationForRouting) &&
+    recentConversationForRouting
+      .slice(-8)
+      .some((entry) =>
+        /github|github\.com|repository|repositories|repo|pull request|pull requests|issues|commits/i.test(
+          String(entry?.message || entry?.content || "")
+        )
+      );
+
+  const githubFollowUp =
+    recentGitHubContext &&
+    /^(?:connected|connect|is it connected|is this connected|status|what about it|yes|yeah|yep|tell me more|what can you do with it|what can fetch do with it)$/i.test(
+      cleanConversationText(userMessage)
+    );
+
+  const githubRequestForRouting =
+    isGitHubRequest(userMessage) || githubFollowUp;
+
+  if (githubRequestForRouting) {
     try {
       const githubResult = await executeGitHubRequest({
-        text: userMessage,
+        text: githubFollowUp && !isGitHubRequest(userMessage)
+          ? "is github connected"
+          : userMessage,
         customerId: customer.id,
         conversationId: `whatsapp:${normalizedPhone}`,
       });
@@ -6993,6 +6975,53 @@ async function tryUniversalFetchCustomerRequest({
         result: null,
       };
     }
+  }
+
+  /*
+    LAUNCH-STABILITY BOUNDARY
+
+    Physical commerce already has a mature WhatsApp order state machine
+    (order creation, address collection, ATC partner-store selection,
+    shopper fallback, pricing and customer approval). Do not put that
+    launch-critical path behind the Universal Agent.
+
+    The Universal Agent remains responsible for non-physical requests.
+    This prevents an agent/persistence/connector failure from turning a
+    valid shopping request into the generic "couldn't complete" response.
+  */
+  try {
+    const physicalIntent = classifyIntent(userMessage);
+
+    const activePhysicalOrderNeedsInput =
+      activeOrder &&
+      ["collecting_details", "awaiting_location", "intake"].includes(
+        String(activeOrder.status || "").toLowerCase()
+      ) &&
+      isLikelyPhysicalOrderContinuation(userMessage, activeOrder);
+
+    if (
+      physicalIntent?.domain === "physical" ||
+      activePhysicalOrderNeedsInput
+    ) {
+      console.log(
+        "FETCH WHATSAPP ROUTING: existing physical order engine",
+        JSON.stringify({
+          customerId: customer.id,
+          domain: physicalIntent?.domain || null,
+          confidence: physicalIntent?.confidence || null,
+          activeOrderStatus: activeOrder?.status || null,
+        })
+      );
+      return {
+        handled: false,
+        result: null,
+      };
+    }
+  } catch (classificationError) {
+    console.warn(
+      "FETCH PHYSICAL ROUTING CHECK FAILED:",
+      classificationError?.message || classificationError
+    );
   }
 
   let conversationHistory = [];
