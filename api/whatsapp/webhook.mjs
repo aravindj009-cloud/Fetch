@@ -6899,19 +6899,28 @@ async function tryUniversalFetchCustomerRequest({
     recentForWeather = await getRecentMessages(customer.id);
   } catch {}
 
-  const weatherContext = Array.isArray(recentForWeather) &&
-    recentForWeather.slice(-8).some((entry) =>
-      /weather|forecast|temperature|rain|humidity|wind/i.test(
-        String(entry?.message || entry?.content || "")
-      )
-    );
+  const recentWeatherLocationQuestion = Array.isArray(recentForWeather) &&
+    [...recentForWeather].reverse().slice(0, 4).some((entry) => {
+      const role = String(entry?.role || entry?.sender || "").toLowerCase();
+      const message = String(entry?.message || entry?.content || "");
+      return (!role || role === "assistant" || role === "bot") &&
+        /(?:what city|which city|what area|city or area|location).{0,100}(?:weather|check)|(?:weather).{0,100}(?:what city|which city|what area|city or area|location)|couldn.t find that location|send the town or city name/i.test(message);
+    });
 
   const weatherRequest = /\b(weather|forecast|temperature|will it rain|rain tomorrow|raining)\b/i.test(userMessage);
-  const shortLocationFollowUp = weatherContext &&
-    userMessage.trim().length <= 100 &&
-    !/\b(weather|forecast|temperature|rain|humidity|wind)\b/i.test(userMessage) &&
-    /[a-z]/i.test(userMessage) &&
-    !/^(hi|hello|hey|thanks|thank you|ok|okay)$/i.test(userMessage.trim());
+  const trimmedWeatherFollowUp = String(userMessage || "").trim();
+  const clearNewIntent =
+    /[?]/.test(trimmedWeatherFollowUp) ||
+    /^(?:i(?:'m| am| need| want| plan| would| will)|please|help me|tell me|show me|find me|book|order|buy|plan|recommend|explain|what|how|when|where|why)\b/i.test(trimmedWeatherFollowUp) ||
+    /\b(?:offsite|meeting|itinerary|trip|visit|visiting|prepare|preparing|github|repository|repositories|shopping|groceries|electrician|weather|forecast|temperature|order|delivery)\b/i.test(trimmedWeatherFollowUp);
+
+  const shortLocationFollowUp = recentWeatherLocationQuestion &&
+    !weatherRequest &&
+    !clearNewIntent &&
+    trimmedWeatherFollowUp.length >= 2 &&
+    trimmedWeatherFollowUp.length <= 100 &&
+    !/^(?:hi|hello|hey|thanks|thank you|ok|okay|yes|no|connected)$/i.test(trimmedWeatherFollowUp) &&
+    /[a-z]/i.test(trimmedWeatherFollowUp);
 
   if (weatherRequest || shortLocationFollowUp) {
     const locationMatch = userMessage.match(/\b(?:in|for|at)\s+(.+?)(?:\?|$)/i);
