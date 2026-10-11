@@ -8305,10 +8305,10 @@ async function maybeHandleConnectedInstamart({
     // provider address picker; never let this request fall through to the
     // legacy local-store order engine.
     if (instamartState.status === "address_selection" && !interactiveChoice) {
-      const directGroceryMatch = normalizedText.match(
+      const groceryText = normalizedText.split("\n").pop().trim().replace(/^can you get me\s+/i, "i need ");
+      const directGroceryMatch = groceryText.match(
         /^(?:can\s+i\s+order|could\s+i\s+order|may\s+i\s+order|i\s+need|i\s+want|can\s+i\s+get|could\s+i\s+get|please\s+get|order\s+me|buy\s+me)\s+(.+?)(?:\s+(?:from|at)\s+(.+))?$/i
-      );
-      const parsedRequest = extractFlexibleShoppingRequest(normalizedText);
+      );      const parsedRequest = extractFlexibleShoppingRequest(normalizedText);
       const request = parsedRequest || (directGroceryMatch
         ? { items: directGroceryMatch[1].trim(), store: directGroceryMatch[2] || "" }
         : null);
