@@ -7042,6 +7042,37 @@ async function tryUniversalFetchCustomerRequest({
   }
 
   /*
+    Provider-independent travel-planning fallback.
+    A basic itinerary is a planning request, not a live-research task. Keep
+    Fetch useful when an external model provider is out of credits.
+  */
+  const travelRequestText = String(userMessage || "").trim();
+  const travelCityMatch = travelRequestText.match(/\b(?:visit|travel to|trip to|going to|in)\s+([A-Z][A-Za-z .'-]{1,50}?)(?:[?.!,]|\s+(?:how|what|for|next|this|on)\b|$)/i);
+  const asksForItinerary =
+    /\b(?:itinerary|travel plan|trip plan|plan my trip|how should .* trip|how should the itinerary|places to visit)\b/i.test(travelRequestText) ||
+    (/\b(?:visit|visiting|travel to|trip to|going to)\b/i.test(travelRequestText) && /\b(?:plan|planning|itinerary|how should|suggest)\b/i.test(travelRequestText));
+
+  if (asksForItinerary) {
+    const city = (travelCityMatch?.[1] || "your destination").trim();
+    const reply = [
+      "Absolutely — here’s a practical starting itinerary for " + city + ".",
+      "",
+      "• **Day 1:** Arrive and check in, explore the main local attractions, then spend the evening in a well-known food or shopping area.",
+      "• **Day 2:** Visit the city’s major landmark or museum in the morning, keep the afternoon for a neighbourhood or activity you’re interested in, and leave the evening flexible.",
+      "• **Day 3 (if you have time):** Take a nearby day trip or cover anything you missed before departure.",
+      "",
+      "A few useful tips: group places by area to avoid unnecessary travel, check opening days before you go, and keep some buffer for traffic.",
+      "",
+      "Tell me your trip length, dates, and interests (food, history, shopping, nightlife, or family-friendly places), and I’ll tailor the route."
+    ].join("\n");
+
+    await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "user", message: userMessage });
+    await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "assistant", message: reply });
+    await sendWhatsAppMessage(normalizedPhone, reply);
+    return { handled: true, result: { success: true, status: "completed", execution_type: "travel_planning_fallback", message: reply } };
+  }
+
+  /*
     GitHub is a customer-level connector. Resolve short follow-ups such as
     "connected", "yes", "status", or "what about it?" from the recent
     conversation before handing the message to the general-purpose agent.
@@ -7466,7 +7497,11 @@ async function tryUniversalFetchCustomerRequest({
       null;
 
     if (agentReply) {
-      const reply = String(agentReply).trim();
+      let reply = String(agentReply).trim();
+      // Never expose raw upstream quota/provider errors to customers.
+      if (/Hugging Face 402|no remaining credits|Inference Providers|insufficient_quota|rate.?limit exceeded/i.test(reply)) {
+        reply = "I can help with that, but my AI service is temporarily out of capacity. Please try again shortly.";
+      }
 
       await saveMessage({
         customerId: customer.id,
