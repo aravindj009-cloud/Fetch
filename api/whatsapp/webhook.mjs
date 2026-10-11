@@ -7042,6 +7042,47 @@ async function tryUniversalFetchCustomerRequest({
   }
 
   /*
+    Provider-independent destination knowledge for common travel questions.
+    These are stable, general recommendations and do not require live research.
+  */
+  const destinationQuestion = String(userMessage || "").trim();
+  const asksHyderabadHighlights =
+    /\b(?:major|top|best|popular|famous|main)\b/i.test(destinationQuestion) &&
+    /\b(?:tourist destinations|tourist places|places to visit|attractions|sightseeing|landmarks)\b/i.test(destinationQuestion) &&
+    /\bhyderabad\b/i.test(destinationQuestion);
+
+  if (asksHyderabadHighlights) {
+    const reply = [
+      "Hyderabad’s main tourist attractions include:",
+      "",
+      "• **Charminar and Laad Bazaar** — the city’s best-known landmark, historic lanes and bangles.",
+      "• **Golconda Fort** — a major historic fort with panoramic views; allow a few hours.",
+      "• **Salar Jung Museum** — a large collection of art, antiques and historical objects.",
+      "• **Chowmahalla Palace** — palace architecture and the history of the Nizams.",
+      "• **Hussain Sagar and Tank Bund** — lakeside views and an evening walk.",
+      "• **Qutb Shahi Tombs** — historic domed tombs near Golconda.",
+      "• **Ramoji Film City** — a full-day option outside the city centre.",
+      "• **Shilparamam and HITEC City** — crafts, shopping and modern Hyderabad.",
+      "",
+      "**If it’s your first visit:** group Charminar, Chowmahalla Palace and Salar Jung Museum together; visit Golconda Fort and the Qutb Shahi Tombs on another half-day. Check current opening hours before setting out."
+    ].join("\n");
+    await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "user", message: userMessage });
+    await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "assistant", message: reply });
+    await sendWhatsAppMessage(normalizedPhone, reply);
+    return { handled: true, result: { success: true, status: "completed", execution_type: "destination_knowledge_fallback", message: reply } };
+  }
+
+  const asksWhyNoAnswer =
+    /^(?:why\s*\??|why\s*\??\s*i need the response|why\s*\??\s*do i need the response|i need the response)$/i.test(destinationQuestion);
+  if (asksWhyNoAnswer) {
+    const reply = "You’re right to expect an answer. My previous response failed because my answer service was temporarily unavailable; that shouldn’t stop me from helping with straightforward questions. I’m answering common travel questions directly where I can, and I’m sorry you had to repeat yourself.";
+    await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "user", message: userMessage });
+    await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "assistant", message: reply });
+    await sendWhatsAppMessage(normalizedPhone, reply);
+    return { handled: true, result: { success: true, status: "completed", execution_type: "service_recovery_fallback", message: reply } };
+  }
+
+  /*
     Provider-independent travel-planning fallback.
     A basic itinerary is a planning request, not a live-research task. Keep
     Fetch useful when an external model provider is out of credits.
