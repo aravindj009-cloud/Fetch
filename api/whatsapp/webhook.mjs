@@ -7950,6 +7950,7 @@ async function continueConnectedInstamartOrder({ phone, customer, userMessage, i
           pendingAddress: prepared.address || null,
           pendingCartItems: Array.isArray(prepared.selectedItems) ? prepared.selectedItems : [],
           productMap,
+          productOptions: options,
           unresolvedItems: unresolved,
           selectedProducts: [],
         },
