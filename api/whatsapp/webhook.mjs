@@ -8130,12 +8130,51 @@ async function maybeHandleConnectedInstamart({
   }
 
   if (instamartState && instamartState.status !== "awaiting_connection") {
-    return continueConnectedInstamartOrder({
+    // A new grocery request can arrive while an earlier Instamart address
+    // picker is still pending. Replace the pending items and refresh the
+    // provider address picker; never let this request fall through to the
+    // legacy local-store order engine.
+    if (instamartState.status === "address_selection" && !interactiveChoice) {
+      const directGroceryMatch = normalizedText.match(
+        /^(?:can\s+i\s+order|could\s+i\s+order|may\s+i\s+order|i\s+need|i\s+want|can\s+i\s+get|could\s+i\s+get|please\s+get|order\s+me|buy\s+me)\s+(.+?)(?:\s+(?:from|at)\s+(.+))?$/i
+      );
+      const parsedRequest = extractFlexibleShoppingRequest(normalizedText);
+      const request = parsedRequest || (directGroceryMatch
+        ? { items: directGroceryMatch[1].trim(), store: directGroceryMatch[2] || "" }
+        : null);
+      const items = parseInstamartItems(request?.items);
+      const requestedStore = cleanRequestedStoreName(String(request?.store || "").trim());
+      if (items.length && (!requestedStore || looksLikeNearbyStoreRequest(requestedStore))) {
+        return startConnectedInstamartOrder({
+          phone,
+          customer,
+          userMessage: normalizedText,
+          itemsText: request.items,
+        });
+      }
+      await sendWhatsAppMessage(
+        phone,
+        "Your Instamart request is waiting for an address selection. Please tap “Choose address” to continue, or send a new grocery request and I’ll refresh the order details here."
+      );
+      return { handled: true, status: "instamart_address_selection_pending" };
+    }
+
+    const continuation = await continueConnectedInstamartOrder({
       phone,
       customer,
       userMessage: normalizedText,
       interactiveChoice,
     });
+    if (continuation?.handled) return continuation;
+
+    // Active Instamart state owns the conversation until it completes or is
+    // explicitly cancelled. Do not silently route failed choices to a local
+    // store or shopper.
+    await sendWhatsAppMessage(
+      phone,
+      "Your Instamart order is still in progress. Please use the Instamart choice shown above, or send CANCEL to stop this request. I haven't placed an order."
+    );
+    return { handled: true, status: "instamart_flow_kept_in_control", reason: continuation?.reason || "continuation_not_handled" };
   }
 
   // Let users explicitly request a connector link from WhatsApp.
