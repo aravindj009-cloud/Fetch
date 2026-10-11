@@ -7851,8 +7851,8 @@ async function startConnectedInstamartOrder({ phone, customer, userMessage, item
       addressMap[key] = String(address.id || address.addressId || "");
       return {
         id: key,
-        title: String(address.addressTag || address.addressCategory || ("Address " + (index + 1))).slice(0, 24),
-        description: String(address.addressLine || address.displayAddress || address.address || "").slice(0, 72),
+        title: String(address.addressTag || address.addressCategory || address.label || address.name || address.title || address.nickname || ("Address " + (index + 1))).slice(0, 24),
+        description: String(address.addressLine || address.displayAddress || address.address || address.formattedAddress || address.fullAddress || address.completeAddress || address.addressDetails || [address.houseNo, address.street, address.locality, address.city, address.pincode].filter(Boolean).join(", ") || "").slice(0, 72),
       };
     });
 
