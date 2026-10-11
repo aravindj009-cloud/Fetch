@@ -422,7 +422,7 @@ async function handleSwiggyCallback(req, res) {
     stateRow.provider_id === "instamart" ? "Instamart is connected." : "Swiggy is connected.",
     "Fetch securely stored the provider connection. You can return to Fetch and continue your task.",
     true,
-    { showConnectors: true, selected: { swiggy: true, instamart: true }, token: onboardingToken, conversationId: stateRow.conversation_id }
+    { showConnectors: true, selected: { swiggy: true, instamart: true }, conversationId: stateRow.conversation_id }
   ));
 }
 
