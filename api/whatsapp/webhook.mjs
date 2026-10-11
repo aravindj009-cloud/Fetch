@@ -8363,11 +8363,10 @@ async function maybeHandleConnectedInstamart({
         }
         return { handled: true, status: "address_selection_updated", itemCount: items.length };
       }
-      await sendWhatsAppMessage(
-        phone,
-        "Your Instamart request is waiting for an address selection. Please tap “Choose address” to continue, or send a new grocery request and I’ll refresh the order details here."
-      );
-      return { handled: true, status: "instamart_address_selection_pending" };
+      // Do not let an unfinished grocery flow consume unrelated messages.
+      // If the incoming message was not parsed as a grocery update, leave it
+      // to the normal assistant/router while retaining the pending cart.
+      return { handled: false, reason: "pending_instamart_non_grocery_or_unparsed" };
     }
 
     const continuation = await continueConnectedInstamartOrder({
