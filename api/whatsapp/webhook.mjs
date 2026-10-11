@@ -8325,12 +8325,28 @@ async function maybeHandleConnectedInstamart({
       const items = parseInstamartItems(request?.items);
       const requestedStore = cleanRequestedStoreName(String(request?.store || "").trim());
       if (items.length && (!requestedStore || looksLikeNearbyStoreRequest(requestedStore))) {
-        return startConnectedInstamartOrder({
-          phone,
-          customer,
-          userMessage: normalizedText,
-          itemsText: request.items,
-        });
+        // Keep the current provider address picker and map; only replace the
+        // pending items. Restarting startConnectedInstamartOrder here caused
+        // the user to loop back through address selection without advancing.
+        const current = await getWhatsAppConversationContext(phone);
+        const context = current?.context && typeof current.context === "object" ? current.context : {};
+        const nextState = { ...instamartState, status: "address_selection", items };
+        context.instamart = nextState;
+        await saveWhatsAppConversationContext(phone, context);
+        const addressMap = nextState.addressMap && typeof nextState.addressMap === "object" ? nextState.addressMap : {};
+        const rows = Object.entries(addressMap).slice(0, 10).map(([id], index) => ({
+          id,
+          title: id.replace(/^fetch_im_address_/, "Address "),
+          description: "",
+        }));
+        if (rows.length) {
+          await sendWhatsAppList(phone,
+            "Updated your grocery request: " + items.map((item) => `${item.quantity || 1} ${item.unit || ""} ${item.item}`.trim()).join(", ") + ". Choose your saved address to continue.",
+            rows, { header: "Instamart", buttonText: "Choose address", sectionTitle: "Saved addresses" });
+        } else {
+          await sendWhatsAppMessage(phone, "I've updated your grocery request, but your saved address choices expired. Please send the grocery request again so I can refresh the address picker. No order has been placed.");
+        }
+        return { handled: true, status: "address_selection_updated", itemCount: items.length };
       }
       await sendWhatsAppMessage(
         phone,
