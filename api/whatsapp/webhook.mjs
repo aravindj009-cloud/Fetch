@@ -124,6 +124,7 @@ import { classifyIntent } from "../../lib/fetch-intelligence.mjs";
 import { getProviderConnection } from "../../lib/fetch-provider-connections.mjs";
 import {
   prepareInstamartOrder,
+  applyInstamartSelection,
   confirmInstamartCheckout,
   checkInstamartPaymentStatus,
 } from "../../lib/fetch-instamart-execution.mjs";
@@ -7906,13 +7907,62 @@ async function continueConnectedInstamartOrder({ phone, customer, userMessage, i
     }
 
     if (prepared.status === "awaiting_product_selection") {
-      await sendWhatsAppMessage(
+      const options = Array.isArray(prepared.productOptions) ? prepared.productOptions : [];
+      const unresolved = Array.isArray(prepared.unresolvedItems) ? prepared.unresolvedItems : [];
+      const requested = unresolved[0] || "";
+      const candidates = options.filter((option) =>
+        String(option.requested || "").toLowerCase() === String(requested).toLowerCase()
+      ).slice(0, 10);
+      if (!candidates.length) {
+        await sendWhatsAppMessage(
+          phone,
+          "I couldn't find a reliable live Instamart match for " + (requested || "one of your items") +
+          ". I haven't placed anything. You can send a more specific product name or choose another item."
+        );
+        return { handled: true, status: "product_not_found", item: requested };
+      }
+      const productMap = {};
+      const rows = candidates.map((option, index) => {
+        const id = "fetch_im_product_" + index;
+        productMap[id] = {
+          spinId: String(option.spinId),
+          ...(option.skuId ? { skuId: String(option.skuId) } : {}),
+          name: String(option.name || requested),
+          pack: option.pack || null,
+          price: option.price ?? null,
+          quantity: Number(option.quantity || 1),
+          requested: String(option.requested || requested),
+        };
+        const price = option.price == null ? "Price unavailable" : "₹" + Number(option.price).toFixed(2);
+        const pack = option.pack ? " · " + String(option.pack) : "";
+        return {
+          id,
+          title: String(option.name || requested).slice(0, 24),
+          description: (price + pack).slice(0, 72),
+        };
+      });
+      const nextContext = {
+        ...context,
+        instamart: {
+          ...state,
+          status: "product_selection",
+          pendingAddressId: addressId,
+          pendingAddress: prepared.address || null,
+          pendingCartItems: Array.isArray(prepared.selectedItems) ? prepared.selectedItems : [],
+          productMap,
+          unresolvedItems: unresolved,
+          selectedProducts: [],
+        },
+      };
+      await saveWhatsAppConversationContext(phone, nextContext);
+      await sendWhatsAppList(
         phone,
-        "I found more than one suitable Instamart variant for " +
-        (prepared.unresolvedItems || []).join(", ") +
-        ". Please tell me which exact pack you want."
+        "I matched your request to live Instamart products. Choose the exact option for " + requested +
+        ". I won't add a substitute without your choice.",
+        rows,
+        { header: "Choose product", buttonText: "View products", sectionTitle: "Instamart matches" }
       );
-      return { handled: true, status: "product_selection" };
+      return { handled: true, status: "product_selection", item: requested, optionCount: rows.length };
     }
 
     if (prepared.status !== "awaiting_checkout_confirmation") {
@@ -7962,6 +8012,101 @@ async function continueConnectedInstamartOrder({ phone, customer, userMessage, i
         phone,
         "Review your Instamart cart:\n\n" + summary + "\n\nI couldn't retrieve the live payment methods, so I won't place the order yet."
       );
+    }
+    return { handled: true, status: "payment_selection" };
+  }
+
+  if (state.status === "product_selection") {
+    const selectedProduct = state.productMap?.[choiceId];
+    if (!selectedProduct) {
+      return { handled: false, reason: "not_product_choice" };
+    }
+
+    const selectedProducts = [
+      ...(Array.isArray(state.selectedProducts) ? state.selectedProducts : []),
+      selectedProduct,
+    ];
+    const selectedName = String(selectedProduct.requested || "");
+    const remaining = (Array.isArray(state.unresolvedItems) ? state.unresolvedItems : [])
+      .filter((item) => String(item).toLowerCase() !== selectedName.toLowerCase());
+
+    if (remaining.length) {
+      const nextRequested = remaining[0];
+      const options = Array.isArray(state.productOptions) ? state.productOptions : [];
+      const candidates = options.filter((option) =>
+        String(option.requested || "").toLowerCase() === String(nextRequested).toLowerCase()
+      ).slice(0, 10);
+      const productMap = {};
+      const rows = candidates.map((option, index) => {
+        const id = "fetch_im_product_" + index;
+        productMap[id] = {
+          spinId: String(option.spinId),
+          ...(option.skuId ? { skuId: String(option.skuId) } : {}),
+          name: String(option.name || nextRequested),
+          pack: option.pack || null,
+          price: option.price ?? null,
+          quantity: Number(option.quantity || 1),
+          requested: String(option.requested || nextRequested),
+        };
+        const price = option.price == null ? "Price unavailable" : "₹" + Number(option.price).toFixed(2);
+        return { id, title: String(option.name || nextRequested).slice(0, 24), description: (price + (option.pack ? " · " + option.pack : "")).slice(0, 72) };
+      });
+      await saveWhatsAppConversationContext(phone, {
+        ...context,
+        instamart: { ...state, status: "product_selection", selectedProducts, unresolvedItems: remaining, productMap },
+      });
+      if (!rows.length) {
+        await sendWhatsAppMessage(phone, "I couldn't find a reliable live match for " + nextRequested + ". I haven't placed anything. Send a more specific name or CANCEL.");
+        return { handled: true, status: "product_not_found", item: nextRequested };
+      }
+      await sendWhatsAppList(phone, "Now choose the exact Instamart product for " + nextRequested + ".", rows,
+        { header: "Choose product", buttonText: "View products", sectionTitle: "Instamart matches" });
+      return { handled: true, status: "product_selection", item: nextRequested };
+    }
+
+    const cartItems = [
+      ...(Array.isArray(state.pendingCartItems) ? state.pendingCartItems : []),
+      ...selectedProducts.map((item) => ({
+        spinId: item.spinId,
+        ...(item.skuId ? { skuId: item.skuId } : {}),
+        quantity: Math.max(1, Number(item.quantity || 1)),
+      })),
+    ];
+    const applied = await applyInstamartSelection({
+      accessToken: connection.access_token,
+      addressId: state.pendingAddressId,
+      items: cartItems,
+    });
+    if (!applied?.success) {
+      await sendWhatsAppMessage(phone, applied?.message || "I couldn't verify the live Instamart cart. No order was placed.");
+      return { handled: true, status: applied?.status || "cart_verification_failed" };
+    }
+
+    const paymentMethods = normalizeInstamartPaymentMethods(applied);
+    const paymentMap = {};
+    const paymentRows = paymentMethods.slice(0, 10).map((method, index) => {
+      const id = "fetch_im_payment_" + index;
+      paymentMap[id] = { id: String(method.id), paymentMethod: String(method.paymentMethod || method.groupName || method.id), kind: method.kind || null };
+      return { id, title: String(method.displayName || method.name || method.id).slice(0, 24), description: String(method.groupName || method.paymentMethod || "Available payment method").slice(0, 72) };
+    });
+    await saveWhatsAppConversationContext(phone, {
+      ...context,
+      instamart: {
+        ...state,
+        status: "payment_selection",
+        addressId: applied.addressId || state.pendingAddressId,
+        address: applied.address || state.pendingAddress || null,
+        cart: applied.cart || null,
+        paymentMap,
+        selectedProducts,
+      },
+    });
+    const summary = formatInstamartCartForWhatsApp(applied);
+    if (paymentRows.length) {
+      await sendWhatsAppList(phone, "Review your Instamart cart:\n\n" + summary + "\n\nChoose a payment method. I will ask for confirmation before checkout.",
+        paymentRows, { header: "Instamart cart", buttonText: "Choose payment", sectionTitle: "Payment methods" });
+    } else {
+      await sendWhatsAppMessage(phone, "Review your Instamart cart:\n\n" + summary + "\n\nI couldn't retrieve live payment methods, so I won't place the order yet.");
     }
     return { handled: true, status: "payment_selection" };
   }
