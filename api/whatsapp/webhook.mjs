@@ -7851,8 +7851,17 @@ async function startConnectedInstamartOrder({ phone, customer, userMessage, item
       addressMap[key] = String(address.id || address.addressId || "");
       return {
         id: key,
-        title: String(address.addressTag || address.addressCategory || address.label || address.name || address.title || address.nickname || ("Address " + (index + 1))).slice(0, 24),
-        description: String(address.addressLine || address.displayAddress || address.address || address.formattedAddress || address.fullAddress || address.completeAddress || address.addressDetails || [address.houseNo, address.street, address.locality, address.city, address.pincode].filter(Boolean).join(", ") || "").slice(0, 72),
+        title: String(
+          [address.label, address.name, address.title, address.nickname, address.addressTag, address.addressCategory]
+            .map((value) => String(value || "").trim())
+            .find((value) => value && !/^address\s*\d+$/i.test(value) && !/^saved address\s*\d+$/i.test(value)) ||
+          ("Saved address " + (index + 1))
+        ).slice(0, 24),
+        description: String(
+          address.formattedAddress || address.fullAddress || address.displayAddress || address.addressLine ||
+          address.addressLine1 || address.completeAddress || address.addressDetails || address.address ||
+          [address.houseNo, address.building, address.street, address.landmark, address.locality, address.city, address.state, address.pincode].filter(Boolean).join(", ") || ""
+        ).slice(0, 72),
       };
     });
 
@@ -7864,8 +7873,13 @@ async function startConnectedInstamartOrder({ phone, customer, userMessage, item
       addressMap,
       savedAddresses: addresses.slice(0, 10).map((address, index) => ({
         id: String(address.id || address.addressId || address.address_id || ""),
-        title: String(address.addressTag || address.addressCategory || address.label || address.name || ("Address " + (index + 1))).slice(0, 24),
-        description: String(address.addressLine || address.displayAddress || address.address || address.formattedAddress || "").slice(0, 72),
+        title: String(
+          [address.label, address.name, address.title, address.nickname, address.addressTag, address.addressCategory]
+            .map((value) => String(value || "").trim())
+            .find((value) => value && !/^address\s*\d+$/i.test(value) && !/^saved address\s*\d+$/i.test(value)) ||
+          ("Saved address " + (index + 1))
+        ).slice(0, 24),
+        description: String(address.formattedAddress || address.fullAddress || address.displayAddress || address.addressLine || address.addressLine1 || address.completeAddress || address.addressDetails || address.address || "").slice(0, 72),
       })),
       customerId: customer?.id || null,
     };
