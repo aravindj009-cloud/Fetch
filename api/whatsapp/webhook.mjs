@@ -15289,8 +15289,9 @@ export default async function handler(
         profileName,
         userMessage:
           text ||
-          "Shared a WhatsApp location pin",
+          (interactiveChoice?.title ? interactiveChoice.title : "Shared a WhatsApp location pin"),
         location,
+        interactiveChoice,
       });
     }
 
