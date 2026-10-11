@@ -7168,6 +7168,18 @@ async function tryUniversalFetchCustomerRequest({
       ? `What is the weather for ${userMessage.trim()}? The user is answering your previous question asking which city or area to check. Do not ask for the location again; use this location now.`
       : userMessage;
 
+  // A clear new intent must not inherit stale weather clarification state.
+  // Keep the rest of the conversation history, but remove the weather
+  // exchange when the user changes topic to something unrelated.
+  const contextHistoryForAgent =
+    assistantAskedWeatherLocation && explicitNewIntent
+      ? conversationHistory.filter((entry) =>
+          !/weather|forecast|temperature|rain|city or area should I check|what city should I check/i.test(
+            String(entry?.message || entry?.content || "")
+          )
+        )
+      : conversationHistory;
+
   try {
     const orderContextRelevant =
       isLikelyPhysicalOrderContinuation(userMessage, activeOrder);
@@ -7184,7 +7196,7 @@ async function tryUniversalFetchCustomerRequest({
       suppliedContext: {
         physical_order: orderContextRelevant ? (activeOrder || null) : null,
         source: "whatsapp_customer",
-        conversation_history: conversationHistory,
+        conversation_history: contextHistoryForAgent,
         customer: {
           name: customer?.name || null,
           address: customer?.address || null,
