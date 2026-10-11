@@ -8152,7 +8152,16 @@ async function maybeHandleConnectedInstamart({
   // A connected Instamart account owns generic shopping requests on WhatsApp.
   // Do not let the legacy "new order" classifier or a stale physical order
   // state intercept the request first.
-  const request = extractFlexibleShoppingRequest(normalizedText);
+  const parsedRequest = extractFlexibleShoppingRequest(normalizedText);
+  // The legacy parser expects a narrower sentence structure and can return
+  // null for ordinary WhatsApp phrasing such as "Can I order 1 kg of sugar"
+  // or "i need 1 kg of tomato". Normalize those forms directly for Instamart.
+  const directGroceryMatch = normalizedText.match(
+    /^(?:can\s+i\s+order|could\s+i\s+order|may\s+i\s+order|i\s+need|i\s+want|can\s+i\s+get|could\s+i\s+get|please\s+get|order\s+me|buy\s+me)\s+(.+?)(?:\s+(?:from|at)\s+(.+))?$/i
+  );
+  const request = parsedRequest || (directGroceryMatch
+    ? { items: directGroceryMatch[1].trim(), store: directGroceryMatch[2] || "" }
+    : null);
   const requestedStore = cleanRequestedStoreName(String(request?.store || "").trim());
   const genericStore = !requestedStore || looksLikeNearbyStoreRequest(requestedStore);
   const parsedItems = parseInstamartItems(request?.items);
