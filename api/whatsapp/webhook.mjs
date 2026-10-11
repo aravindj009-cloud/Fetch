@@ -7132,12 +7132,42 @@ async function tryUniversalFetchCustomerRequest({
     console.error("FETCH WHATSAPP CONTEXT HISTORY ERROR:", historyError);
   }
 
+  /*
+    Resolve answers to the agent's own clarification questions before
+    calling the agent again. Example:
+      Assistant: "What city should I check the weather for?"
+      User: "Poovar, Trivandrum"
+    The location is the answer, not a new standalone request.
+  */
+  const recentMessagesForClarification = Array.isArray(conversationHistory)
+    ? conversationHistory.slice(-6)
+    : [];
+  const assistantAskedWeatherLocation = recentMessagesForClarification
+    .slice(-4)
+    .some((entry) =>
+      /(?:what city|which city|what area|city or area|location).{0,100}(?:weather|check)|(?:weather).{0,100}(?:what city|which city|what area|city or area|location)/i.test(
+        String(entry?.message || entry?.content || "")
+      )
+    );
+  const looksLikeLocationAnswer =
+    userMessage.trim().length >= 3 &&
+    userMessage.trim().length <= 100 &&
+    !/[?]/.test(userMessage) &&
+    !/^(?:hi|hello|hey|yes|no|ok|okay|thanks|thank you|connected)$/i.test(userMessage.trim()) &&
+    /[a-z]/i.test(userMessage) &&
+    !/\b(?:weather|forecast|temperature|rain|github|repository|repositories|order|delivery)\b/i.test(userMessage);
+
+  const effectiveUserMessage =
+    assistantAskedWeatherLocation && looksLikeLocationAnswer
+      ? `What is the weather for ${userMessage.trim()}? The user is answering your previous question asking which city or area to check. Do not ask for the location again; use this location now.`
+      : userMessage;
+
   try {
     const orderContextRelevant =
       isLikelyPhysicalOrderContinuation(userMessage, activeOrder);
 
     const result = await executeUniversalFetchRequest({
-      text: userMessage,
+      text: effectiveUserMessage,
       customerId: customer.id,
       conversationId: `whatsapp:${normalizedPhone}`,
       channel: "whatsapp",
