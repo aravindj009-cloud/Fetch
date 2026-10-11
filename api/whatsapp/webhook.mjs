@@ -8095,7 +8095,41 @@ async function maybeHandleConnectedInstamart({
   const state = await getWhatsAppConversationContext(phone);
   const instamartState = state?.context?.instamart;
 
-  if (instamartState) {
+  // Do not let a pending Instamart connection fall through to the legacy
+  // local-store/shopper order engine. Until OAuth succeeds, keep the user
+  // on the connector path and refresh the connection link for new requests.
+  if (instamartState?.status === "awaiting_connection") {
+    const connection = await getWhatsAppInstamartConnection(phone);
+    if (!connection?.access_token) {
+      const request = extractFlexibleShoppingRequest(normalizedText);
+      const requestedItems = parseInstamartItems(request?.items);
+      const pendingItems = requestedItems.length ? requestedItems : (instamartState.items || []);
+      const pendingRequest = normalizedText || instamartState.pendingRequest || "";
+      const token = await createWhatsAppOnboardingToken(phone);
+      const link = "https://tryfetch.in/api/fetch/context?token=" + encodeURIComponent(token) + "&connector=instamart";
+      const current = await getWhatsAppConversationContext(phone);
+      const context = current?.context && typeof current.context === "object" ? current.context : {};
+      await saveWhatsAppConversationContext(phone, {
+        ...context,
+        instamart: {
+          ...instamartState,
+          status: "awaiting_connection",
+          pendingRequest,
+          items: pendingItems,
+          customerId: customer?.id || instamartState.customerId || null,
+        },
+      });
+      await sendWhatsAppMessage(
+        phone,
+        "I still need you to connect Instamart before I can check live products or prices. Please connect here:\n\n" +
+        link +
+        "\n\nAfter connecting, return to this chat and I’ll continue your latest grocery request. I haven’t placed an order."
+      );
+      return { handled: true, status: "instamart_connection_required" };
+    }
+  }
+
+  if (instamartState && instamartState.status !== "awaiting_connection") {
     return continueConnectedInstamartOrder({
       phone,
       customer,
