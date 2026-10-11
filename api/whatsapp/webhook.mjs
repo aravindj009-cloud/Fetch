@@ -7862,6 +7862,11 @@ async function startConnectedInstamartOrder({ phone, customer, userMessage, item
       status: "address_selection",
       items,
       addressMap,
+      savedAddresses: addresses.slice(0, 10).map((address, index) => ({
+        id: String(address.id || address.addressId || address.address_id || ""),
+        title: String(address.addressTag || address.addressCategory || address.label || address.name || ("Address " + (index + 1))).slice(0, 24),
+        description: String(address.addressLine || address.displayAddress || address.address || address.formattedAddress || "").slice(0, 72),
+      })),
       customerId: customer?.id || null,
     };
     await saveWhatsAppConversationContext(phone, context);
@@ -7891,8 +7896,17 @@ async function continueConnectedInstamartOrder({ phone, customer, userMessage, i
   const text = String(userMessage || "").trim();
 
   if (state.status === "address_selection") {
-    const addressId = state.addressMap?.[choiceId];
-    if (!addressId) return { handled: false, reason: "not_address_choice" };
+    const addressIndex = /^fetch_im_address_(\d+)$/.exec(choiceId);
+    const addressId = state.addressMap?.[choiceId] ||
+      (addressIndex ? String(state.savedAddresses?.[Number(addressIndex[1])]?.id || "") : "");
+    if (!addressId) {
+      console.warn("FETCH INSTAMART ADDRESS CHOICE NOT MAPPED:", JSON.stringify({
+        choiceId,
+        addressMapKeys: Object.keys(state.addressMap || {}),
+        savedAddressCount: Array.isArray(state.savedAddresses) ? state.savedAddresses.length : 0,
+      }));
+      return { handled: false, reason: "not_address_choice" };
+    }
 
     let prepared;
     try {
@@ -8334,10 +8348,11 @@ async function maybeHandleConnectedInstamart({
         context.instamart = nextState;
         await saveWhatsAppConversationContext(phone, context);
         const addressMap = nextState.addressMap && typeof nextState.addressMap === "object" ? nextState.addressMap : {};
+        const savedAddresses = Array.isArray(nextState.savedAddresses) ? nextState.savedAddresses : [];
         const rows = Object.entries(addressMap).slice(0, 10).map(([id], index) => ({
           id,
-          title: id.replace(/^fetch_im_address_/, "Address "),
-          description: "",
+          title: String(savedAddresses[index]?.title || ("Address " + (index + 1))).slice(0, 24),
+          description: String(savedAddresses[index]?.description || "").slice(0, 72),
         }));
         if (rows.length) {
           await sendWhatsAppList(phone,
