@@ -7145,7 +7145,7 @@ async function tryUniversalFetchCustomerRequest({
   const assistantAskedWeatherLocation = recentMessagesForClarification
     .slice(-4)
     .some((entry) =>
-      /(?:what city|which city|what area|city or area|location).{0,100}(?:weather|check)|(?:weather).{0,100}(?:what city|which city|what area|city or area|location)/i.test(
+      /(?:what city|which city|what area|city or area|location).{0,100}(?:weather|check)|(?:weather).{0,100}(?:what city|which city|what area|city or area|location)|couldn.t find that location|send the town or city name/i.test(
         String(entry?.message || entry?.content || "")
       )
     );
@@ -7180,10 +7180,17 @@ async function tryUniversalFetchCustomerRequest({
     const orderContextRelevant =
       isLikelyPhysicalOrderContinuation(userMessage, activeOrder);
 
+    const startsFreshTask =
+      assistantAskedWeatherLocation && explicitNewIntent;
+
     const result = await executeUniversalFetchRequest({
       text: effectiveUserMessage,
       customerId: customer.id,
-      conversationId: `whatsapp:${normalizedPhone}`,
+      // A clearly new task must not resume the persisted weather-clarification
+      // workflow. Use a task-scoped conversation key only for this reset.
+      conversationId: startsFreshTask
+        ? `whatsapp:${normalizedPhone}:task:${Date.now()}`
+        : `whatsapp:${normalizedPhone}`,
       channel: "whatsapp",
       // Never let a stale physical order become the task context for an
       // unrelated link, research request, or new conversational intent.
