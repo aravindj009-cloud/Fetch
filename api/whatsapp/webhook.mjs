@@ -8306,18 +8306,19 @@ async function maybeHandleConnectedInstamart({
     // legacy local-store order engine.
     if (instamartState.status === "address_selection" && !interactiveChoice) {
       const groceryText = normalizedText
-        .split("\\n")
+        .split("\n")
         .pop()
         .trim()
-        .replace(/^hello\\s+fetch[,!:.]?\\s*/i, "")
-        .replace(/^(?:and\\s+)?on\\s+the\\s+next\\s+line\\s+/i, "")
-        .replace(/^can\\s+you\\s+get\\s+me\\s+/i, "i need ")
-        .replace(/^could\\s+you\\s+get\\s+me\\s+/i, "i need ")
+        .replace(/^hello\s+fetch[,!:.]?\s*/i, "")
+        .replace(/^(?:and\s+)?on\s+the\s+next\s+line\s+/i, "")
+        .replace(/^can\s+you\s+get\s+me\s+/i, "i need ")
+        .replace(/^could\s+you\s+get\s+me\s+/i, "i need ")
         .replace(/[?.!]+$/g, "")
         .trim();
       const directGroceryMatch = groceryText.match(
-        /^(?:(?:can|could)\\s+i\\s+order|may\\s+i\\s+order|i\\s+need|i\\s+want|(?:can|could)\\s+i\\s+get|please\\s+get(?:\\s+me)?|get\\s+me|order\\s+me|buy\\s+me)\\s+(.+?)(?:\\s+(?:from|at)\\s+(.+))?$/i
-      );      const parsedRequest = extractFlexibleShoppingRequest(normalizedText);
+        /^(?:(?:can|could)\s+i\s+order|may\s+i\s+order|i\s+need|i\s+want|(?:can|could)\s+i\s+get|please\s+get(?:\s+me)?|get\s+me|order\s+me|buy\s+me)\s+(.+?)(?:\s+(?:from|at)\s+(.+))?$/i
+      );
+      const parsedRequest = extractFlexibleShoppingRequest(normalizedText);
       const request = parsedRequest || (directGroceryMatch
         ? { items: directGroceryMatch[1].trim(), store: directGroceryMatch[2] || "" }
         : null);
