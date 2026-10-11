@@ -7149,13 +7149,19 @@ async function tryUniversalFetchCustomerRequest({
         String(entry?.message || entry?.content || "")
       )
     );
+  const trimmedFollowUp = userMessage.trim();
+  const explicitNewIntent =
+    /[?]/.test(trimmedFollowUp) ||
+    /^(?:i(?:'m| am| need| want| have| was| will| would| can| should| plan)|please|help me|tell me|show me|find me|book|order|buy|compare|summari[sz]e|explain|what|how|when|where|why)\b/i.test(trimmedFollowUp) ||
+    /\b(?:offsite|meeting|prepare|preparing|recommend|plan|schedule|github|repository|repositories|weather|forecast|temperature|rain|order|delivery)\b/i.test(trimmedFollowUp);
+
   const looksLikeLocationAnswer =
-    userMessage.trim().length >= 3 &&
-    userMessage.trim().length <= 100 &&
-    !/[?]/.test(userMessage) &&
-    !/^(?:hi|hello|hey|yes|no|ok|okay|thanks|thank you|connected)$/i.test(userMessage.trim()) &&
-    /[a-z]/i.test(userMessage) &&
-    !/\b(?:weather|forecast|temperature|rain|github|repository|repositories|order|delivery)\b/i.test(userMessage);
+    !explicitNewIntent &&
+    trimmedFollowUp.length >= 3 &&
+    trimmedFollowUp.length <= 100 &&
+    !/[?]/.test(trimmedFollowUp) &&
+    !/^(?:hi|hello|hey|yes|no|ok|okay|thanks|thank you|connected)$/i.test(trimmedFollowUp) &&
+    /[a-z]/i.test(trimmedFollowUp);
 
   const effectiveUserMessage =
     assistantAskedWeatherLocation && looksLikeLocationAnswer
