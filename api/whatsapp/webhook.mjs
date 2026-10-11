@@ -7173,11 +7173,7 @@ async function tryUniversalFetchCustomerRequest({
   // exchange when the user changes topic to something unrelated.
   const contextHistoryForAgent =
     assistantAskedWeatherLocation && explicitNewIntent
-      ? conversationHistory.filter((entry) =>
-          !/weather|forecast|temperature|rain|city or area should I check|what city should I check/i.test(
-            String(entry?.message || entry?.content || "")
-          )
-        )
+      ? []
       : conversationHistory;
 
   try {
