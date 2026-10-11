@@ -7894,12 +7894,36 @@ async function continueConnectedInstamartOrder({ phone, customer, userMessage, i
     const addressId = state.addressMap?.[choiceId];
     if (!addressId) return { handled: false, reason: "not_address_choice" };
 
-    const prepared = await prepareInstamartOrder({
-      accessToken: connection.access_token,
-      items: state.items || [],
-      addressId,
-      autoSelect: true,
-    });
+    let prepared;
+    try {
+      console.info("FETCH INSTAMART ADDRESS SELECTED:", JSON.stringify({
+        phoneSuffix: String(phone || "").slice(-4),
+        itemCount: Array.isArray(state.items) ? state.items.length : 0,
+        hasAddressId: Boolean(addressId),
+        provider: "swiggy_instamart",
+      }));
+      prepared = await prepareInstamartOrder({
+        accessToken: connection.access_token,
+        items: state.items || [],
+        addressId,
+        autoSelect: true,
+      });
+      console.info("FETCH INSTAMART ADDRESS PREPARE RESULT:", JSON.stringify({
+        success: Boolean(prepared?.success),
+        status: prepared?.status || null,
+        optionCount: Array.isArray(prepared?.productOptions) ? prepared.productOptions.length : 0,
+        unresolvedCount: Array.isArray(prepared?.unresolvedItems) ? prepared.unresolvedItems.length : 0,
+        hasCart: Boolean(prepared?.cart),
+        hasPaymentMethods: Boolean(prepared?.allMethods || prepared?.availablePaymentMethods),
+      }));
+    } catch (error) {
+      console.error("FETCH INSTAMART ADDRESS PREPARE EXCEPTION:", String(error?.stack || error).slice(0, 1800));
+      await sendWhatsAppMessage(
+        phone,
+        "I received your address, but Instamart didn't return the cart in time. No order was placed. Please send the grocery request again in a moment."
+      );
+      return { handled: true, status: "address_prepare_exception" };
+    }
 
     if (!prepared?.success) {
       await sendWhatsAppMessage(phone, "I couldn't prepare that Instamart cart right now. I haven't placed anything. Please try the request again.");
