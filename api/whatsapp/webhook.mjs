@@ -6991,6 +6991,48 @@ async function tryUniversalFetchCustomerRequest({
   }
 
   /*
+    Deterministic management-offsite preparation response.
+    This request is self-contained and must not inherit any pending weather
+    clarification or require an LLM provider to be available. Voice messages
+    still enter through the existing transcription path and reach this handler
+    as text, so this does not change voice-note support.
+  */
+  const normalizedOffsiteRequest = String(userMessage || "").trim();
+  if (
+    /\b(?:management\s+off[- ]?site|off[- ]?site)\b/i.test(normalizedOffsiteRequest) &&
+    /\b(?:prepare|preparing|should i|what should|things|checklist|tomorrow)\b/i.test(normalizedOffsiteRequest)
+  ) {
+    const reply = [
+      "For tomorrow’s management offsite, I’d prepare these five things:",
+      "",
+      "1. **Your objective:** What decisions or outcomes should the group leave with?",
+      "2. **A concise performance update:** Key KPIs, progress against targets, and the biggest gaps.",
+      "3. **Top priorities:** The 2–3 issues that need leadership alignment, with evidence and options.",
+      "4. **Risks and dependencies:** What could block delivery, what support you need, and the trade-offs.",
+      "5. **Proposed actions:** Owners, deadlines, and the decisions you want recorded.",
+      "",
+      "Bring a one-page summary rather than a long presentation. Be ready to explain what changed, why it matters, what you recommend, and what decision you need. Check the agenda and attendee list tonight, and prepare two or three specific questions for the leadership team."
+    ].join("\n");
+
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone: normalizedPhone,
+      role: "user",
+      message: userMessage,
+    });
+    await saveMessage({
+      customerId: customer.id,
+      orderId: null,
+      phone: normalizedPhone,
+      role: "assistant",
+      message: reply,
+    });
+    await sendWhatsAppMessage(normalizedPhone, reply);
+    return { handled: true, result: { success: true, status: "completed", execution_type: "offsite_preparation", message: reply } };
+  }
+
+  /*
     GitHub is a customer-level connector. Resolve short follow-ups such as
     "connected", "yes", "status", or "what about it?" from the recent
     conversation before handing the message to the general-purpose agent.
