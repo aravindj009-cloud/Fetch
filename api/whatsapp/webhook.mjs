@@ -4349,7 +4349,7 @@ function extractFlexibleShoppingRequest(text) {
   */
 
   const prefix =
-    "(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order|enikku|enik|enikk|mujhe|mere\s+liye|enakku|naaku|nanage)";
+    "(?:can\s+i\s+order|could\s+i\s+order|may\s+i\s+order|can\s+i\s+buy|could\s+i\s+buy|can\s+i\s+get|could\s+i\s+get|can\s+i\s+have|i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order|enikku|enik|enikk|mujhe|mere\s+liye|enakku|naaku|nanage)";
 
   const deliveryMarker =
     "(?:deliver(?:ed|\s+it)?\s+to|delivery\s+(?:location|to)?|delivery\s+address|deliver\s+at|delivered\s+at|to\s+my\s+address|to\s+me|at\s+my\s+address|delivery)";
@@ -4527,7 +4527,7 @@ function extractDeterministicShoppingRequest(text) {
   }
 
   const prefix =
-    "(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order|enikku|enik|enikk|mujhe|mere\s+liye|enakku|naaku|nanage)";
+    "(?:can\s+i\s+order|could\s+i\s+order|may\s+i\s+order|can\s+i\s+buy|could\s+i\s+buy|can\s+i\s+get|could\s+i\s+get|can\s+i\s+have|i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order|enikku|enik|enikk|mujhe|mere\s+liye|enakku|naaku|nanage)";
 
   const deliveryMarker =
     "(?:deliver(?:ed|\s+it)?\s+to|delivery\s+(?:location|to)?|delivery\s+address|deliver\s+at|delivered\s+at|to\s+my\s+address|to\s+me|at\s+my\s+address|delivery)";
@@ -4669,7 +4669,7 @@ function isExplicitNewOrderRequest(text) {
   if (!value) return false;
 
   return (
-    /^(?:i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order)\b/i.test(value) ||
+    /^(?:can\s+i\s+order|could\s+i\s+order|may\s+i\s+order|can\s+i\s+buy|could\s+i\s+buy|can\s+i\s+get|could\s+i\s+get|can\s+i\s+have|i\s+want|i\s+need|i'd\s+like|i\s+would\s+like|please\s+get|please\s+fetch|can\s+you\s+get|can\s+you\s+fetch|get\s+me|fetch\s+me|buy\s+me|order)\b/i.test(value) ||
     /^(?:enikku|ente|enikk)\b.*\b(?:venam|venda|tharanam)\b/i.test(value) ||
     /^(?:mujhe|mere\s+liye)\b.*\b(?:chahiye|chaahiye|lene|lao)\b/i.test(value) ||
     /^(?:enakku)\b.*\b(?:venum|vendum)\b/i.test(value) ||
