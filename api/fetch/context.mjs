@@ -537,11 +537,26 @@ async function handleGoogleConnect(req, res) {
   const clientSecret = String(process.env.GOOGLE_CLIENT_SECRET || "").trim();
   if (!clientId || !clientSecret) return sendHtml(res, 503, onboardingPage("Email is not configured yet", "Fetch is ready for Gmail OAuth, but Google OAuth credentials have not been added to Vercel yet.", false));
   const url = new URL(req.url, FETCH_BASE);
-  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
+  const onboardingToken = String(url.searchParams.get("token") || "").trim();
+  const verified = onboardingToken ? verifyOnboardingToken(onboardingToken) : null;
+  // A signed WhatsApp onboarding token is the source of truth for the
+  // conversation identity. Never silently fall back to an unsigned ID when
+  // a token was supplied but failed verification.
+  if (onboardingToken && !verified) {
+    return sendHtml(res, 400, onboardingPage("Connection link expired", "Return to WhatsApp and ask Fetch for a fresh email connection link.", false));
+  }
+  const conversationId = verified?.conversationId || String(url.searchParams.get("conversation_id") || "").trim();
   if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open Fetch in this browser first, then return to Connectors.", false));
+  let customerId = null;
+  if (verified?.phone) {
+    const customerRows = await supabaseRequest(
+      `customers?phone=eq.${encodeURIComponent(verified.phone)}&select=id&limit=1`
+    ).catch(() => []);
+    customerId = Array.isArray(customerRows) ? customerRows[0]?.id || null : null;
+  }
   const state = crypto.randomBytes(32).toString("base64url");
   const redirectUri = connectorCallbackUrl("google");
-  await createOAuthState({ state, conversationId, providerId: "email", redirectUri, clientId });
+  await createOAuthState({ state, conversationId, customerId, providerId: "email", redirectUri, clientId });
   const authorize = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authorize.searchParams.set("client_id", clientId);
   authorize.searchParams.set("response_type", "code");
