@@ -8616,9 +8616,10 @@ async function searchFetchServicePartners({ service, latitude, longitude }) {
     .slice(0, 10);
 }
 
-function formatPartnerDiscoveryMessage(service, partners) {
+function formatPartnerDiscoveryMessage(service, partners, locationNote = "") {
   const lines = [
     "🔎 I found " + partners.length + " Fetch " + service.label.toLowerCase() + (partners.length === 1 ? "" : "s") + " near you.",
+    ...(locationNote ? [locationNote] : []),
     "",
   ];
 
@@ -8724,8 +8725,18 @@ async function maybeHandleFetchPartnerDiscovery({
 
   let latitude = Number(location?.latitude);
   let longitude = Number(location?.longitude);
+  let locationSource = Number.isFinite(latitude) && Number.isFinite(longitude) && latitude !== 0 && longitude !== 0
+    ? "whatsapp_location_pin"
+    : null;
+  let locationIsApproximate = false;
 
-  if (!(Number.isFinite(latitude) && Number.isFinite(longitude) && latitude !== 0 && longitude !== 0)) {
+  const coordinatesValid = () =>
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude !== 0 &&
+    longitude !== 0;
+
+  if (!coordinatesValid()) {
     const customer = await getCustomer(phone);
     const prefs = customer?.connector_preferences && typeof customer.connector_preferences === "object"
       ? customer.connector_preferences
@@ -8733,13 +8744,42 @@ async function maybeHandleFetchPartnerDiscovery({
     const profile = prefs.profile && typeof prefs.profile === "object" ? prefs.profile : {};
     latitude = Number(profile.latitude);
     longitude = Number(profile.longitude);
+
+    if (coordinatesValid()) {
+      locationSource = "saved_profile_coordinates";
+    } else {
+      // Prefer a location the user already saved. Do not infer a precise
+      // position from device/IP metadata or estimated geolocation.
+      const savedAddress = [
+        profile.location_address,
+        profile.address,
+        customer?.address,
+      ].map((value) => String(value || "").trim()).find(Boolean) || "";
+      const savedCity = [
+        profile.location_name,
+        profile.city,
+        customer?.city,
+        customer?.location_city,
+      ].map((value) => String(value || "").trim()).find(Boolean) || "";
+      const savedLocationText = savedAddress || savedCity;
+
+      if (savedLocationText) {
+        try {
+          const resolved = await geocodeAddress(savedLocationText);
+          latitude = Number(resolved?.latitude);
+          longitude = Number(resolved?.longitude);
+          if (coordinatesValid()) {
+            locationSource = savedAddress ? "saved_profile_address" : "saved_profile_city";
+            locationIsApproximate = !savedAddress;
+          }
+        } catch (error) {
+          console.warn("FETCH PARTNER PROFILE LOCATION GEOCODE FAILED:", error?.message || error);
+        }
+      }
+    }
   }
 
-  const hasLocation =
-    Number.isFinite(latitude) &&
-    Number.isFinite(longitude) &&
-    latitude !== 0 &&
-    longitude !== 0;
+  const hasLocation = coordinatesValid();
 
   if (!hasLocation) {
     await saveWhatsAppConversationContext(phone, {
@@ -8749,13 +8789,24 @@ async function maybeHandleFetchPartnerDiscovery({
         service,
       },
     });
+    const profileToken = await createWhatsAppOnboardingToken(phone);
+    const profileLink =
+      "https://tryfetch.in/api/fetch/context?profile=1&token=" +
+      encodeURIComponent(profileToken);
     await sendWhatsAppMessage(
       phone,
       "Sure — I can find nearby " + service.label.toLowerCase() + "s through Fetch. 📍\n\n" +
-      "Please send your current WhatsApp location so I can rank the nearest available partners."
+      "I couldn't find a saved location in your Fetch profile. Share your WhatsApp location once for precise nearby matching, or save your address/location here:\n" +
+      profileLink
     );
     return { handled: true, status: "awaiting_location" };
   }
+
+  const locationNote = locationIsApproximate
+    ? "Using the city saved in your Fetch profile; distances are approximate. Share a current WhatsApp location pin for more precise ranking."
+    : locationSource === "saved_profile_address"
+      ? "Using the address saved in your Fetch profile. Share a current WhatsApp location pin if you want more precise ranking."
+      : "";
 
   const partners = await searchFetchServicePartners({
     service,
@@ -8802,7 +8853,7 @@ async function maybeHandleFetchPartnerDiscovery({
     },
   });
 
-  await sendWhatsAppMessage(phone, formatPartnerDiscoveryMessage(service, partners));
+  await sendWhatsAppMessage(phone, formatPartnerDiscoveryMessage(service, partners, locationNote));
 
   await sendWhatsAppList(
     phone,
