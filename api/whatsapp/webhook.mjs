@@ -6881,7 +6881,16 @@ async function tryUniversalFetchCustomerRequest({
   userMessage,
   activeOrder = null,
 } = {}) {
-  if (!customer?.id || !shouldRunV9ForCustomerMessage(userMessage)) {
+  const weatherIntentForGate =
+    /\\b(weather|forecast|temperature|will it rain|rain tomorrow|raining|humidity|wind speed)\\b/i.test(String(userMessage || "")) ||
+    (/\\bhow\\s+does\\s+it\\s+look(?:s)?(?:\\s+like)?\\b/i.test(String(userMessage || "")) &&
+     /\\b(?:today|tomorrow|tonight|right now|now|this morning|this afternoon|this evening)\\b/i.test(String(userMessage || "")) &&
+     /\\b(?:in|for|at)\\s+[a-z][a-z .'-]{1,60}\\b/i.test(String(userMessage || "")));
+
+  // A deterministic weather request must enter this handler even if the
+  // general V9 intent gate rejects it. Weather uses Open-Meteo directly and
+  // must remain available when model-provider credits are exhausted.
+  if (!customer?.id || (!shouldRunV9ForCustomerMessage(userMessage) && !weatherIntentForGate)) {
     return {
       handled: false,
       result: null,
