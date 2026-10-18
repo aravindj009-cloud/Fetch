@@ -6881,7 +6881,16 @@ async function tryUniversalFetchCustomerRequest({
   userMessage,
   activeOrder = null,
 } = {}) {
-  if (!customer?.id || !shouldRunV9ForCustomerMessage(userMessage)) {
+  const weatherIntentForGate =
+    /\b(weather|forecast|temperature|will it rain|rain tomorrow|raining|humidity|wind speed)\b/i.test(String(userMessage || "")) ||
+    (/\bhow\s+does\s+it\s+look(?:s)?(?:\s+like)?\b/i.test(String(userMessage || "")) &&
+     /\b(?:today|tomorrow|tonight|right now|now|this morning|this afternoon|this evening)\b/i.test(String(userMessage || "")) &&
+     /\b(?:in|for|at)\s+[a-z][a-z .'-]{1,60}\b/i.test(String(userMessage || "")));
+
+  // A deterministic weather request must enter this handler even if the
+  // general V9 intent gate rejects it. Weather uses Open-Meteo directly and
+  // must remain available when model-provider credits are exhausted.
+  if (!customer?.id || (!shouldRunV9ForCustomerMessage(userMessage) && !weatherIntentForGate)) {
     return {
       handled: false,
       result: null,
@@ -6908,7 +6917,13 @@ async function tryUniversalFetchCustomerRequest({
         /(?:what city|which city|what area|city or area|location).{0,100}(?:weather|check)|(?:weather).{0,100}(?:what city|which city|what area|city or area|location)|couldn.t find that location|send the town or city name/i.test(message);
     });
 
-  const weatherRequest = /\b(weather|forecast|temperature|will it rain|rain tomorrow|raining)\b/i.test(userMessage);
+  const explicitWeatherRequest =
+    /\b(weather|forecast|temperature|will it rain|rain tomorrow|raining|humidity|wind speed)\b/i.test(userMessage);
+  const naturalWeatherRequest =
+    /\bhow\s+does\s+it\s+look(?:s)?(?:\s+like)?\b/i.test(userMessage) &&
+    /\b(?:today|tomorrow|tonight|right now|now|this morning|this afternoon|this evening)\b/i.test(userMessage) &&
+    /\b(?:in|for|at)\s+[a-z][a-z .'-]{1,60}\b/i.test(userMessage);
+  const weatherRequest = explicitWeatherRequest || naturalWeatherRequest;
   const trimmedWeatherFollowUp = String(userMessage || "").trim();
   const clearNewIntent =
     /[?]/.test(trimmedWeatherFollowUp) ||
@@ -6924,7 +6939,9 @@ async function tryUniversalFetchCustomerRequest({
     /[a-z]/i.test(trimmedWeatherFollowUp);
 
   if (weatherRequest || shortLocationFollowUp) {
-    const locationMatch = userMessage.match(/\b(?:in|for|at)\s+(.+?)(?:\?|$)/i);
+    const locationMatch = userMessage.match(
+      /\b(?:in|for|at)\s+(.+?)(?=\s+(?:today|tomorrow|tonight|right\s+now|now|this\s+morning|this\s+afternoon|this\s+evening)\b|\?|$)/i
+    );
     const previousWeatherRequest = Array.isArray(recentForWeather)
       ? [...recentForWeather].reverse().find((entry) =>
           /\b(weather|forecast|temperature|will it rain|rain tomorrow|raining)\b/i.test(
@@ -6942,9 +6959,14 @@ async function tryUniversalFetchCustomerRequest({
 
     if (location) {
       try {
+        // Open-Meteo resolves the historic alias "Trivandrum" to the
+        // airport. Prefer the canonical city name for city-level weather.
+        const geocodingLocation = /^trivandrum(?:\s+city)?(?:,\s*kerala)?$/i.test(location)
+          ? "Thiruvananthapuram"
+          : location;
         const geoResponse = await fetch(
           "https://geocoding-api.open-meteo.com/v1/search?name=" +
-          encodeURIComponent(location) + "&count=1&language=en&format=json"
+          encodeURIComponent(geocodingLocation) + "&count=1&language=en&format=json"
         );
         const geo = await geoResponse.json();
         const place = geo?.results?.[0];
@@ -6953,6 +6975,7 @@ async function tryUniversalFetchCustomerRequest({
             "https://api.open-meteo.com/v1/forecast?latitude=" +
             encodeURIComponent(place.latitude) +
             "&longitude=" + encodeURIComponent(place.longitude) +
+            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m" +
             "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
             "&timezone=auto&forecast_days=2"
           );
@@ -6966,6 +6989,10 @@ async function tryUniversalFetchCustomerRequest({
           const low = forecast?.daily?.temperature_2m_min?.[index];
           const rain = forecast?.daily?.precipitation_probability_max?.[index];
           const weatherCode = forecast?.daily?.weather_code?.[index];
+          const currentTemperature = forecast?.current?.temperature_2m;
+          const feelsLike = forecast?.current?.apparent_temperature;
+          const currentWeatherCode = forecast?.current?.weather_code;
+          const windSpeed = forecast?.current?.wind_speed_10m;
           const descriptions = {
             0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
             45: "foggy", 48: "foggy", 51: "light drizzle", 53: "drizzle",
@@ -6975,14 +7002,20 @@ async function tryUniversalFetchCustomerRequest({
             96: "thunderstorms with hail", 99: "thunderstorms with hail"
           };
           const dayLabel = tomorrow ? "Tomorrow" : "Today";
+          const placeLabel = [place.name, place.admin1, place.country].filter(Boolean).join(", ");
+          const currentDescription = descriptions[currentWeatherCode] || descriptions[weatherCode] || "conditions unavailable";
+          const currentSummary = currentTemperature == null
+            ? ""
+            : " Current: " + Math.round(currentTemperature) + "°C" +
+              (feelsLike == null ? "" : " (feels like " + Math.round(feelsLike) + "°C)") + ".";
+          const windSummary = windSpeed == null ? "" : " Wind " + Math.round(windSpeed) + " km/h.";
           const reply = high == null
-            ? "I found " + [place.name, place.admin1, place.country].filter(Boolean).join(", ") + ", but the forecast is temporarily unavailable."
-            : dayLabel + " in " +
-              [place.name, place.admin1, place.country].filter(Boolean).join(", ") +
-              ": " + (descriptions[weatherCode] || "conditions unavailable") +
-              ", " + Math.round(low) + "–" + Math.round(high) + "°C" +
-              (rain == null ? "." : ", up to " + rain + "% chance of precipitation.") +
-              "\n\nForecast source: Open-Meteo.";
+            ? "I found " + placeLabel + ", but the forecast is temporarily unavailable."
+            : dayLabel + " in " + placeLabel + ": " + currentDescription + "." +
+              currentSummary + windSummary +
+              " High " + Math.round(high) + "°C / low " + Math.round(low) + "°C" +
+              (rain == null ? "." : "; up to " + rain + "% chance of precipitation.") +
+              "\n\nForecast source: Open-Meteo (https://open-meteo.com).";
           await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "user", message: userMessage });
           await saveMessage({ customerId: customer.id, orderId: null, phone: normalizedPhone, role: "assistant", message: reply });
           await sendWhatsAppMessage(normalizedPhone, reply);
@@ -15020,6 +15053,15 @@ function extractIncomingWhatsAppMessage(
       message.type ||
       null,
 
+    errorCode:
+      Number(message?.errors?.[0]?.code) || null,
+
+    errorMessage:
+      String(message?.errors?.[0]?.message || message?.errors?.[0]?.title || "").trim(),
+
+    rawType:
+      String(message?.unsupported?.raw_type || "").trim() || null,
+
     location:
       location
         ? {
@@ -15155,6 +15197,49 @@ export default async function handler(
       extractIncomingWhatsAppMessage(
         body
       );
+
+    /*
+      Meta can deliver a message event whose content is unavailable to the
+      Cloud API. Previously Fetch silently returned ignored=true here. Respond
+      explicitly for Meta error 131060, without inventing or guessing content.
+    */
+    if (
+      incoming?.from &&
+      Number(incoming.errorCode) === 131060
+    ) {
+      const alreadyProcessed = await recordWebhookEvent(
+        incoming.messageId,
+        incoming.from
+      );
+
+      if (!alreadyProcessed) {
+        return res.status(200).json({
+          success: true,
+          duplicate: true,
+        });
+      }
+
+      console.warn(
+        "FETCH WHATSAPP MESSAGE CONTENT UNAVAILABLE:",
+        JSON.stringify({
+          from: incoming.from,
+          messageId: incoming.messageId,
+          errorCode: incoming.errorCode,
+          rawType: incoming.rawType,
+        })
+      );
+
+      const unavailableReply =
+        "WhatsApp marked your last message as unavailable, so I couldn't read the request. Please resend it as plain text and I'll try again.";
+
+      await sendWhatsAppMessage(incoming.from, unavailableReply);
+
+      return res.status(200).json({
+        success: true,
+        action: "unsupported_message_reply_sent",
+        errorCode: incoming.errorCode,
+      });
+    }
 
     if (
       !incoming ||
