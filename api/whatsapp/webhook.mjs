@@ -9017,3 +9017,6604 @@ async function handleCustomerMessage({
     });
     await saveMessage({
       customerId: customer.id,
+      orderId: null,
+      phone: normalizedPhone,
+      role: "assistant",
+      message: greeting,
+    });
+    await sendWhatsAppMessage(normalizedPhone, greeting);
+
+    return;
+  }
+
+  /*
+    Fetch Agent / V9 first for universal requests.
+    Physical shopping intentionally falls through to the existing
+    order engine; digital executions can complete here.
+  */
+  const universalResult =
+    await tryUniversalFetchCustomerRequest({
+      customer,
+      phone: normalizedPhone,
+      userMessage,
+      activeOrder,
+    });
+
+  if (universalResult.handled) {
+    return;
+  }
+
+  // Handle customer payment confirmation BEFORE any AI intent
+  // classification. Resolve the payment-pending order directly from
+  // the database as a fallback when current_order_id is stale.
+  if (isCustomerPaidMessage(userMessage)) {
+    let paymentOrder =
+      activeOrder &&
+      activeOrder.status === "payment_pending"
+        ? activeOrder
+        : null;
+
+    if (!paymentOrder) {
+      paymentOrder = await getPaymentPendingOrder(customer.id);
+    }
+
+    if (paymentOrder) {
+      await handleCustomerReportedPaid({
+        normalizedPhone,
+        customer,
+        activeOrder: paymentOrder,
+        userMessage,
+      });
+      return;
+    }
+  }
+
+  const history =
+    await getRecentMessages(
+      customer.id
+    );
+
+  /*
+    -------------------------------------------------------
+    CUSTOMER RATING
+    -------------------------------------------------------
+    Ratings are accepted only for the latest delivered order
+    that has not already been rated.
+  */
+
+  const latestDeliveredOrder =
+    latestOrder &&
+    latestOrder.status ===
+      "delivered" &&
+    latestOrder.customer_rating == null
+      ? latestOrder
+      : null;
+
+  const customerRating =
+    parseCustomerRating(
+      userMessage
+    );
+
+  if (
+    latestDeliveredOrder &&
+    customerRating !== null
+  ) {
+    const ratedAt =
+      new Date().toISOString();
+
+    const ratedOrder =
+      await updateOrder(
+        latestDeliveredOrder.id,
+        {
+          customer_rating:
+            customerRating,
+
+          rated_at:
+            ratedAt,
+        }
+      );
+
+    if (!ratedOrder) {
+      throw new Error(
+        "Could not save customer rating"
+      );
+    }
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        latestDeliveredOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    const thanks =
+      buildCustomerRatingThanks(
+        customerRating
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        latestDeliveredOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        thanks,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      thanks
+    );
+
+    return;
+  }
+
+  if (
+    latestDeliveredOrder &&
+    /^[0-9]+(?:\s*(?:stars?|\/\s*5))?$/i.test(
+      cleanConversationText(
+        userMessage
+      )
+    ) &&
+    customerRating === null
+  ) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Please send a rating from 1 to 5 ⭐"
+    );
+    return;
+  }
+
+  if (
+    latestDeliveredOrder &&
+    /^(?:rate|rating|review|feedback)$/i.test(
+      cleanConversationText(
+        userMessage
+      )
+    )
+  ) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      buildCustomerRatingRequest()
+    );
+
+    return;
+  }
+
+
+  /*
+    -------------------------------------------------------
+    HUMAN CONVERSATION GATE
+
+    These messages are handled without OpenAI so a normal
+    conversation can never accidentally become an order
+    update or an item list.
+    -------------------------------------------------------
+  */
+
+  if (
+    isNewOrderPrompt(
+      userMessage
+    )
+  ) {
+    await saveMessage({
+      customerId:
+        customer.id,
+      orderId:
+        null,
+      phone:
+        normalizedPhone,
+      role:
+        "user",
+      message:
+        userMessage,
+    });
+
+    const reset =
+      await resetCustomerForNewOrder(
+        customer,
+        activeOrder
+      );
+
+    if (!reset.ok) {
+      const reply =
+        "You already have an active order with a shopper. Please finish or cancel that order before starting a new one.";
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return;
+    }
+
+    const reply =
+      buildHumanNewOrderReply();
+
+    await saveMessage({
+      customerId:
+        customer.id,
+      orderId:
+        null,
+      phone:
+        normalizedPhone,
+      role:
+        "assistant",
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  if (
+    isThankYouMessage(
+      userMessage
+    )
+  ) {
+    const orderId =
+      activeOrder?.id ||
+      latestOrder?.id ||
+      null;
+
+    const reply =
+      "You’re welcome 😊";
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId,
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId,
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  if (
+    isEtaQuestion(
+      userMessage
+    )
+  ) {
+    const order =
+      activeOrder ||
+      latestOrder;
+
+    const reply =
+      buildHumanEtaReply(
+        order
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order?.id || null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order?.id || null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+
+  /* -----------------------------------------
+     SIMPLE MVP: NEW ORDER -> SHOPPER
+  ----------------------------------------- */
+
+  const simpleOrderParts =
+    extractDeterministicShoppingRequest(
+      userMessage
+    );
+
+  const hasSimpleNewOrder =
+    isExplicitNewOrderRequest(
+      userMessage
+    ) &&
+    simpleOrderParts?.items &&
+    simpleOrderParts?.store;
+
+  if (hasSimpleNewOrder) {
+    const cleanItems =
+      cleanNewOrderItems(
+        simpleOrderParts.items
+      );
+
+    const requestedStore =
+      String(
+        simpleOrderParts.store
+      ).trim();
+
+    if (
+      cleanItems &&
+      requestedStore
+    ) {
+      const deliveryAddress =
+        String(
+          simpleOrderParts.address ||
+          ""
+        ).trim();
+
+      const newOrder =
+        await createOrder({
+          customerId:
+            customer.id,
+
+          storeName:
+            requestedStore,
+
+          items:
+            cleanItems,
+
+          budget:
+            null,
+
+          deliveryAddress:
+            deliveryAddress,
+
+          status:
+            deliveryAddress
+              ? "finding_shopper"
+              : "collecting_details",
+        });
+
+      if (!newOrder) {
+        throw new Error(
+          "Could not create Fetch order"
+        );
+      }
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          newOrder.id,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "user",
+
+        message:
+          userMessage,
+      });
+
+      if (!deliveryAddress) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Got it 👍\n\n🛒 ${cleanItems}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+        );
+        return;
+      }
+
+      await updateCustomerAddress(
+        customer.id,
+        deliveryAddress
+      );
+
+      const resolvedDeliveryOrder =
+        await ensureOrderDeliveryCoordinates(
+          newOrder,
+          deliveryAddress
+        );
+
+      if (!resolvedDeliveryOrder) {
+        await updateOrder(
+          newOrder.id,
+          {
+            status: "collecting_details",
+          }
+        );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Got it 👍\n\n🛒 ${cleanItems}\n📍 I have the delivery address, but I couldn’t map it accurately enough. Please send your WhatsApp Location pin so I can continue.`
+        );
+        return;
+      }
+
+      const findingShopper =
+        await updateOrder(
+          newOrder.id,
+          {
+            status: "finding_shopper",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
+          }
+        );
+
+      const dispatch =
+        await offerOrderToShopper(
+          findingShopper || resolvedDeliveryOrder
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        dispatch.success
+          ? "Got it 👍\n\nI’m finding someone to fetch this for you. I’ll send you the final price once the item is found."
+          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+      );
+
+      return;
+    }
+  }
+
+  /* -----------------------------------------
+     FLEXIBLE NEW ORDER INTAKE
+  ----------------------------------------- */
+
+  const flexibleRequest =
+    extractFlexibleShoppingRequest(
+      userMessage
+    );
+
+  if (
+    flexibleRequest &&
+    flexibleRequest.items
+  ) {
+    const items =
+      cleanNewOrderItems(
+        flexibleRequest.items
+      );
+
+    if (!items) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Tell me what you’d like me to fetch."
+      );
+      return;
+    }
+
+    const requestedStore =
+      cleanRequestedStoreName(
+        String(
+          flexibleRequest.store ||
+          ""
+        ).trim()
+      );
+
+    const storeName =
+      requestedStore &&
+      !looksLikeNearbyStoreRequest(
+        requestedStore
+      )
+        ? requestedStore
+        : "Any available local store";
+
+    // A new order may use only an address explicitly present in
+    // the current customer message. Never inherit a previous
+    // customer address.
+    const address =
+      String(
+        flexibleRequest.address ||
+        ""
+      ).trim();
+
+    const order =
+      await createOrder({
+        customerId:
+          customer.id,
+
+        storeName,
+
+        items,
+
+        budget:
+          null,
+
+        deliveryAddress:
+          address,
+
+        status:
+          address
+            ? "finding_shopper"
+            : "collecting_details",
+      });
+
+    if (!order) {
+      throw new Error(
+        "Could not create new Fetch order"
+      );
+    }
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    if (!address) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+      );
+      return;
+    }
+
+    await updateCustomerAddress(
+      customer.id,
+      address
+    );
+
+    const resolvedDeliveryOrder =
+      await ensureOrderDeliveryCoordinates(
+        order,
+        address
+      );
+
+    if (!resolvedDeliveryOrder) {
+      await updateOrder(
+        order.id,
+        {
+          status: "collecting_details",
+        }
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n📍 I have the delivery address, but I couldn’t map it accurately enough. Please send your WhatsApp Location pin so I can continue.`
+      );
+      return;
+    }
+
+    // The customer never needs to choose or price the fulfillment source.
+    // Fetch dispatches the request first; the shopper reports the actual
+    // source and price, then Fetch calculates delivery automatically.
+    const findingShopper =
+      await updateOrder(
+        order.id,
+        {
+          status: "finding_shopper",
+          delivery_pricing_status: "pending",
+          delivery_pricing_source: null,
+          distance_km: null,
+          delivery_fee: 0,
+          item_total: 0,
+          total_amount: 0,
+          priced_at: null,
+        }
+      );
+
+    const dispatch =
+      await offerOrderToShopper(
+        findingShopper || resolvedDeliveryOrder
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      dispatch.success
+        ? `Got it 👍\n\n🛒 ${items}\n📍 Delivery location received.\n\nI’ve sent your request to an available Fetch shopper. I’ll send you the final price once it’s ready.`
+        : `Got it 👍 I have your request for ${items}. I’m looking for an available Fetch shopper now.`
+    );
+
+    return;
+  }
+
+  /* -----------------------------------------
+     CUSTOMER ORDER HISTORY
+  ----------------------------------------- */
+
+  const customerCommand =
+    cleanConversationText(
+      userMessage
+    ).toLowerCase();
+
+  if (
+    /^(my orders|my order|order history|orders|show my orders)$/.test(
+      customerCommand
+    )
+  ) {
+    const orders =
+      await getCustomerOrders(
+        customer.id,
+        10
+      );
+
+    const reply =
+      buildCustomerOrderHistoryMessage(
+        orders
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  /* -----------------------------------------
+     ORDER-SPECIFIC STATUS / CANCEL
+  ----------------------------------------- */
+
+  let explicitOrderAction =
+    extractOrderAction(
+      userMessage
+    );
+
+  const hasExplicitOrderReference =
+    Boolean(
+      extractOrderReference(
+        userMessage
+      )
+    );
+
+  const pendingOrderAction =
+    await getPendingOrderActionFromConversation(
+      customer.id,
+      userMessage
+    );
+
+  let orderActionForResolution =
+    explicitOrderAction;
+
+  if (
+    orderActionForResolution ===
+      "reference" &&
+    pendingOrderAction
+  ) {
+    orderActionForResolution =
+      pendingOrderAction.action;
+  }
+
+  const looksLikeOrderAction =
+    Boolean(
+      orderActionForResolution
+    ) &&
+    (
+      hasExplicitOrderReference ||
+      /\b(?:my|the|this|that)\s+order\b/i.test(
+        userMessage
+      ) ||
+      /\b(?:status|where(?:'s| is)?|track|tracking|cancel)\b[\s\S]*\b(?:order|delivery)\b/i.test(
+        userMessage
+      ) ||
+      Boolean(
+        pendingOrderAction
+      )
+    );
+
+  let orderResolutionMessage =
+    userMessage;
+
+  if (
+    pendingOrderAction?.reference
+  ) {
+    orderResolutionMessage =
+      pendingOrderAction.reference;
+  }
+
+  if (
+    looksLikeOrderAction
+  ) {
+    const resolved =
+      await resolveCustomerOrder(
+        customer.id,
+        orderResolutionMessage
+      );
+
+    if (
+      resolved.order
+    ) {
+      if (
+        orderActionForResolution ===
+        "status"
+      ) {
+        const reply =
+          buildSingleOrderSummary(
+            resolved.order
+          );
+
+        await saveMessage({
+          customerId:
+            customer.id,
+
+          orderId:
+            resolved.order.id,
+
+          phone:
+            normalizedPhone,
+
+          role:
+            "assistant",
+
+          message:
+            reply,
+        });
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          reply
+        );
+
+        return;
+      }
+
+      if (
+        orderActionForResolution ===
+        "cancel"
+      ) {
+        if (
+          !canCustomerCancelOrder(
+            resolved.order
+          )
+        ) {
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            `Order #${shortOrderReference(
+              resolved.order.id
+            )} is already ${formatOrderHistoryStatus(
+              resolved.order.status
+            )} and can’t be cancelled.`
+          );
+
+          return;
+        }
+
+        await cancelOrderAndReleaseShopper(
+          resolved.order
+        );
+
+        await saveMessage({
+          customerId:
+            customer.id,
+
+          orderId:
+            resolved.order.id,
+
+          phone:
+            normalizedPhone,
+
+          role:
+            "assistant",
+
+          message:
+            `Cancelled order #${shortOrderReference(
+              resolved.order.id
+            )}.`,
+        });
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Done 👍 I’ve cancelled order #${shortOrderReference(
+            resolved.order.id
+          )}.`
+        );
+
+        return;
+      }
+    }
+
+    if (
+      resolved.matches.length > 1
+    ) {
+      const reply =
+        buildOrderChoiceMessage(
+          resolved.matches,
+          explicitOrderAction
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return;
+    }
+
+    if (
+      resolved.reason ===
+        "reference_not_found"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `I couldn’t find order #${extractOrderReference(
+          userMessage
+        )}. Try "MY ORDERS" to see your recent orders.`
+      );
+
+      return;
+    }
+
+    if (
+      resolved.reason ===
+        "not_found"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t match that to one of your recent orders. Try MY ORDERS and send me the order number."
+      );
+
+      return;
+    }
+  }
+
+  /* -----------------------------------------
+     CUSTOMER PAYMENT TO SHOPPER
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "payment_pending"
+  ) {
+    if (
+      isCustomerPaymentHelpRequest(
+        userMessage
+      )
+    ) {
+      let paymentShopper =
+        null;
+
+      if (
+        activeOrder.shopper_id
+      ) {
+        const shopperRows =
+          await supabaseRequest(
+            `shoppers?id=eq.${encodeURIComponent(
+              activeOrder.shopper_id
+            )}&select=*&limit=1`
+          );
+
+        paymentShopper =
+          Array.isArray(
+            shopperRows
+          ) &&
+          shopperRows.length
+            ? shopperRows[0]
+            : null;
+      }
+
+      if (
+        !paymentShopper
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I couldn’t load your shopper’s payment details right now. Please try again in a moment."
+        );
+
+        return;
+      }
+
+      /*
+        Use the shopper's saved UPI ID when available.
+        Otherwise use the shopper's registered mobile number
+        as the default UPI payment destination for the MVP.
+      */
+      const paymentDestination =
+        normalizePaymentDestination(
+          paymentShopper.upi_id ||
+          paymentShopper.phone
+        );
+
+      if (
+        !paymentDestination
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I’m waiting for the shopper’s payment details. They need to provide a UPI ID or UPI-linked mobile number."
+        );
+
+        if (
+          paymentShopper.phone
+        ) {
+          await sendWhatsAppMessage(
+            paymentShopper.phone,
+            "Please send your UPI ID or UPI-linked mobile number. Your Fetch mobile number can be used as the default payment mobile number."
+          );
+        }
+
+        return;
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildShopperPaymentMessage(
+          activeOrder,
+          paymentDestination,
+          paymentShopper.name
+        )
+      );
+
+      return;
+    }
+
+    if (
+      isCustomerPaidMessage(
+        userMessage
+      )
+    ) {
+      if (
+        activeOrder.payment_status ===
+        "paid"
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "Payment is already verified ✅ Your shopper can continue with the order."
+        );
+
+        return;
+      }
+
+      const reported =
+        await updateOrder(
+          activeOrder.id,
+          {
+            payment_status:
+              "customer_reported_paid",
+          }
+        );
+
+      if (!reported) {
+        throw new Error(
+          "Could not record customer payment report"
+        );
+      }
+
+      await saveMessage({
+        customerId:
+          customer.id,
+        orderId:
+          activeOrder.id,
+        phone:
+          normalizedPhone,
+        role:
+          "user",
+        message:
+          userMessage,
+      });
+
+      if (
+        activeOrder.shopper_id
+      ) {
+        const shopperRows =
+          await supabaseRequest(
+            `shoppers?id=eq.${encodeURIComponent(
+              activeOrder.shopper_id
+            )}&select=*&limit=1`
+          );
+
+        const shopper =
+          Array.isArray(
+            shopperRows
+          ) &&
+          shopperRows.length
+            ? shopperRows[0]
+            : null;
+
+        if (
+          shopper?.phone
+        ) {
+          await sendWhatsAppButtons(
+            shopper.phone,
+            `💳 The customer says they have paid ₹${formatRupees(
+              activeOrder.total_amount
+            )} directly to you.\n\nPlease check your UPI account. Select RECEIVED only after the money is actually visible.`,
+            [
+              {
+                id: "fetch_payment_received",
+                title: "RECEIVED",
+              },
+              {
+                id: "fetch_payment_not_received",
+                title: "NOT RECEIVED",
+              },
+            ],
+            {
+              footer: "Verify your UPI account first",
+            }
+          );
+        }
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Thanks 👍 I’ve told the shopper to verify the payment. The order will continue only after the shopper confirms RECEIVED."
+      );
+
+      return;
+    }
+
+    if (
+      isThankYouMessage(
+        userMessage
+      )
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You’re welcome 😊"
+      );
+
+      return;
+    }
+  }
+
+  /* -----------------------------------------
+     SIMPLE MVP: CUSTOMER PRICE APPROVAL
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_customer_price_confirmation"
+  ) {
+    if (
+      isSimpleConfirmation(
+        userMessage
+      )
+    ) {
+      if (
+        activeOrder.delivery_pricing_status !==
+        "calculated"
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "The delivery fee is still being calculated by Fetch from the road distance. Please wait for the pricing message before confirming."
+        );
+        return;
+      }
+
+      const approvedOrder =
+        await updateOrder(
+          activeOrder.id,
+          {
+            status:
+              "payment_pending",
+
+            payment_status:
+              "pending",
+          }
+        );
+
+      if (!approvedOrder) {
+        throw new Error(
+          "Could not move order to payment_pending"
+        );
+      }
+
+      // Customer approved the total. Only now should ATC dispatch the
+      // confirmed partner-store job to an available shopper.
+      const shopperDispatch =
+        await offerOrderToShopper(approvedOrder);
+
+      if (!shopperDispatch?.success) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Approved 👍\n\n💰 Total: ₹${formatRupees(
+            approvedOrder.total_amount
+          )}\n\nI’m finding an available Fetch shopper now. Payment details will appear automatically as soon as the shopper accepts.`
+        );
+      } else {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Approved 👍\n\n💰 Total: ₹${formatRupees(
+            approvedOrder.total_amount
+          )}\n\nA shopper has been offered the confirmed job. As soon as they accept, payment details will appear automatically.`
+        );
+      }
+
+      return;
+    }
+
+    if (
+      isSimpleRejection(
+        userMessage
+      )
+    ) {
+      await cancelOrderAndReleaseShopper(
+        activeOrder
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Okay 👍 The order is cancelled. I’ve informed the shopper."
+      );
+
+      return;
+    }
+  }
+
+  /* -----------------------------------------
+     DETERMINISTIC CANCELLATION
+     Always handle simple cancellation before AI.
+  ----------------------------------------- */
+
+  if (
+    isCancellationRequest(userMessage) &&
+    !extractOrderReference(userMessage)
+  ) {
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder?.id ||
+        latestOrder?.id ||
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    if (!activeOrder) {
+      const reply =
+        "There isn’t an active order to cancel. Try MY ORDERS to see your recent orders.";
+
+      await saveMessage({
+        customerId:
+          customer.id,
+
+        orderId:
+          latestOrder?.id ||
+          null,
+
+        phone:
+          normalizedPhone,
+
+        role:
+          "assistant",
+
+        message:
+          reply,
+      });
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        reply
+      );
+
+      return;
+    }
+
+    await cancelOrderAndReleaseShopper(
+      activeOrder
+    );
+
+    const reply =
+      "Done — I’ve cancelled your order.";
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  /* -----------------------------------------
+     SIMPLE MVP: LOCATION AFTER PRODUCT PRICE
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_customer_price_confirmation" &&
+    location &&
+    Number.isFinite(
+      Number(location.latitude)
+    ) &&
+    Number.isFinite(
+      Number(location.longitude)
+    )
+  ) {
+    const locationLabel =
+      [
+        location.name,
+        location.address,
+      ]
+        .map(
+          (value) =>
+            String(value || "").trim()
+        )
+        .filter(Boolean)
+        .join(", ");
+
+    const updatedOrder =
+      await updateOrder(
+        activeOrder.id,
+        {
+          delivery_address:
+            locationLabel ||
+            activeOrder.delivery_address ||
+            "WhatsApp location",
+        }
+      );
+
+    if (!updatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location, but I couldn’t update the order. Please send it again."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Location saved 📍. Fetch will calculate the delivery fee from the road distance once the store is known."
+    );
+
+    return;
+  }
+
+
+  function buildCustomerMapsLink(latitude, longitude) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+      `${latitude},${longitude}`
+    )}`;
+  }
+
+  async function notifyAssignedShopperOfCustomerLocation(
+    order,
+    latitude,
+    longitude
+  ) {
+    if (!order?.shopper_id) {
+      return;
+    }
+
+    const shoppers =
+      await supabaseRequest(
+        `shoppers?id=eq.${encodeURIComponent(
+          order.shopper_id
+        )}&select=*&limit=1`
+      );
+
+    const shopper =
+      Array.isArray(shoppers) &&
+      shoppers.length
+        ? shoppers[0]
+        : null;
+
+    if (!shopper?.phone) {
+      return;
+    }
+
+    const mapsLink =
+      buildCustomerMapsLink(
+        latitude,
+        longitude
+      );
+
+    await sendWhatsAppMessage(
+      shopper.phone,
+      `📍 The customer has shared their delivery location.\n\n${mapsLink}\n\nUse this location for the delivery.`
+    );
+  }
+
+  /* -----------------------------------------
+     WHATSAPP LOCATION
+  ----------------------------------------- */
+
+  const locationLatitude = Number(location?.latitude);
+  const locationLongitude = Number(location?.longitude);
+  const hasValidLocation =
+    Number.isFinite(locationLatitude) &&
+    Number.isFinite(locationLongitude) &&
+    locationLatitude !== 0 &&
+    locationLongitude !== 0;
+
+  if (location && !hasValidLocation) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "I received the location, but it doesn’t contain valid coordinates. Please use WhatsApp → Location → Send your current location and try again. 📍"
+    );
+    return;
+  }
+
+  if (location && hasValidLocation) {
+    const latitude = locationLatitude;
+    const longitude = locationLongitude;
+
+    const locationLabel =
+      [
+        location.name,
+        location.address,
+      ]
+        .map(
+          (value) =>
+            String(value || "").trim()
+        )
+        .filter(Boolean)
+        .join(", ");
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder?.id ||
+        latestOrder?.id ||
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        "WhatsApp location pin shared",
+    });
+
+    if (!activeOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location 📍. Tell me what you’d like me to fetch and which store."
+      );
+
+      return;
+    }
+
+    const address =
+      locationLabel ||
+      activeOrder.delivery_address ||
+      "WhatsApp location";
+
+    const updates = {
+      delivery_address:
+        address,
+
+      customer_latitude:
+        latitude,
+
+      customer_longitude:
+        longitude,
+
+      customer_location_shared_at:
+        new Date().toISOString(),
+    };
+
+    /*
+      Customer location is stored for delivery. Pricing is calculated only
+      after the shopper reports the actual fulfillment source and price.
+    */
+
+    const updatedOrder =
+      await updateOrder(
+        activeOrder.id,
+        updates
+      );
+
+    if (!updatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location, but I couldn’t save it. Please send the location again."
+      );
+
+      return;
+    }
+
+    /*
+      ATC FULFILLMENT DECISION
+
+      The customer supplies the request and delivery location.
+      ATC first tries an approved + opted-in partner store.
+
+      Partner store available:
+        customer -> ATC -> partner store -> price -> shopper
+
+      No partner store available:
+        customer -> ATC -> shopper fallback
+
+      IMPORTANT: When a partner store is selected, the shopper must NOT
+      choose the source, enter the product price, or share the store
+      location. The partner store already owns the product/price decision.
+    */
+    if (
+      updatedOrder.status === "collecting_details" &&
+      String(updatedOrder.items || "").trim()
+    ) {
+      const findingPartner =
+        await updateOrder(
+          updatedOrder.id,
+          {
+            status: "finding_partner",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
+          }
+        );
+
+      const orderForDispatch =
+        findingPartner || updatedOrder;
+
+      let partnerDispatch = null;
+
+      try {
+        partnerDispatch =
+          await dispatchOrderToPartnerStore({
+            order: orderForDispatch,
+          });
+      } catch (error) {
+        console.error(
+          "FETCH ATC PARTNER DISPATCH ERROR:",
+          error
+        );
+
+        partnerDispatch = {
+          success: false,
+          reason: "partner_dispatch_error",
+        };
+      }
+
+      if (partnerDispatch?.success) {
+        const partnerOffered =
+          await updateOrder(
+            orderForDispatch.id,
+            {
+              status: "partner_offered",
+              partner_store_id:
+                partnerDispatch.partnerStore?.id ||
+                null,
+              partner_request_id:
+                partnerDispatch.request?.id ||
+                null,
+              store_name:
+                partnerDispatch.partnerStore?.business_name ||
+                orderForDispatch.store_name ||
+                null,
+            }
+          );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "Got it 👍\n\nI’m checking the most suitable nearby partner store first. Once the item and price are confirmed, I’ll calculate the delivery fee and send the job to a Fetch shopper."
+        );
+
+        console.log(
+          "FETCH ATC PARTNER OFFERED:",
+          JSON.stringify({
+            orderId: orderForDispatch.id,
+            partnerStoreId:
+              partnerDispatch.partnerStore?.id || null,
+            partnerRequestId:
+              partnerDispatch.request?.id || null,
+            partnerStore:
+              partnerDispatch.partnerStore?.business_name || null,
+            distanceKm:
+              partnerDispatch.distanceKm ?? null,
+          })
+        );
+
+        return;
+      }
+
+      /*
+        No eligible partner store was available. Only now do we fall back
+        to the existing shopper-as-source flow.
+      */
+      const findingShopper =
+        await updateOrder(
+          orderForDispatch.id,
+          {
+            status: "finding_shopper",
+            delivery_pricing_status: "pending",
+            delivery_pricing_source: null,
+            distance_km: null,
+            delivery_fee: 0,
+            item_total: 0,
+            total_amount: 0,
+            priced_at: null,
+            partner_store_id: null,
+            partner_request_id: null,
+            store_name: "Any available local store",
+          }
+        );
+
+      const dispatch =
+        await offerOrderToShopper(
+          findingShopper || orderForDispatch
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        dispatch.success
+          ? "Got it 👍\n\nNo partner store was available, so I’m finding a Fetch shopper who can source and deliver this for you."
+          : "Got it 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+      );
+
+      return;
+    }
+
+    /*
+      If a shopper has already accepted the order, immediately pass
+      the new location to them.
+    */
+    if (
+      updatedOrder.shopper_id
+    ) {
+      await notifyAssignedShopperOfCustomerLocation(
+        updatedOrder,
+        latitude,
+        longitude
+      );
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Location saved 📍. I’ve shared it with your shopper."
+    );
+
+    return;
+  }
+
+  /* -----------------------------------------
+     PENDING SUBSTITUTION
+  ----------------------------------------- */
+
+  if (activeOrder) {
+    const pending =
+      await getPendingSubstitution(
+        activeOrder.id
+      );
+
+    if (pending) {
+      const answer =
+        String(
+          userMessage || ""
+        ).trim();
+
+      const approved =
+        /^(yes|y|yeah|yep|ya|ok|okay|sure|approve|approved|go ahead|confirm|confirmed)$/i.test(
+          answer
+        );
+
+      const rejected =
+        /^(no|n|nope|reject|rejected|don't|dont|cancel)$/i.test(
+          answer
+        );
+
+      if (
+        approved ||
+        rejected
+      ) {
+        if (approved) {
+          await applyApprovedSubstitution(
+            activeOrder,
+            pending
+          );
+
+          await updateSubstitutionRequest(
+            pending.id,
+            {
+              status:
+                "approved",
+
+              customer_response:
+                userMessage,
+
+              resolved_at:
+                new Date().toISOString(),
+            }
+          );
+
+          const reply =
+            `Done 👍 I’ve approved the substitution to ${pending.proposed_item}.`;
+
+          await saveMessage({
+            customerId:
+              customer.id,
+
+            orderId:
+              activeOrder.id,
+
+            phone:
+              normalizedPhone,
+
+            role:
+              "assistant",
+
+            message:
+              reply,
+          });
+
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            reply
+          );
+
+          if (
+            pending.shopper_id
+          ) {
+            const shoppers =
+              await supabaseRequest(
+                `shoppers?id=eq.${encodeURIComponent(
+                  pending.shopper_id
+                )}&select=*&limit=1`
+              );
+
+            const shopper =
+              Array.isArray(
+                shoppers
+              ) &&
+              shoppers.length
+                ? shoppers[0]
+                : null;
+
+            if (
+              shopper?.phone
+            ) {
+              await sendWhatsAppMessage(
+                shopper.phone,
+
+                `✅ Customer approved the substitution.\n\nReplace ${pending.original_item} with ${pending.proposed_item}.`
+              );
+            }
+          }
+        } else {
+          await updateSubstitutionRequest(
+            pending.id,
+            {
+              status:
+                "rejected",
+
+              customer_response:
+                userMessage,
+
+              resolved_at:
+                new Date().toISOString(),
+            }
+          );
+
+          const reply =
+            "No problem 👍 Please keep the original item if it’s available.";
+
+          await saveMessage({
+            customerId:
+              customer.id,
+
+            orderId:
+              activeOrder.id,
+
+            phone:
+              normalizedPhone,
+
+            role:
+              "assistant",
+
+            message:
+              reply,
+          });
+
+          await sendWhatsAppMessage(
+            normalizedPhone,
+            reply
+          );
+
+          if (
+            pending.shopper_id
+          ) {
+            const shoppers =
+              await supabaseRequest(
+                `shoppers?id=eq.${encodeURIComponent(
+                  pending.shopper_id
+                )}&select=*&limit=1`
+              );
+
+            const shopper =
+              Array.isArray(
+                shoppers
+              ) &&
+              shoppers.length
+                ? shoppers[0]
+                : null;
+
+            if (
+              shopper?.phone
+            ) {
+              await sendWhatsAppMessage(
+                shopper.phone,
+
+                `❌ Customer rejected the substitution.\n\nPlease keep ${pending.original_item} if it’s available.`
+              );
+            }
+          }
+        }
+
+        await saveMessage({
+          customerId:
+            customer.id,
+
+          orderId:
+            activeOrder.id,
+
+          phone:
+            normalizedPhone,
+
+          role:
+            "user",
+
+          message:
+            userMessage,
+        });
+
+        return;
+      }
+    }
+  }
+
+  /* -----------------------------------------
+     DETERMINISTIC CONFIRM / REJECT
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_confirmation" &&
+    isSimpleConfirmation(userMessage)
+  ) {
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    const order =
+      await updateOrder(
+        activeOrder.id,
+        {
+          status:
+            "finding_shopper",
+        }
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Confirmed 👍 I’m finding a shopper for your order now."
+    );
+
+    const dispatch =
+      await offerOrderToShopper(
+        order
+      );
+
+    if (
+      dispatch.success
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "🛍️ I’ve sent your order to an available shopper.\n\nI’ll let you know as soon as someone accepts it."
+      );
+    } else {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Your order is confirmed, but I couldn’t find an available shopper right now. I’ll keep it in the queue."
+      );
+    }
+
+    return;
+  }
+
+  if (
+    activeOrder &&
+    activeOrder.status ===
+      "awaiting_confirmation" &&
+    isSimpleRejection(userMessage)
+  ) {
+    await updateOrder(
+      activeOrder.id,
+      {
+        status:
+          "cancelled",
+        shopper_id:
+          null,
+      }
+    );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        activeOrder.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Okay 👍 I won’t place that order."
+    );
+
+    return;
+  }
+
+  await saveMessage({
+    customerId:
+      customer.id,
+
+    orderId:
+      activeOrder?.id ||
+      latestOrder?.id ||
+      null,
+
+    phone:
+      normalizedPhone,
+
+    role:
+      "user",
+
+    message:
+      userMessage,
+  });
+
+  /*
+    -------------------------------------------------------
+    DETERMINISTIC ACTIVE-ORDER MODIFICATIONS
+    -------------------------------------------------------
+    Handle simple customer changes before OpenAI. This prevents
+    messages like "add 2 eggs" or "change delivery address to..."
+    from entering the old pricing/update branch.
+  */
+
+  const directModifications =
+    parseOrderModifications(
+      userMessage
+    );
+
+  if (
+    activeOrder &&
+    directModifications.length
+  ) {
+    if (
+      !canModifyOrder(
+        activeOrder
+      )
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `I can’t change order #${shortOrderReference(
+          activeOrder.id
+        )} because it is already ${formatOrderHistoryStatus(
+          activeOrder.status
+        )}.`
+      );
+
+      return;
+    }
+
+    let updatedItems =
+      String(
+        activeOrder.items ||
+        ""
+      ).trim();
+
+    let updatedAddress =
+      String(
+        activeOrder.delivery_address ||
+        customer.address ||
+        ""
+      ).trim();
+
+    let itemChanged =
+      false;
+
+    let addressChanged =
+      false;
+
+    const appliedChanges =
+      [];
+
+    for (
+      const modification of
+        directModifications
+    ) {
+      if (
+        modification.type ===
+        "address"
+      ) {
+        updatedAddress =
+          modification.value;
+
+        addressChanged =
+          true;
+
+        appliedChanges.push(
+          `changed the delivery address to ${updatedAddress}`
+        );
+
+        continue;
+      }
+
+      const nextItems =
+        applyOrderItemModification(
+          updatedItems,
+          modification
+        );
+
+      if (!nextItems) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `I couldn’t apply "${modification.value || modification.from}". Tell me exactly what you want changed.`
+        );
+
+        return;
+      }
+
+      updatedItems =
+        nextItems;
+
+      itemChanged =
+        true;
+
+      if (
+        modification.type ===
+        "add"
+      ) {
+        appliedChanges.push(
+          `added ${modification.value}`
+        );
+      } else if (
+        modification.type ===
+        "remove"
+      ) {
+        appliedChanges.push(
+          `removed ${modification.value}`
+        );
+      } else if (
+        modification.type ===
+        "replace"
+      ) {
+        appliedChanges.push(
+          `changed ${modification.from} to ${modification.to}`
+        );
+      }
+    }
+
+    const updates = {
+      items:
+        updatedItems,
+
+      delivery_address:
+        updatedAddress,
+    };
+
+    /*
+      Any customer change invalidates the old shopper quote.
+      The shopper must quote the revised order again.
+    */
+    if (
+      itemChanged ||
+      addressChanged
+    ) {
+      updates.item_total =
+        0;
+
+      updates.fetch_fee =
+        FETCH_FEE;
+
+      updates.delivery_fee =
+        0;
+
+      updates.total_amount =
+        0;
+
+      updates.distance_km =
+        null;
+
+      updates.delivery_pricing_status =
+        "pending";
+
+      updates.delivery_pricing_source =
+        null;
+
+      updates.priced_at =
+        null;
+
+      updates.payment_status =
+        "pending";
+    }
+
+    /*
+      Keep the existing shopper attached while they re-check
+      the modified order. If there is no shopper, send it to one.
+    */
+    updates.status =
+      activeOrder.shopper_id
+        ? "shopper_assigned"
+        : "finding_shopper";
+
+    const changedOrder =
+      await updateOrder(
+        activeOrder.id,
+        updates
+      );
+
+    if (!changedOrder) {
+      throw new Error(
+        "Could not update active Fetch order"
+      );
+    }
+
+    if (
+      addressChanged
+    ) {
+      await updateCustomerAddress(
+        customer.id,
+        updatedAddress
+      );
+    }
+
+    if (
+      changedOrder.shopper_id
+    ) {
+      const shoppers =
+        await supabaseRequest(
+          `shoppers?id=eq.${encodeURIComponent(
+            changedOrder.shopper_id
+          )}&select=*&limit=1`
+        );
+
+      const shopper =
+        Array.isArray(
+          shoppers
+        ) &&
+        shoppers.length
+          ? shoppers[0]
+          : null;
+
+      if (
+        shopper?.phone
+      ) {
+        const details =
+          [
+            itemChanged
+              ? `🛒 Updated items: ${changedOrder.items}`
+              : "",
+            `🏪 Store: ${changedOrder.store_name}`,
+            `📍 Deliver to: ${changedOrder.delivery_address || "customer location"}`,
+          ]
+            .filter(Boolean)
+            .join("\n");
+
+        await sendWhatsAppMessage(
+          shopper.phone,
+          `🔄 The customer updated the order.\n\n${details}\n\nPlease re-check the product price and delivery fee and reply:\nPRICE: product price DELIVERY FEE: delivery fee`
+        );
+      }
+    } else {
+      const dispatch =
+        await offerOrderToShopper(
+          changedOrder
+        );
+
+      if (
+        !dispatch.success
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I’ve updated the order, but there isn’t an available shopper right now."
+        );
+
+        return;
+      }
+    }
+
+    const summary =
+      appliedChanges.length
+        ? `Updated 👍 I’ve ${appliedChanges.join(" and ")}.`
+        : "Updated 👍 I’ve updated your order.";
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `${summary}\n\nI’ve asked the shopper to re-check the product price and delivery fee before we continue.`
+    );
+
+    return;
+  }
+
+  /* -----------------------------------------
+     CUSTOMER ORDER DETAILS
+  ----------------------------------------- */
+
+  if (
+    isCustomerOrderDetailsQuestion(
+      userMessage
+    )
+  ) {
+    const order =
+      activeOrder ||
+      latestOrder;
+
+    if (!order) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I don’t have a Fetch order for you yet. Tell me what you’d like me to fetch."
+      );
+      return;
+    }
+
+    const reply =
+      buildSingleOrderSummary(
+        order
+      );
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  let decision;
+
+  try {
+    decision =
+      await callFetchAI({
+        userMessage,
+        history,
+        activeOrder,
+        latestOrder,
+        customer,
+      });
+  } catch (error) {
+    console.error(
+      "FETCH AI ERROR:",
+      error
+    );
+
+    decision =
+      fallbackDecision(
+        userMessage,
+        activeOrder,
+        customer
+      );
+  }
+
+  /* -----------------------------------------
+     SAFETY NORMALIZATION OF AI ORDER FIELDS
+  ----------------------------------------- */
+
+  if (
+    activeOrder &&
+    decision.intent === "update_order"
+  ) {
+    const currentItems =
+      String(
+        activeOrder.items ||
+        ""
+      ).trim();
+
+    if (
+      isPureConversationControl(
+        userMessage
+      )
+    ) {
+      decision.items =
+        currentItems;
+    } else if (
+      looksLikeContaminatedItems(
+        decision.items
+      )
+    ) {
+      const additionalItems =
+        extractAdditionalItemsFromMessage(
+          userMessage
+        );
+
+      if (
+        additionalItems &&
+        !looksLikeContaminatedItems(
+          additionalItems
+        )
+      ) {
+        decision.items =
+          currentItems
+            ? `${currentItems}; ${additionalItems}`
+            : additionalItems;
+      } else {
+        decision.items =
+          currentItems;
+      }
+    }
+  }
+
+  if (
+    decision.intent === "shopping_request"
+  ) {
+    const deterministicParts =
+      extractDeterministicShoppingRequest(
+        userMessage
+      );
+
+    const extractedItems =
+      deterministicParts?.items ||
+      extractItemsFromShoppingMessage(
+        userMessage
+      );
+
+    if (extractedItems) {
+      decision.items =
+        cleanNewOrderItems(
+          extractedItems
+        );
+    } else if (
+      looksLikeContaminatedItems(
+        decision.items
+      )
+    ) {
+      decision.items = "";
+    }
+  }
+
+  /*
+    If a clear new-order message somehow reaches OpenAI
+    and gets classified as update_order, force it back
+    to shopping_request. The latest customer message is
+    the source of truth for a new order.
+  */
+  if (
+    isExplicitNewOrderRequest(
+      userMessage
+    ) &&
+    decision.intent ===
+      "update_order"
+  ) {
+    decision.intent =
+      "shopping_request";
+
+    const deterministicParts =
+      extractDeterministicShoppingRequest(
+        userMessage
+      );
+
+    if (
+      deterministicParts
+    ) {
+      decision.items =
+        deterministicParts.items;
+
+      decision.store_name =
+        deterministicParts.store;
+
+      decision.delivery_address =
+        deterministicParts.address;
+    }
+  }
+
+  /* STATUS */
+
+  if (
+    decision.intent ===
+    "status"
+  ) {
+    const order =
+      activeOrder ||
+      latestOrder;
+
+    const reply =
+      order
+        ? buildSingleOrderSummary(
+            order
+          )
+        : "I don’t see an order for you yet. Tell me what you’d like to buy.";
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order?.id ||
+        null,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "assistant",
+
+      message:
+        reply,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      reply
+    );
+
+    return;
+  }
+
+  /* CANCEL */
+
+  if (
+    decision.intent ===
+    "cancel"
+  ) {
+    if (!activeOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "There isn’t an active order to cancel."
+      );
+      return;
+    }
+
+    await cancelOrderAndReleaseShopper(
+      activeOrder
+    );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Done — I’ve cancelled your order."
+    );
+
+    return;
+  }
+  /* REJECT */
+
+  if (
+    decision.intent ===
+    "reject"
+  ) {
+    if (
+      activeOrder?.status ===
+      "awaiting_confirmation"
+    ) {
+      await updateOrder(
+        activeOrder.id,
+        {
+          status:
+            "cancelled",
+        }
+      );
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      decision.reply ||
+        "Okay — I won’t place that order."
+    );
+
+    return;
+  }
+
+  /* CONFIRM */
+
+  if (
+    decision.intent ===
+    "confirm"
+  ) {
+    if (
+      !activeOrder ||
+      activeOrder.status !==
+        "awaiting_confirmation"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "I don’t have an order waiting for confirmation. Tell me what you’d like to fetch."
+      );
+
+      return;
+    }
+
+    if (
+      activeOrder.delivery_pricing_status !==
+        "calculated" ||
+      activeOrder.distance_km == null ||
+      activeOrder.delivery_fee == null
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "I’m still calculating the delivery distance and charge. Please wait for my delivery-price message before confirming."
+      );
+
+      return;
+    }
+
+    const order =
+      await updateOrder(
+        activeOrder.id,
+        {
+          status:
+            "finding_shopper",
+        }
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      "Confirmed 👍 I’m finding a shopper for your order now."
+    );
+
+    const dispatch =
+      await offerOrderToShopper(
+        order
+      );
+
+    if (
+      dispatch.success
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "🛍️ I’ve sent your order to an available shopper.\n\nI’ll let you know as soon as someone accepts it."
+      );
+    } else {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "Your order is confirmed, but I couldn’t find an available shopper right now. I’ll keep it in the queue."
+      );
+    }
+
+    return;
+  }
+
+  /* SHOPPING REQUEST */
+
+  if (
+    decision.intent ===
+    "shopping_request"
+  ) {
+    const items =
+      cleanNewOrderItems(
+        decision.items?.trim() || ""
+      );
+
+    const requestedStore =
+      cleanRequestedStoreName(
+        String(
+          decision.store_name ||
+          ""
+        ).trim()
+      );
+
+    const storeName =
+      requestedStore &&
+      !looksLikeNearbyStoreRequest(
+        requestedStore
+      )
+        ? requestedStore
+        : "Any available local store";
+
+    // For a new shopping request, accept a delivery address only
+    // when it came from the current customer message. Never fall
+    // back to customer.address, which may belong to an old order.
+    const currentMessageRequest =
+      extractFlexibleShoppingRequest(
+        userMessage
+      );
+
+    const address =
+      String(
+        currentMessageRequest?.address ||
+        ""
+      ).trim();
+
+    if (!items) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        decision.reply ||
+          "Sure. What would you like me to fetch?"
+      );
+      return;
+    }
+
+    const order =
+      await createOrder({
+        customerId:
+          customer.id,
+
+        storeName,
+
+        items,
+
+        budget:
+          decision.budget ??
+          null,
+
+        deliveryAddress:
+          address,
+
+        status:
+          address
+            ? "finding_shopper"
+            : "collecting_details",
+      });
+
+    if (!order) {
+      throw new Error(
+        "Could not create Fetch order"
+      );
+    }
+
+    await saveMessage({
+      customerId:
+        customer.id,
+
+      orderId:
+        order.id,
+
+      phone:
+        normalizedPhone,
+
+      role:
+        "user",
+
+      message:
+        userMessage,
+    });
+
+    if (!address) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n\nWhere should I deliver it? Send your address or WhatsApp location pin 📍.`
+      );
+      return;
+    }
+
+    await updateCustomerAddress(
+      customer.id,
+      address
+    );
+
+    const dispatch =
+      await offerOrderToShopper(
+        order
+      );
+
+    if (dispatch.success) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍\n\n🛒 ${items}\n🏪 ${storeName}\n📍 Deliver to: ${address}\n\nI’ve sent the order to all available Fetch shoppers nearby. Whoever accepts first will take the job. They’ll check the product price and delivery fee and send the details to you for approval.`
+      );
+    } else {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Got it 👍 I have your order for ${items}. There isn’t an available shopper right now, but your order is saved.`
+      );
+    }
+
+    return;
+  }
+
+  /* UPDATE ORDER */
+
+  if (
+    decision.intent ===
+      "update_order" &&
+    activeOrder &&
+    !isThankYouMessage(
+      userMessage
+    ) &&
+    !isEtaQuestion(
+      userMessage
+    ) &&
+    !isNewOrderPrompt(
+      userMessage
+    )
+  ) {
+    const updates = {};
+
+    if (
+      decision.store_name?.trim()
+    ) {
+      updates.store_name =
+        decision.store_name.trim();
+    }
+
+    if (
+      decision.items?.trim() &&
+      !isPureConversationControl(
+        userMessage
+      ) &&
+      !looksLikeContaminatedItems(
+        decision.items
+      )
+    ) {
+      updates.items =
+        decision.items.trim();
+    } else if (
+      isPureConversationControl(
+        userMessage
+      )
+    ) {
+      updates.items =
+        activeOrder.items;
+    }
+
+    if (
+      decision.delivery_address?.trim()
+    ) {
+      updates.delivery_address =
+        decision.delivery_address.trim();
+
+      await updateCustomerAddress(
+        customer.id,
+        updates.delivery_address
+      );
+    }
+
+    if (
+      decision.budget != null
+    ) {
+      updates.budget =
+        decision.budget;
+    }
+
+    // Any order change invalidates the old distance/price.
+    updates.item_total = 0;
+    updates.fetch_fee = FETCH_FEE;
+    updates.delivery_fee = 0;
+    updates.total_amount = 0;
+    updates.distance_km = null;
+    updates.delivery_pricing_status =
+      "pending";
+    updates.delivery_pricing_source =
+      null;
+    updates.priced_at = null;
+    updates.status =
+      "collecting_details";
+
+    const changedOrder =
+      await updateOrder(
+        activeOrder.id,
+        updates
+      );
+
+    if (!changedOrder) {
+      throw new Error(
+        "Could not update active Fetch order"
+      );
+    }
+
+    if (
+      String(changedOrder.delivery_address || "").trim() &&
+      !(
+        Number.isFinite(
+          Number(changedOrder.customer_latitude)
+        ) &&
+        Number.isFinite(
+          Number(changedOrder.customer_longitude)
+        ) &&
+        Number(changedOrder.customer_latitude) !== 0 &&
+        Number(changedOrder.customer_longitude) !== 0
+      )
+    ) {
+      const resolvedChangedOrder =
+        await ensureOrderDeliveryCoordinates(
+          changedOrder,
+          changedOrder.delivery_address
+        );
+
+      if (!resolvedChangedOrder) {
+        await updateOrder(
+          changedOrder.id,
+          {
+            status: "collecting_details",
+          }
+        );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "Updated 👍 I have the delivery address, but I couldn’t map it accurately enough. Please send your WhatsApp Location pin so I can continue."
+        );
+        return;
+      }
+    }
+
+    const findingShopper =
+      await updateOrder(
+        changedOrder.id,
+        {
+          status: "finding_shopper",
+          delivery_pricing_status: "pending",
+          delivery_pricing_source: null,
+          distance_km: null,
+          delivery_fee: 0,
+          item_total: 0,
+          total_amount: 0,
+          priced_at: null,
+        }
+      );
+
+    const dispatch =
+      await offerOrderToShopper(
+        findingShopper || changedOrder
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      dispatch.success
+        ? "Updated 👍 I’m finding a shopper for the revised request. I’ll send you the final price once it’s ready."
+        : "Updated 👍 Your request is saved. I’m looking for an available Fetch shopper now."
+    );
+
+    return;
+  }
+
+  await sendWhatsAppMessage(
+    normalizedPhone,
+
+    decision.reply ||
+      "Hi! I’m Fetch. Tell me what you’d like me to fetch. I’ll handle the rest."
+  );
+}
+
+
+/* =========================================================
+   SIMPLE MVP PRICE FLOW
+========================================================= */
+
+function parseShopperPriceAndDelivery(text) {
+  const value =
+    String(text || "")
+      .trim()
+      .replace(/,/g, "")
+      .replace(/\s+/g, " ");
+
+  const match =
+    value.match(
+      /^price\s*:?\s*₹?\s*(\d+(?:\.\d{1,2})?)\s+delivery(?:\s+fee)?\s*:?\s*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const itemTotal =
+    Number(match[1]);
+
+  const deliveryFee =
+    Number(match[2]);
+
+  if (
+    !Number.isFinite(itemTotal) ||
+    itemTotal < 0 ||
+    !Number.isFinite(deliveryFee) ||
+    deliveryFee < 20
+  ) {
+    return null;
+  }
+
+  return {
+    itemTotal,
+    deliveryFee,
+  };
+}
+
+
+function parseShopperProductPrice(text) {
+  const value = String(text || "")
+    .trim()
+    .replace(/,/g, "")
+    .replace(/\s+/g, " ");
+
+  const match = value.match(
+    /^price\s*: ?\s*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
+  );
+
+  if (!match) return null;
+  const itemTotal = Number(match[1]);
+  return Number.isFinite(itemTotal) && itemTotal >= 0
+    ? itemTotal
+    : null;
+}
+
+function parseShopperStoreAndPrice(text) {
+  const value = String(text || "")
+    .trim()
+    .replace(/[,;]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  // Accept both the instructed format and natural variations:
+  // STORE: Zam Zam PRICE: 499
+  // Store Zam Zam Price:499
+  // STORE: Zam Zam, PRICE 499
+  // Store: Zam Zam Price 499
+  const match = value.match(
+    /^store\s*:?\s*(.+?)\s+price\s*:?\s*₹?\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:rs|inr|rupees))?$/i
+  );
+
+  if (!match) return null;
+
+  const storeName = match[1]
+    .trim()
+    .replace(/[,:;]+$/g, "")
+    .trim();
+  const itemTotal = Number(match[2]);
+
+  if (!storeName || !Number.isFinite(itemTotal) || itemTotal < 0) {
+    return null;
+  }
+
+  return { storeName, itemTotal };
+}
+
+function isSuccessfulExistingDispatch(
+  dispatch
+) {
+  return Boolean(
+    dispatch?.success &&
+    dispatch?.reused &&
+    dispatch?.reason ===
+      "already_offered"
+  );
+}
+
+function buildCustomerPriceApprovalMessage(order) {
+  const itemTotal = Number(order.item_total || 0);
+  const deliveryFee = Number(order.delivery_fee || 0);
+  const total = itemTotal + deliveryFee + Number(order.fetch_fee || 0);
+
+  return (
+    `🧾 *Your Fetch total*\n\n` +
+    `🛒 Product: ₹${formatRupees(itemTotal)}\n` +
+    `🚚 Delivery: ₹${formatRupees(deliveryFee)}\n` +
+    `💰 *Total: ₹${formatRupees(total)}*\n\n` +
+    `Please choose an option below.`
+  );
+}
+
+async function ensureStoreForOrder(order) {
+  if (!order?.store_name) {
+    return null;
+  }
+
+  const existing =
+    await getStoreByName(
+      order.store_name
+    );
+
+  if (existing) {
+    return existing;
+  }
+
+  const raw =
+    String(
+      order.store_name
+    ).trim();
+
+  const pieces =
+    raw
+      .split(",")
+      .map(
+        (piece) =>
+          piece.trim()
+      )
+      .filter(Boolean);
+
+  const name =
+    pieces.length >= 2
+      ? pieces[0]
+      : raw;
+
+  const address =
+    pieces.length >= 2
+      ? pieces.slice(1).join(", ")
+      : `${raw}, Thirumala, Thiruvananthapuram, Kerala, India`;
+
+  try {
+    const data =
+      await supabaseRequest(
+        "stores",
+        {
+          method:
+            "POST",
+
+          headers: {
+            Prefer:
+              "return=representation",
+          },
+
+          body:
+            JSON.stringify({
+              name,
+              address,
+              active:
+                true,
+            }),
+        }
+      );
+
+    const store =
+      Array.isArray(data)
+        ? data[0]
+        : data;
+
+    if (
+      store?.id
+    ) {
+      await updateOrder(
+        order.id,
+        {
+          store_id:
+            store.id,
+
+          store_name:
+            store.name,
+        }
+      );
+    }
+
+    return store;
+  } catch (error) {
+    console.error(
+      "FETCH ENSURE STORE ERROR:",
+      error
+    );
+
+    return null;
+  }
+}
+
+
+/* =========================================================
+   ORDER RECEIPTS
+========================================================= */
+
+function buildCustomerReceiptMessage(order) {
+  const productPrice =
+    Number(order?.item_total || 0);
+
+  const deliveryFee =
+    Number(order?.delivery_fee || 0);
+
+  const fetchFee =
+    Number(order?.fetch_fee || 0);
+
+  const total =
+    Number(
+      order?.total_amount ??
+      productPrice +
+      deliveryFee +
+      fetchFee
+    );
+
+  const paymentLine =
+    order?.payment_method === "shopper_upi"
+      ? "💳 Payment: Paid directly to shopper via UPI"
+      : order?.payment_status === "paid"
+        ? "💳 Payment: Paid"
+        : "💳 Payment: Payment details recorded";
+
+  const sourceLine = order?.store_name
+    ? `🏪 Source: ${order.store_name}`
+    : `📍 Source: Shopper-selected location`;
+
+  return (
+    `🎉 Order delivered!\n\n` +
+    `${sourceLine}\n` +
+    `🛒 Items: ${order?.items || "Your items"}\n\n` +
+    `🧾 Product price: ₹${formatRupees(productPrice)}\n` +
+    `🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n` +
+    `💼 Fetch fee: ₹${formatRupees(fetchFee)}\n` +
+    `💰 Total: ₹${formatRupees(total)}\n\n` +
+    `${paymentLine}\n\n` +
+    `Thanks for using Fetch ❤️`
+  );
+}
+
+function buildShopperCompletionMessage(order) {
+  const deliveryFee =
+    Number(order?.delivery_fee || 0);
+
+  return (
+    `Order completed ✅\n\n` +
+    `💰 Delivery earnings: ₹${formatRupees(deliveryFee)}\n\n` +
+    `Thanks for completing the Fetch order. You’re available for the next job.`
+  );
+}
+
+
+/* =========================================================
+   CUSTOMER RATINGS
+========================================================= */
+
+function parseCustomerRating(text) {
+  const raw =
+    String(text || "")
+      .trim()
+      .toLowerCase();
+
+  const match =
+    raw.match(
+      /(?:^|\b)([1-5])(?:\s*(?:stars?|\/\s*5))?(?:\b|$)/
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const rating =
+    Number(match[1]);
+
+  return Number.isInteger(rating) &&
+    rating >= 1 &&
+    rating <= 5
+    ? rating
+    : null;
+}
+
+function buildCustomerRatingRequest() {
+  return (
+    `⭐ How was your Fetch experience?\n\n` +
+    `Reply with a rating from 1 to 5.`
+  );
+}
+
+function buildCustomerRatingThanks(rating) {
+  const stars =
+    "⭐".repeat(
+      Math.max(
+        1,
+        Math.min(5, Number(rating))
+      )
+    );
+
+  return `Thanks! ${stars}\nYour feedback helps Fetch improve.`;
+}
+
+
+/* =========================================================
+   SHOPPER EARNINGS
+========================================================= */
+
+async function getShopperEarningsSummary(shopperId) {
+  const data =
+    await supabaseRequest(
+      `orders?shopper_id=eq.${encodeURIComponent(
+        shopperId
+      )}&status=eq.delivered&select=id,items,store_name,shopper_delivery_earnings,shopper_earnings_paid,created_at&order=created_at.desc&limit=200`
+    );
+
+  const orders =
+    Array.isArray(data)
+      ? data
+      : [];
+
+  const todayKey =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone:
+          "Asia/Kolkata",
+        year:
+          "numeric",
+        month:
+          "2-digit",
+        day:
+          "2-digit",
+      }
+    ).format(
+      new Date()
+    );
+
+  let todayEarnings = 0;
+  let totalEarnings = 0;
+  let availableEarnings = 0;
+  let paidOut = 0;
+  let completedOrders = 0;
+
+  const recentEarningOrders = [];
+
+  for (const order of orders) {
+    const amount =
+      Number(
+        order?.shopper_delivery_earnings ??
+        0
+      );
+
+    const safeAmount =
+      Number.isFinite(amount)
+        ? amount
+        : 0;
+
+    completedOrders += 1;
+    totalEarnings += safeAmount;
+
+    const paid =
+      order?.shopper_earnings_paid ===
+      true;
+
+    if (paid) {
+      paidOut += safeAmount;
+    } else {
+      availableEarnings +=
+        safeAmount;
+    }
+
+    const created =
+      String(
+        order?.created_at || ""
+      );
+
+    const createdKey =
+      created
+        ? new Intl.DateTimeFormat(
+            "en-CA",
+            {
+              timeZone:
+                "Asia/Kolkata",
+              year:
+                "numeric",
+              month:
+                "2-digit",
+              day:
+                "2-digit",
+            }
+          ).format(
+            new Date(
+              created
+            )
+          )
+        : "";
+
+    if (
+      createdKey ===
+        todayKey
+    ) {
+      todayEarnings +=
+        safeAmount;
+    }
+
+    if (
+      safeAmount > 0 &&
+      recentEarningOrders.length <
+        5
+    ) {
+      recentEarningOrders.push({
+        id:
+          order.id,
+
+        store:
+          order.store_name ||
+          "Store",
+
+        items:
+          order.items ||
+          "Items",
+
+        amount:
+          safeAmount,
+
+        paid:
+          paid,
+
+        created_at:
+          order.created_at,
+      });
+    }
+  }
+
+  return {
+    todayEarnings,
+    totalEarnings,
+    availableEarnings,
+    paidOut,
+    completedOrders,
+    recentEarningOrders,
+  };
+}
+
+function shortOrderId(id) {
+  return String(id || "")
+    .replace(/-/g, "")
+    .slice(0, 8)
+    .toUpperCase();
+}
+
+function buildShopperEarningsMessage(
+  summary
+) {
+  const recent =
+    Array.isArray(
+      summary.recentEarningOrders
+    ) &&
+    summary.recentEarningOrders.length
+      ? `\n\nRecent earnings:\n` +
+        summary.recentEarningOrders
+          .map(
+            (order) =>
+              `• #${shortOrderId(
+                order.id
+              )} — ₹${formatRupees(
+                order.amount
+              )} — ${order.store}`
+          )
+          .join("\n")
+      : "\n\nNo earning orders yet.";
+
+  return (
+    `💰 Your Fetch earnings\n\n` +
+    `Today: ₹${formatRupees(
+      summary.todayEarnings
+    )}\n` +
+    `Completed orders: ${summary.completedOrders}\n` +
+    `Total earnings: ₹${formatRupees(
+      summary.totalEarnings
+    )}\n` +
+    `Available: ₹${formatRupees(
+      summary.availableEarnings
+    )}\n` +
+    `Paid out: ₹${formatRupees(
+      summary.paidOut
+    )}` +
+    recent
+  );
+}
+
+function buildShopperPayoutMessage(
+  summary
+) {
+  return (
+    `💰 Fetch payout status\n\n` +
+    `Available: ₹${formatRupees(
+      summary.availableEarnings
+    )}\n` +
+    `Paid out: ₹${formatRupees(
+      summary.paidOut
+    )}\n\n` +
+    `Payouts are handled manually during the Fetch MVP.`
+  );
+}
+
+
+
+async function getShopperLastOrder(shopperId) {
+  const data =
+    await supabaseRequest(
+      `orders?shopper_id=eq.${encodeURIComponent(
+        shopperId
+      )}&select=*&order=created_at.desc&limit=1`
+    );
+
+  return Array.isArray(data) &&
+    data.length
+    ? data[0]
+    : null;
+}
+
+function isShopperLastOrderQuestion(text) {
+  const value =
+    cleanConversationText(
+      text
+    ).toLowerCase();
+
+  return (
+    /(?:last|latest|recent)\s+(?:order|job)/.test(
+      value
+    ) ||
+    /order\s+details/.test(
+      value
+    ) ||
+    /details\s+(?:of|for)\s+(?:the\s+)?(?:last|latest|recent)\s+order/.test(
+      value
+    ) ||
+    /can\s+you\s+(?:share|show|send)\s+(?:me\s+)?(?:the\s+)?(?:order|job)\s+details/.test(
+      value
+    ) ||
+    /what\s+(?:was|is)\s+(?:my\s+)?(?:last|latest)\s+order/.test(
+      value
+    )
+  );
+}
+
+function buildShopperLastOrderMessage(order) {
+  if (!order) {
+    return (
+      "I don’t have a previous Fetch order for you yet."
+    );
+  }
+
+  const status =
+    formatOrderHistoryStatus(
+      order.status
+    );
+
+  const productPrice =
+    Number(
+      order.item_total || 0
+    );
+
+  const deliveryFee =
+    Number(
+      order.delivery_fee || 0
+    );
+
+  const total =
+    Number(
+      order.total_amount || 0
+    );
+
+  return (
+    `📦 Your latest Fetch order\n\n` +
+    `#${shortOrderReference(
+      order.id
+    )}\n` +
+    `🛒 Items: ${order.items || "Items"}\n` +
+    `🏪 Store: ${order.store_name || "Store"}\n` +
+    `📍 Deliver to: ${order.delivery_address || "Customer location"}\n` +
+    `📌 Status: ${status}\n\n` +
+    `🧾 Product price: ₹${formatRupees(productPrice)}\n` +
+    `🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n` +
+    `💰 Total: ₹${formatRupees(total)}\n` +
+    `💵 Your delivery earnings: ₹${formatRupees(
+      order.shopper_delivery_earnings ||
+      order.delivery_fee ||
+      0
+    )}`
+  );
+}
+
+
+function isShopperCurrentDetailsQuestion(text) {
+  const value =
+    cleanConversationText(
+      text
+    ).toLowerCase();
+
+  return /^(?:details|order details|job details|current order|current job|show details|show my order details|show my job details)$/i.test(
+    value
+  );
+}
+
+
+/* =========================================================
+   QUEUED ORDER DISPATCH
+========================================================= */
+
+async function getQueuedOrders(
+  limit = 20
+) {
+  const safeLimit =
+    Math.max(
+      1,
+      Math.min(
+        Number(limit) || 20,
+        50
+      )
+    );
+
+  const data =
+    await supabaseRequest(
+      `orders?status=eq.finding_shopper&shopper_id=is.null&select=*&order=created_at.asc&limit=${safeLimit}`
+    );
+
+  return Array.isArray(data)
+    ? data
+    : [];
+}
+
+async function resendOpenShopperOffer(
+  shopper,
+  job
+) {
+  if (!shopper?.phone || !job?.id || !job?.order_id) {
+    return false;
+  }
+
+  const order =
+    await getOrderById(
+      job.order_id
+    );
+
+  if (
+    !order ||
+    String(order.status || "").toLowerCase() !== "finding_shopper" ||
+    order.shopper_id
+  ) {
+    await updateShopperJob(
+      job.id,
+      {
+        status:
+          "cancelled",
+      }
+    );
+
+    return false;
+  }
+
+  const hasCustomerCoordinates =
+    Number.isFinite(
+      Number(
+        order.customer_latitude
+      )
+    ) &&
+    Number.isFinite(
+      Number(
+        order.customer_longitude
+      )
+    );
+
+  const storeName =
+    String(
+      order.store_name || ""
+    ).trim();
+
+  const isFlexibleStore =
+    !storeName ||
+    /^any available local store$/i.test(
+      storeName
+    ) ||
+    /^pending(?: nearby)? store$/i.test(
+      storeName
+    );
+
+  const destinationLine =
+    order.delivery_address
+      ? `📍 Deliver to: ${order.delivery_address}\n`
+      : "📍 Delivery location: customer will share location\n";
+
+  const locationPinLine =
+    hasCustomerCoordinates
+      ? `🗺️ Customer location: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+          `${Number(
+            order.customer_latitude
+          )},${Number(
+            order.customer_longitude
+          )}`
+        )}\n`
+      : "";
+
+  const storeInstruction =
+    isFlexibleStore
+      ? "🏪 Store: Any suitable nearby/local store\n"
+      : `🏪 Store: ${storeName}\n`;
+
+  const shopperInstruction =
+    isFlexibleStore
+      ? "Please find the requested item at a suitable nearby source and report the product price. Fetch will calculate the delivery charge after the actual source is known."
+      : "Please check the requested item at the requested store and report the product price. Fetch will calculate the delivery charge after the actual source location is known.";
+
+  const message =
+    `🛍️ *New Fetch Job*\n\n` +
+    storeInstruction +
+    `🛒 Items: ${order.items}\n` +
+    destinationLine +
+    locationPinLine +
+    `\n${shopperInstruction}\n\n` +
+    `Reply *ACCEPT* to take this job.\n` +
+    `Reply *DECLINE* to skip it.\n\n` +
+    `⚡ The first shopper to ACCEPT gets this order.`;
+
+  await sendWhatsAppMessage(
+    shopper.phone,
+    message
+  );
+
+  console.log(
+    "FETCH EXISTING SHOPPER OFFER RESENT:",
+    JSON.stringify({
+      shopperId: shopper.id,
+      jobId: job.id,
+      orderId: order.id,
+    })
+  );
+
+  return true;
+}
+
+async function dispatchNextQueuedOrder(
+  shopperId
+) {
+  if (
+    !shopperId
+  ) {
+    return {
+      success:
+        false,
+      reason:
+        "missing_shopper",
+      order:
+        null,
+      shopper:
+        null,
+      job:
+        null,
+    };
+  }
+
+  const shoppers =
+    await supabaseRequest(
+      `shoppers?id=eq.${encodeURIComponent(
+        shopperId
+      )}&available=eq.true&whatsapp_opted_in=eq.true&select=*&limit=1`
+    );
+
+  const shopper =
+    Array.isArray(
+      shoppers
+    ) &&
+    shoppers.length
+      ? shoppers[0]
+      : null;
+
+  if (
+    !shopper ||
+    shopper.current_order_id
+  ) {
+    return {
+      success:
+        false,
+      reason:
+        "shopper_not_available",
+      order:
+        null,
+      shopper:
+        null,
+      job:
+        null,
+    };
+  }
+
+  /*
+    V1.1 OFFER DELIVERY RECOVERY
+
+    If this exact shopper already has an OFFERED job, resend that same
+    job instead of skipping it. This avoids duplicate shopper_jobs rows
+    and lets AVAILABLE act as a safe recovery mechanism if the original
+    WhatsApp notification was missed or not visible.
+  */
+  const existingJob =
+    await getOpenShopperJob(
+      shopper.id
+    );
+
+  if (existingJob) {
+
+    try {
+      const resent =
+        await resendOpenShopperOffer(
+          shopper,
+          existingJob
+        );
+
+      if (resent) {
+        return {
+          success:
+            true,
+          reason:
+            "existing_offer_resent",
+          order:
+            await getOrderById(
+              existingJob.order_id
+            ),
+          shopper,
+          job:
+            existingJob,
+        };
+      }
+    } catch (error) {
+      console.error(
+        "FETCH EXISTING OFFER RESEND ERROR:",
+        error
+      );
+    }
+  }
+
+  const queuedOrders =
+    await getQueuedOrders(
+      20
+    );
+
+  for (
+    const queuedOrder of
+    queuedOrders
+  ) {
+    try {
+      const existingOffers =
+        await supabaseRequest(
+          `shopper_jobs?order_id=eq.${encodeURIComponent(
+            queuedOrder.id
+          )}&status=eq.offered&select=*&limit=1`
+        );
+
+      if (
+        Array.isArray(
+          existingOffers
+        ) &&
+        existingOffers.length
+      ) {
+        /*
+          Someone is already considering this order.
+          Do not send the same order to another shopper.
+        */
+        continue;
+      }
+
+      const dispatch =
+        await offerOrderToShopper(
+          queuedOrder,
+          [],
+          shopper.id
+        );
+
+      if (
+        dispatch?.success
+      ) {
+        return {
+          ...dispatch,
+          order:
+            queuedOrder,
+        };
+      }
+    } catch (error) {
+      console.error(
+        "FETCH QUEUED ORDER DISPATCH ERROR:",
+        error
+      );
+    }
+  }
+
+  return {
+    success:
+      false,
+    reason:
+      "no_queued_order",
+    order:
+      null,
+    shopper:
+      null,
+    job:
+      null,
+  };
+}
+
+/* =========================================================
+   SHOPPER ONBOARDING
+========================================================= */
+
+function isShopperJoinIntent(text) {
+  const value = cleanConversationText(text).toLowerCase();
+
+  return (
+    value === "join" ||
+    /^(?:i\s+want\s+to\s+be(?:come)?|i\s+want\s+to\s+join(?:\s+as)?|i\s+would\s+like\s+to\s+be(?:come)?|register(?:\s+as)?|sign\s+up(?:\s+as)?|apply(?:\s+as)?)\s+(?:a\s+)?fetch\s+shopper$/i.test(value) ||
+    /\b(?:become|be|join|register|sign\s*up|apply)\b.*\bshopper\b/i.test(value)
+  );
+}
+
+function looksLikeShopperOnboardingPayment(text) {
+  return Boolean(parseShopperUpiId(text));
+}
+
+function normalizeShopperName(text) {
+  const raw = cleanConversationText(text);
+  if (!raw) return "";
+
+  return raw
+    .replace(/^(?:my\s+name\s+is|i\s+am|i\s*\'m|this\s+is|name\s*[:=-])\s*/i, "")
+    .trim();
+}
+
+function isReasonableShopperName(text) {
+  const name = normalizeShopperName(text);
+  if (!name) return false;
+  if (name.length < 2 || name.length > 80) return false;
+  if (looksLikeShopperOnboardingPayment(name)) return false;
+  if (/^(?:join|start|accept|decline|available|status|shopping|delivered|received)$/i.test(name)) return false;
+  return /^[\p{L}][\p{L} .'-]{1,79}$/u.test(name);
+}
+
+async function handleShopperOnboardingMessage({
+  phone,
+  shopper,
+  text,
+}) {
+  const normalizedPhone = normalizePhone(phone);
+  const rawText = String(text || "").trim();
+  const step = String(
+    shopper?.onboarding_step || "name"
+  ).toLowerCase();
+  const approval = String(
+    shopper?.approval_status || "pending"
+  ).toLowerCase();
+
+  await updateShopper(shopper.id, {
+    last_seen_at: new Date().toISOString(),
+  });
+
+  if (approval === "rejected" || step === "inactive") {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Your Fetch shopper application is currently not approved. You won’t receive Fetch jobs. Please contact Fetch if you need help."
+    );
+    return;
+  }
+
+  if (approval === "approved" && step === "active") {
+    await handleShopperMessage({
+      phone: normalizedPhone,
+      text: rawText,
+    });
+    return;
+  }
+
+  if (step === "name" || !shopper.name) {
+    if (!isReasonableShopperName(rawText)) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Welcome to Fetch Shopper 🛍️\n\nWhat is your full name?"
+      );
+      return;
+    }
+
+    const name = normalizeShopperName(rawText);
+
+    const updated = await updateShopper(
+      shopper.id,
+      {
+        name,
+        onboarding_step: "payment",
+        approval_status: "pending",
+        available: false,
+        whatsapp_opted_in: true,
+        last_seen_at: new Date().toISOString(),
+      }
+    );
+
+    if (!updated) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save your name right now. Please send it again."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `Thanks, ${name} 👍\n\nNow send your UPI ID or UPI-linked mobile number so customers can pay you directly.\n\nExample: name@bank or 9876543210`
+    );
+    return;
+  }
+
+  if (step === "payment") {
+    const paymentDestination = parseShopperUpiId(rawText);
+
+    if (!paymentDestination) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Please send your UPI ID or UPI-linked mobile number.\n\nExample: name@bank or 9876543210"
+      );
+      return;
+    }
+
+    const updated = await updateShopper(
+      shopper.id,
+      {
+        upi_id: paymentDestination,
+        onboarding_step: "pending_approval",
+        approval_status: "pending",
+        available: false,
+        whatsapp_opted_in: true,
+        last_seen_at: new Date().toISOString(),
+      }
+    );
+
+    if (!updated) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save your payment details right now. Please send them again."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Application submitted ✅\n\nYour Fetch shopper application is now waiting for approval. You will receive a WhatsApp message here once you’re approved.\n\nPlease do not send START yet."
+    );
+    return;
+  }
+
+  if (step === "pending_approval") {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Your Fetch shopper application is still pending approval ⏳\n\nI’ll message you here once Fetch approves your application."
+    );
+    return;
+  }
+
+  await sendWhatsAppMessage(
+    normalizedPhone,
+    "Your Fetch shopper application is being processed ⏳. Please wait for approval."
+  );
+}
+
+/* =========================================================
+   SHOPPER ENGINE
+========================================================= */
+
+function isExplicitShopperMessage(text, { location = null, shopper = null } = {}) {
+  const value = cleanConversationText(text).toLowerCase();
+
+  if (!value) {
+    return false;
+  }
+
+  // Explicit shopper lifecycle / job commands. Everything else is allowed
+  // to fall through to the customer assistant, even when the phone is also
+  // registered as a shopper.
+  if (/^(?:start|join|accept|decline|shopping|picked\s*up|out\s+for\s+delivery|delivered|status|earnings?|payouts?|received|not\s+received)$/i.test(value)) {
+    return true;
+  }
+
+  if (isShopperAvailabilityMessage(value)) {
+    return true;
+  }
+
+  if (isShopperCancellationRequest(value) || isShopperCannotFulfillRequest(value)) {
+    return true;
+  }
+
+  if (parseSubstitutionCommand(value)) {
+    return true;
+  }
+
+  if (looksLikeShopperOnboardingPayment(value)) {
+    return true;
+  }
+
+  return false;
+}
+
+async function handleShopperMessage({
+  phone,
+  text,
+  location = null,
+}) {
+  const normalizedPhone =
+    normalizePhone(phone);
+
+  const rawText =
+    String(text || "").trim();
+
+  const command =
+    rawText.toUpperCase();
+
+  /*
+    IMPORTANT:
+    This function is ONLY called for a number
+    already registered in the shoppers table.
+  */
+
+  const shopper =
+    await getShopperByPhone(
+      normalizedPhone
+    );
+
+  if (!shopper) {
+    /*
+      Extra safety layer.
+      Unknown numbers must never become shoppers
+      unless they explicitly start shopper onboarding.
+    */
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "You’re not registered as a Fetch shopper. Send JOIN to apply as a Fetch shopper."
+    );
+
+    return;
+  }
+
+  const approvalStatus = String(
+    shopper.approval_status || "approved"
+  ).toLowerCase();
+
+  const onboardingStep = String(
+    shopper.onboarding_step || "active"
+  ).toLowerCase();
+
+  if (approvalStatus !== "approved" || onboardingStep !== "active") {
+    await handleShopperOnboardingMessage({
+      phone: normalizedPhone,
+      shopper,
+      text: rawText,
+    });
+    return;
+  }
+
+  await updateShopper(
+    shopper.id,
+    {
+      last_seen_at:
+        new Date().toISOString(),
+    }
+  );
+
+  /* SHOPPER PERSONAL LOCATION
+   *
+   * When a shopper has no active order, a WhatsApp location pin is the
+   * shopper's current operating location. ATC stores it on the resource
+   * record and uses it for nearest-shopper matching.
+   */
+  if (location && !shopper.current_order_id) {
+    const shopperLatitude = Number(location.latitude);
+    const shopperLongitude = Number(location.longitude);
+
+    const hasValidShopperLocation =
+      Number.isFinite(shopperLatitude) &&
+      Number.isFinite(shopperLongitude) &&
+      shopperLatitude >= -90 &&
+      shopperLatitude <= 90 &&
+      shopperLongitude >= -180 &&
+      shopperLongitude <= 180 &&
+      !(shopperLatitude === 0 && shopperLongitude === 0);
+
+    if (!hasValidShopperLocation) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received the location, but the coordinates are invalid. Please use WhatsApp → Location → Send your current location and try again. 📍"
+      );
+      return;
+    }
+
+    const syncedResource = await atcSafe(
+      () =>
+        atcUpdateShopperLocation({
+          shopper,
+          latitude: shopperLatitude,
+          longitude: shopperLongitude,
+          source: "whatsapp_location",
+        }),
+      "shopper_location_sync"
+    );
+
+    if (!syncedResource) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location, but couldn’t save it for shopper matching. Please send your location again. 📍"
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Shopper location saved 📍\n\nATC will use this location to match you with nearby Fetch orders."
+    );
+    return;
+  }
+
+  /* SHOPPER STORE LOCATION
+   *
+   * A shopper location is interpreted as the physical store location only
+   * when the shopper has an accepted active order. This avoids confusing a
+   * shopper's location with the customer's delivery location.
+   */
+  if (location) {
+    const storeLatitude = Number(location.latitude);
+    const storeLongitude = Number(location.longitude);
+    const hasValidStoreLocation =
+      Number.isFinite(storeLatitude) &&
+      Number.isFinite(storeLongitude) &&
+      storeLatitude !== 0 &&
+      storeLongitude !== 0;
+
+    if (!hasValidStoreLocation) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received the location, but the coordinates are invalid. Please use WhatsApp → Location → Send your current location and try again. 📍"
+      );
+      return;
+    }
+
+    if (!shopper.current_order_id) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received your location 📍, but you do not have an accepted Fetch order right now."
+      );
+      return;
+    }
+
+    const locationOrder = await getOrderById(shopper.current_order_id);
+
+    if (!locationOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find your accepted Fetch order. Please contact Fetch before continuing."
+      );
+      return;
+    }
+
+    if (
+      locationOrder.status !== "shopper_assigned" &&
+      locationOrder.status !== "shopping"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Please send the store location after the order is accepted and before shopping starts. 📍"
+      );
+      return;
+    }
+
+    // Store name is optional. The shopper's WhatsApp location is the
+    // source-of-truth fulfillment location used for distance pricing.
+    const storeName = String(locationOrder.store_name || "").trim();
+    const itemTotal = Number(locationOrder.item_total);
+
+    // A newly dispatched shopper order intentionally starts with item_total = 0.
+    // Zero is therefore NOT a valid product price. The shopper must report the
+    // actual product price before Fetch can calculate the customer total.
+    if (!Number.isFinite(itemTotal) || itemTotal <= 0) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Please send the actual product price first, for example: PRICE: 35\n\nThen share the source/store’s WhatsApp location 📍"
+      );
+      return;
+    }
+
+    const customerLatitude = Number(locationOrder.customer_latitude);
+    const customerLongitude = Number(locationOrder.customer_longitude);
+    const hasValidCustomerLocation =
+      Number.isFinite(customerLatitude) &&
+      Number.isFinite(customerLongitude) &&
+      customerLatitude !== 0 &&
+      customerLongitude !== 0;
+
+    if (!hasValidCustomerLocation) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "The customer's delivery location is missing. Please ask the customer to share their WhatsApp location before continuing."
+      );
+      return;
+    }
+
+    try {
+      const distanceKm = await calculateRoadDistanceKmBetweenCoordinates(
+        storeLatitude,
+        storeLongitude,
+        customerLatitude,
+        customerLongitude
+      );
+
+      if (!Number.isFinite(distanceKm) || distanceKm > 100) {
+        throw new Error(`STORE_DISTANCE_UNTRUSTED: ${distanceKm} km`);
+      }
+
+      const deliveryFee = calculateDeliveryFee(distanceKm);
+      const total = itemTotal + deliveryFee + FETCH_FEE;
+
+      // Store records are optional. If the customer originally specified a
+      // store, keep that existing store metadata; otherwise price the order
+      // from the shopper-shared source location without requiring a name.
+      let store = null;
+      if (storeName) {
+        store = await getOrCreateStoreForPricing(storeName);
+
+        if (store?.id) {
+          await updateStoreLocation(
+            store.id,
+            storeLatitude,
+            storeLongitude
+          );
+        }
+      }
+
+      const updatedOrder = await updateOrder(locationOrder.id, {
+        store_id: store?.id || locationOrder.store_id || null,
+        store_name: storeName || locationOrder.store_name || null,
+        item_total: itemTotal,
+        fetch_fee: FETCH_FEE,
+        delivery_rate_per_km: DELIVERY_RATE_PER_KM,
+        distance_km: distanceKm,
+        delivery_fee: deliveryFee,
+        total_amount: total,
+        delivery_pricing_status: "calculated",
+        delivery_pricing_source: "shopper_whatsapp_location_osrm_mvp",
+        priced_at: new Date().toISOString(),
+        status: "awaiting_customer_price_confirmation",
+      });
+
+      if (!updatedOrder) {
+        throw new Error("Could not save store-location pricing");
+      }
+
+      const sourceLabel = storeName
+        ? `🏪 Source: ${storeName}`
+        : `📍 Source: Shopper-shared location`;
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Source location received 📍\n\n${sourceLabel}\n📏 Delivery distance: ${distanceKm.toFixed(2)} km\n🛒 Product price: ₹${formatRupees(itemTotal)}\n🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n💰 Customer total: ₹${formatRupees(total)}\n\nI’ve sent the final amount to the customer for approval. Do not enter a delivery fee yourself.`
+      );
+
+      // Customer notification is a separate side effect. It must NOT be part
+      // of the pricing transaction's catch block: if notification fails after
+      // the order was priced successfully, never tell the shopper that the
+      // delivery calculation failed and never ask them to resend the location.
+      try {
+        await notifyCustomerForOrder(
+          updatedOrder.id,
+          buildCustomerPriceApprovalMessage(updatedOrder)
+        );
+      } catch (notificationError) {
+        console.error(
+          "FETCH SHOPPER CUSTOMER PRICE NOTIFICATION ERROR:",
+          notificationError
+        );
+
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          `Pricing calculated and saved successfully ✅\n\n🛒 Product price: ₹${formatRupees(itemTotal)}\n🚚 Delivery fee: ₹${formatRupees(deliveryFee)}\n💰 Customer total: ₹${formatRupees(total)}\n\nThe customer notification could not be delivered yet. Do not resend the store location; the pricing is already saved.`
+        );
+      }
+
+      return;
+    } catch (error) {
+      console.error("FETCH SHOPPER STORE LOCATION PRICING ERROR:", error);
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I received the store location, but couldn’t calculate the delivery charge. Please verify the store/customer locations and try again. 📍"
+      );
+      return;
+    }
+  }
+
+  /* AUTOMATIC REASSIGNMENT — SHOPPER CANCEL / UNAVAILABLE */
+
+  if (isShopperCancellationRequest(rawText) || isShopperCannotFulfillRequest(rawText)) {
+    if (!shopper.current_order_id) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You don’t have an active Fetch order to release."
+      );
+      return;
+    }
+
+    const activeShopperOrder = await getOrderById(shopper.current_order_id);
+    const activeShopperJob = await getAcceptedShopperJob(shopper.id);
+
+    if (!activeShopperOrder) {
+      await updateShopper(shopper.id, {
+        available: true,
+        current_order_id: null,
+        last_seen_at: new Date().toISOString(),
+      });
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find that order, so you’re available again for the next Fetch job."
+      );
+      return;
+    }
+
+    const reason = isShopperCannotFulfillRequest(rawText)
+      ? "item_unavailable"
+      : "cancelled";
+
+    const result = await releaseShopperAndRedispatch(
+      activeShopperOrder,
+      shopper,
+      activeShopperJob,
+      reason
+    );
+
+    if (!result.success) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        activeShopperOrder.payment_status === "paid"
+          ? "This order has already been paid directly to you. Please contact Fetch support before cancelling or stopping fulfilment."
+          : "This order can’t be automatically reassigned at this stage. Please contact Fetch support."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      result.replacementSent
+        ? "Done ✅ I’ve released this order and sent it to the next available shopper."
+        : "Done ✅ I’ve released this order. I’m looking for the next available shopper."
+    );
+    return;
+  }
+
+  /* AVAILABLE / READY */
+
+  if (
+    isShopperAvailabilityMessage(
+      rawText
+    )
+  ) {
+    if (
+      shopper.current_order_id
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You’re still assigned to an active Fetch order. Finish that order first; once you send DELIVERED, you can say AVAILABLE FOR NEXT JOB."
+      );
+      return;
+    }
+
+    const updatedShopper =
+      await updateShopper(
+        shopper.id,
+        {
+          available:
+            true,
+
+          last_seen_at:
+            new Date().toISOString(),
+        }
+      );
+
+    if (!updatedShopper) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t update your availability right now. Please try again."
+      );
+      return;
+    }
+
+    await atcSafe(
+      () => atcSyncShopperResource(updatedShopper),
+      "shopper_available_resource_sync"
+    );
+
+    const queuedDispatch =
+      await dispatchNextQueuedOrder(
+        shopper.id
+      );
+
+    if (
+      queuedDispatch.success
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `You’re available ✅ I found a waiting Fetch order for you.`
+      );
+
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "You’re available ✅ I’ll send you the next Fetch job when one is available.\n\nIf this is your first time going online, send your current WhatsApp location 📍 so ATC can match you by proximity."
+    );
+
+    return;
+  }
+
+  /* UPI ID */
+
+  const shopperUpiId =
+    parseShopperUpiId(
+      rawText
+    );
+
+  if (
+    shopperUpiId
+  ) {
+    const savedShopper =
+      await updateShopper(
+        shopper.id,
+        {
+          upi_id:
+            shopperUpiId,
+
+          last_seen_at:
+            new Date().toISOString(),
+        }
+      );
+
+    if (!savedShopper) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t recognise those payment details. Send your UPI ID or UPI-linked mobile number, for example: 9876543210 or name@bank."
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `Payment details saved ✅\n\n${shopperUpiId}\n\nThe customer can now pay you directly using these details.`
+    );
+
+    return;
+  }
+
+  /* START */
+
+  if (
+    command === "START" ||
+    command === "JOIN"
+  ) {
+    await updateShopper(
+      shopper.id,
+      {
+        available:
+          true,
+
+        whatsapp_opted_in:
+          true,
+
+        last_seen_at:
+          new Date().toISOString(),
+      }
+    );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      `Welcome back to Fetch Shopper 🛍️\n\nYou’re now active. I’ll send you Fetch jobs here.\n\nCommands:\nACCEPT\nDECLINE\nSHOPPING\nSUBSTITUTE: old item -> new item\nPICKED UP\nOUT FOR DELIVERY\nDELIVERED\nSTATUS`
+    );
+
+    return;
+  }
+
+  /* ACCEPT */
+
+  if (
+    command ===
+    "ACCEPT"
+  ) {
+    if (
+      shopper.current_order_id
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You’re already working on an active Fetch order. Finish that order before accepting another job."
+      );
+      return;
+    }
+
+    const job =
+      await getOpenShopperJob(
+        shopper.id
+      );
+
+    if (!job) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "You don’t have a new Fetch job waiting right now."
+      );
+      return;
+    }
+
+    const order =
+      await getOrderById(
+        job.order_id
+      );
+
+    if (!order) {
+      await updateShopperJob(
+        job.id,
+        {
+          status:
+            "cancelled",
+        }
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "That Fetch job is no longer available."
+      );
+
+      return;
+    }
+
+    /*
+      The database is the final authority:
+      only the first successful conditional update can claim
+      an unassigned finding_shopper order.
+    */
+    const claimedOrder =
+      await claimOrderForShopper(
+        order.id,
+        shopper.id
+      );
+
+    if (!claimedOrder) {
+      await updateShopperJob(
+        job.id,
+        {
+          status:
+            "cancelled",
+        }
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Sorry 🙏 This Fetch order was already Fetched by another shopper. Please wait for the next Fetch order."
+      );
+
+      return;
+    }
+
+    const acceptedJob =
+      await updateShopperJob(
+        job.id,
+        {
+          status:
+            "accepted",
+          accepted_at:
+            new Date().toISOString(),
+        }
+      );
+
+    if (!acceptedJob) {
+      console.error(
+        "FETCH ACCEPT JOB UPDATE FAILED — rolling back order claim:",
+        job.id
+      );
+
+      await updateOrder(
+        claimedOrder.id,
+        {
+          status: "finding_shopper",
+          shopper_id: null,
+        }
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Sorry 🙏 I couldn’t finalize that Fetch job. Please try ACCEPT again."
+      );
+
+      return;
+    }
+
+    await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId: claimedOrder.id,
+        shopperId: shopper.id,
+        jobId: job.id,
+        status: "accepted",
+      }),
+      "assignment_accepted"
+    );
+
+    await atcSafe(
+      () => atcRecordEvent({
+        orderId: claimedOrder.id,
+        eventType: "resource_accepted",
+        actorType: "shopper",
+        actorId: shopper.id,
+        metadata: { job_id: job.id },
+      }),
+      "resource_accepted_event"
+    );
+
+    const updatedShopper =
+      await updateShopper(
+        shopper.id,
+        {
+          available:
+            false,
+
+          current_order_id:
+            claimedOrder.id,
+
+          last_seen_at:
+            new Date().toISOString(),
+        }
+      );
+
+    if (!updatedShopper) {
+      console.error(
+        "FETCH WINNER SHOPPER UPDATE FAILED:",
+        shopper.id
+      );
+    }
+
+    await atcSafe(
+      () => atcSyncShopperResource(updatedShopper || { ...shopper, available: false, current_order_id: claimedOrder.id }),
+      "shopper_accepted_resource_sync"
+    );
+
+    /*
+      PARTNER-STORE FLOW: the shopper is accepting a confirmed
+      procurement-and-delivery job. Payment must remain pending until
+      the customer reports payment and the shopper verifies receipt.
+
+      The previous implementation left the order in shopper_assigned
+      after the shopper accepted. That meant the customer could see the
+      I HAVE PAID button, but the deterministic payment handler rejected
+      it because the database status was not payment_pending.
+    */
+    if (claimedOrder.partner_store_id) {
+      const paymentPendingOrder =
+        await updateOrder(
+          claimedOrder.id,
+          {
+            status: "payment_pending",
+            payment_status: "pending",
+          }
+        );
+
+      if (!paymentPendingOrder) {
+        throw new Error(
+          "Could not move partner-store order to payment_pending after shopper acceptance"
+        );
+      }
+
+      claimedOrder.status = "payment_pending";
+      claimedOrder.payment_status = "pending";
+    }
+
+    /*
+      Immediately cancel every losing offer and notify the
+      losing shoppers.
+    */
+    await cancelOtherOffersAfterAcceptance(
+      claimedOrder.id,
+      shopper.id
+    );
+
+    let acceptanceMessage;
+
+    if (claimedOrder.partner_store_id) {
+      const partnerRows =
+        await supabaseRequest(
+          `partner_stores?id=eq.${encodeURIComponent(
+            claimedOrder.partner_store_id
+          )}&select=*&limit=1`
+        );
+
+      const partnerStore =
+        Array.isArray(partnerRows) &&
+        partnerRows.length
+          ? partnerRows[0]
+          : null;
+
+      const storeName =
+        partnerStore?.business_name ||
+        claimedOrder.store_name ||
+        "Partner Store";
+
+      const storeLat =
+        Number(partnerStore?.latitude);
+      const storeLon =
+        Number(partnerStore?.longitude);
+
+      const storeMap =
+        Number.isFinite(storeLat) &&
+        Number.isFinite(storeLon)
+          ? `🗺️ Store map: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${storeLat},${storeLon}`)}\n`
+          : "";
+
+      const customerMap =
+        Number.isFinite(Number(claimedOrder.customer_latitude)) &&
+        Number.isFinite(Number(claimedOrder.customer_longitude))
+          ? `🗺️ Customer map: https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${Number(claimedOrder.customer_latitude)},${Number(claimedOrder.customer_longitude)}`)}\n`
+          : "";
+
+      const distanceLine =
+        claimedOrder.distance_km != null
+          ? `📏 Distance: ${Number(claimedOrder.distance_km).toFixed(2)} km\n`
+          : "";
+
+      const feeLine =
+        claimedOrder.delivery_fee != null
+          ? `🚚 Your delivery fee: ₹${formatRupees(claimedOrder.delivery_fee)}\n`
+          : "";
+
+      acceptanceMessage =
+        `Accepted ✅\n\n` +
+        `📦 *Collect the order from:* ${storeName}\n` +
+        storeMap +
+        `🛒 Items: ${claimedOrder.items}\n` +
+        `💰 Product price: ₹${formatRupees(claimedOrder.item_total)}\n` +
+        distanceLine +
+        feeLine +
+        `\n📍 *Deliver to customer:* ${claimedOrder.delivery_address || "Customer location"}\n` +
+        customerMap +
+        `\nNo price entry is required. Fetch has already received the product price from the partner store and calculated your delivery fee from the road distance.`;
+    } else {
+      acceptanceMessage =
+        "Accepted ✅\n\nYou Fetched this order first.\n\nFind the requested item at the most suitable source. Then send the product price and share the source/store location. Fetch will calculate the delivery charge automatically.";
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      acceptanceMessage
+    );
+
+    // IMPORTANT: claimedOrder is the pre-acceptance snapshot. Do not use its
+    // old status to decide whether payment should be shown. The shopper has
+    // just accepted the job, so payment instructions must be sent now.
+    const paymentDestination =
+      normalizePaymentDestination(
+        shopper?.upi_id || shopper?.phone
+      );
+
+    let customerPaymentPhone =
+      claimedOrder.customer_phone ||
+      claimedOrder.customer_whatsapp ||
+      claimedOrder.customer_phone_number ||
+      null;
+
+    if (!customerPaymentPhone && claimedOrder.customer_id) {
+      const customerRows =
+        await supabaseRequest(
+          `customers?id=eq.${encodeURIComponent(
+            claimedOrder.customer_id
+          )}&select=*&limit=1`
+        );
+
+      const customerRow =
+        Array.isArray(customerRows) && customerRows.length
+          ? customerRows[0]
+          : null;
+
+      customerPaymentPhone =
+        customerRow?.phone ||
+        customerRow?.whatsapp_phone ||
+        customerRow?.whatsapp ||
+        null;
+    }
+
+    if (claimedOrder.partner_store_id && paymentDestination && customerPaymentPhone) {
+      const paymentMessage =
+        `✅ A Fetch shopper has accepted your order.\n\n${buildShopperPaymentMessage(
+          claimedOrder,
+          paymentDestination,
+          shopper?.name
+        )}`;
+
+      await saveMessage({
+        customerId:
+          claimedOrder.customer_id,
+        orderId:
+          claimedOrder.id,
+        phone:
+          customerPaymentPhone,
+        role:
+          "assistant",
+        message:
+          paymentMessage,
+      });
+
+      await sendWhatsAppButtons(
+        customerPaymentPhone,
+        paymentMessage,
+        [
+          {
+            id: "fetch_customer_paid",
+            title: "I HAVE PAID",
+          },
+        ],
+        { footer: "After payment" }
+      );
+    } else if (claimedOrder.partner_store_id) {
+      await notifyCustomerForOrder(
+        claimedOrder.id,
+        paymentDestination
+          ? `✅ A Fetch shopper has accepted your order.\n\n${buildShopperPaymentMessage(
+              claimedOrder,
+              paymentDestination,
+              shopper?.name
+            )}\n\nAfter payment, select I HAVE PAID or reply PAID.`
+          : "✅ A Fetch shopper has accepted your order. I’m waiting for the shopper’s payment details before you pay."
+      );
+    } else if (customerPaymentPhone) {
+      // Human-shopper fallback: source first, then price + source location.
+      // Never request payment with a ₹0 total.
+      const sourcingMessage =
+        "🛒 A Fetch shopper has accepted your order.\n\n" +
+        "The shopper will source the requested items first, then send Fetch the actual product price and source location.\n\n" +
+        "You’ll receive the final total and payment option only after the price is confirmed.";
+
+      await saveMessage({
+        customerId:
+          claimedOrder.customer_id,
+        orderId:
+          claimedOrder.id,
+        phone:
+          customerPaymentPhone,
+        role:
+          "assistant",
+        message:
+          sourcingMessage,
+      });
+
+      await sendWhatsAppMessage(
+        customerPaymentPhone,
+        sourcingMessage
+      );
+    }
+
+    return;
+  }
+
+  /* DECLINE */
+
+  if (
+    command === "DECLINE"
+  ) {
+    const job =
+      await getOpenShopperJob(
+        shopper.id
+      );
+
+    if (!job) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "You don’t have a new Fetch job waiting right now."
+      );
+
+      return;
+    }
+
+    const order =
+      await getOrderById(
+        job.order_id
+      );
+
+    await updateShopperJob(
+      job.id,
+      {
+        status:
+          "declined",
+      }
+    );
+
+    await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId: job.order_id,
+        shopperId: shopper.id,
+        jobId: job.id,
+        status: "declined",
+      }),
+      "assignment_declined"
+    );
+
+    await atcSafe(
+      () => atcRecordEvent({
+        orderId: job.order_id,
+        eventType: "resource_declined",
+        actorType: "shopper",
+        actorId: shopper.id,
+        metadata: { job_id: job.id },
+      }),
+      "resource_declined_event"
+    );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      "Declined. 👍"
+    );
+
+    let replacementSent =
+      false;
+
+    if (order) {
+      await updateOrder(
+        order.id,
+        {
+          status:
+            "finding_shopper",
+
+          shopper_id:
+            null,
+        }
+      );
+
+      const replacement =
+        await offerOrderToShopper(
+          order,
+          [shopper.id]
+        );
+
+      replacementSent =
+        Boolean(
+          replacement?.success
+        );
+    }
+
+    if (
+      !replacementSent
+    ) {
+      const nextDispatch =
+        await dispatchNextQueuedOrder(
+          shopper.id
+        );
+
+      if (
+        nextDispatch.success
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I’ve sent you the next waiting Fetch job."
+        );
+      }
+    }
+
+    return;
+  }
+
+  /* EARNINGS */
+
+  if (
+    command === "EARNINGS" ||
+    command === "EARNING" ||
+    command === "MY EARNINGS"
+  ) {
+    try {
+      const summary =
+        await getShopperEarningsSummary(
+          shopper.id
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildShopperEarningsMessage(
+          summary
+        )
+      );
+    } catch (error) {
+      console.error(
+        "FETCH SHOPPER EARNINGS ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t load your earnings right now. Please try again."
+      );
+    }
+
+    return;
+  }
+
+  /* PAYOUT */
+
+  if (
+    command === "PAYOUT" ||
+    command === "PAYOUTS"
+  ) {
+    try {
+      const summary =
+        await getShopperEarningsSummary(
+          shopper.id
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildShopperPayoutMessage(
+          summary
+        )
+      );
+    } catch (error) {
+      console.error(
+        "FETCH SHOPPER PAYOUT STATUS ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t load your payout status right now. Please try again."
+      );
+    }
+
+    return;
+  }
+
+
+  /* STATUS */
+
+  if (
+    command === "STATUS"
+  ) {
+    if (
+      !shopper.current_order_id
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "You don’t have an active Fetch order."
+      );
+
+      return;
+    }
+
+    const order =
+      await getOrderById(
+        shopper.current_order_id
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      order
+        ? getOrderStatusText(
+            order.status
+          )
+        : "I couldn’t find your active Fetch order."
+    );
+
+    return;
+  }
+
+  /* CURRENT ORDER / JOB DETAILS */
+
+  if (
+    isShopperCurrentDetailsQuestion(
+      rawText
+    )
+  ) {
+    const acceptedJob =
+      await getAcceptedShopperJob(
+        shopper.id
+      );
+
+    if (
+      acceptedJob
+    ) {
+      const currentOrder =
+        await getOrderById(
+          acceptedJob.order_id
+        );
+
+      if (
+        currentOrder
+      ) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          buildShopperLastOrderMessage(
+            currentOrder
+          )
+        );
+
+        return;
+      }
+    }
+
+    const latestOrder =
+      await getShopperLastOrder(
+        shopper.id
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      buildShopperLastOrderMessage(
+        latestOrder
+      )
+    );
+
+    return;
+  }
+
+  /* LAST ORDER / ORDER DETAILS */
+
+  if (
+    isShopperLastOrderQuestion(
+      rawText
+    )
+  ) {
+    try {
+      const lastOrder =
+        await getShopperLastOrder(
+          shopper.id
+        );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        buildShopperLastOrderMessage(
+          lastOrder
+        )
+      );
+    } catch (error) {
+      console.error(
+        "FETCH SHOPPER LAST ORDER ERROR:",
+        error
+      );
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t load your last order details right now. Please try again."
+      );
+    }
+
+    return;
+  }
+
+
+  const job =
+    await getAcceptedShopperJob(
+      shopper.id
+    );
+
+  if (!job) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      "You don’t have an accepted Fetch job right now."
+    );
+
+    return;
+  }
+
+  const order =
+    await getOrderById(
+      job.order_id
+    );
+
+  if (!order) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      "I couldn’t find the order linked to your job."
+    );
+
+    return;
+  }
+
+  /* =======================================================
+     SUBSTITUTE
+  ======================================================= */
+
+  const substitution =
+    parseSubstitutionCommand(
+      rawText
+    );
+
+  if (substitution) {
+    const pending =
+      await getPendingSubstitution(
+        order.id
+      );
+
+    if (pending) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+
+        "There is already a substitution waiting for the customer’s response."
+      );
+
+      return;
+    }
+
+    await createSubstitutionRequest({
+      orderId:
+        order.id,
+
+      shopperId:
+        shopper.id,
+
+      originalItem:
+        substitution.originalItem,
+
+      proposedItem:
+        substitution.proposedItem,
+    });
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+
+      `📨 Substitution request sent.\n\n${substitution.originalItem} → ${substitution.proposedItem}\n\nI’ll tell you as soon as the customer responds.`
+    );
+
+    await notifyCustomerForOrder(
+      order.id,
+
+      `⚠️ Your Fetch shopper has a substitution request.\n\n${substitution.originalItem} is unavailable.\n\nThey propose: ${substitution.proposedItem}\n\nReply YES to approve or NO to reject.`
+    );
+
+    return;
+  }
+
+  /* CUSTOMER PAYMENT NOT RECEIVED */
+
+  if (
+    isShopperNotReceivedMessage(
+      rawText
+    )
+  ) {
+    const openAcceptedJob =
+      await getAcceptedShopperJob(
+        shopper.id
+      );
+
+    if (!openAcceptedJob) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I don’t have an active Fetch payment waiting for confirmation."
+      );
+      return;
+    }
+
+    const paymentOrder =
+      await getOrderById(
+        openAcceptedJob.order_id
+      );
+
+    if (!paymentOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find the order linked to this payment."
+      );
+      return;
+    }
+
+    if (
+      paymentOrder.status !==
+        "payment_pending" ||
+      paymentOrder.payment_status !==
+        "customer_reported_paid"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "There isn’t a customer payment waiting for your confirmation right now."
+      );
+      return;
+    }
+
+    await updateOrder(
+      paymentOrder.id,
+      {
+        payment_status:
+          "pending",
+      }
+    );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Okay. I haven’t verified the payment. Please wait for the customer to pay and check your UPI again."
+    );
+
+    await notifyCustomerForOrder(
+      paymentOrder.id,
+      "The shopper hasn’t received the payment yet. Please check your payment and send it again if needed."
+    );
+
+    return;
+  }
+
+  /* CUSTOMER PAYMENT RECEIVED BY SHOPPER */
+
+  if (
+    isShopperPaymentReceivedMessage(
+      rawText
+    )
+  ) {
+    const openAcceptedJob =
+      await getAcceptedShopperJob(
+        shopper.id
+      );
+
+    if (!openAcceptedJob) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I don’t have an active Fetch payment waiting for confirmation."
+      );
+      return;
+    }
+
+    const paymentOrder =
+      await getOrderById(
+        openAcceptedJob.order_id
+      );
+
+    if (!paymentOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t find the order linked to this payment."
+      );
+      return;
+    }
+
+    if (
+      paymentOrder.status !==
+        "payment_pending" ||
+      paymentOrder.payment_status !==
+        "customer_reported_paid"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "There isn’t a customer payment waiting for your confirmation right now."
+      );
+      return;
+    }
+
+    const paidOrder =
+      await updateOrder(
+        paymentOrder.id,
+        {
+          payment_status:
+            "paid",
+
+          payment_method:
+            "shopper_upi",
+
+          status:
+            "shopping",
+        }
+      );
+
+    if (!paidOrder) {
+      throw new Error(
+        "Could not confirm shopper payment"
+      );
+    }
+
+    await sendWhatsAppButtons(
+      normalizedPhone,
+      "Payment verified ✅ The customer’s payment is confirmed. You can now collect the confirmed order from the partner store and continue.",
+      [
+        {
+          id: "fetch_shopper_shopping",
+          title: "SHOPPING",
+        },
+      ],
+      { footer: "Select when you start" }
+    );
+
+    await notifyCustomerForOrder(
+      paidOrder.id,
+      "💳 Payment confirmed by your shopper ✅ They can now purchase your items and continue shopping."
+    );
+
+    return;
+  }
+
+  /* SHOPPER PRODUCT PRICE
+   *
+   * Store name is not required. The shopper only reports the actual product
+   * price, then shares the source/store location. Fetch owns the delivery
+   * pricing calculation from the two coordinates.
+   *
+   * Legacy STORE + PRICE input is still accepted for backward compatibility,
+   * but it is no longer required or requested.
+   */
+  const itemOnlyPrice = parseShopperProductPrice(rawText);
+
+  if (itemOnlyPrice != null && itemOnlyPrice > 0) {
+    const updatedOrder = await updateOrder(order.id, {
+      item_total: itemOnlyPrice,
+      fetch_fee: FETCH_FEE,
+      delivery_pricing_status: "store_location_pending",
+      delivery_pricing_source: null,
+      priced_at: null,
+      status: "shopper_assigned",
+    });
+
+    if (!updatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save the product price. Please try again using: PRICE: 35"
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `Price saved ✅\n\n🛒 Product price: ₹${formatRupees(itemOnlyPrice)}\n\n📍 Now share the source/store’s WhatsApp location.\n\nFetch will calculate the delivery charge automatically.`
+    );
+    return;
+  }
+
+  // Backward compatibility for shoppers using the previous STORE + PRICE format.
+  const storeAndPrice = parseShopperStoreAndPrice(rawText);
+
+  if (storeAndPrice) {
+    const updatedOrder = await updateOrder(order.id, {
+      store_name: storeAndPrice.storeName,
+      item_total: storeAndPrice.itemTotal,
+      fetch_fee: FETCH_FEE,
+      delivery_pricing_status: "store_location_pending",
+      delivery_pricing_source: null,
+      priced_at: null,
+      status: "shopper_assigned",
+    });
+
+    if (!updatedOrder) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I couldn’t save the product price. Please use: PRICE: 35"
+      );
+      return;
+    }
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      `Price saved ✅\n\n📍 Now share the source/store’s WhatsApp location.\n\nFetch will calculate the delivery charge automatically.`
+    );
+    return;
+  }
+
+  if (/^price\b/i.test(rawText)) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Please send a valid product price greater than ₹0, like this: PRICE: 35\n\nThen share the source/store’s WhatsApp location 📍"
+    );
+    return;
+  }
+
+  /* PRODUCT PRICE + DELIVERY FEE */
+
+  // Orders with a previously calculated delivery fee:
+  // shopper reports only the product price. Fetch keeps the OSRM delivery fee.
+  if (
+    order.delivery_pricing_status === "calculated" &&
+    order.delivery_pricing_source === "whatsapp_location_osrm_mvp"
+  ) {
+    const itemTotal = parseShopperProductPrice(rawText);
+
+    if (itemTotal != null) {
+      const deliveryFee = Number(order.delivery_fee || 0);
+      const total = itemTotal + deliveryFee + FETCH_FEE;
+
+      const updatedOrder = await updateOrder(order.id, {
+        item_total: itemTotal,
+        fetch_fee: FETCH_FEE,
+        delivery_fee: deliveryFee,
+        total_amount: total,
+        delivery_pricing_status: "calculated",
+        delivery_pricing_source: "whatsapp_location_osrm_mvp",
+        priced_at: new Date().toISOString(),
+        status: "awaiting_customer_price_confirmation",
+      });
+
+      if (!updatedOrder) {
+        await sendWhatsAppMessage(
+          normalizedPhone,
+          "I couldn’t save the product price. Please use: PRICE: 35"
+        );
+        return;
+      }
+
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        `Price saved ✅\n\nProduct price: ₹${formatRupees(itemTotal)}\nDelivery fee (Fetch-calculated): ₹${formatRupees(deliveryFee)}\nTotal: ₹${formatRupees(total)}\n\nI’ve sent it to the customer for approval.`
+      );
+
+      await notifyCustomerForOrder(
+        order.id,
+        buildCustomerPriceApprovalMessage(updatedOrder)
+      );
+      return;
+    }
+
+    if (/^price\b/i.test(rawText)) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Please send only the product price like this: PRICE: 35\n\nFetch has already calculated the delivery fee from the road distance."
+      );
+      return;
+    }
+  }
+
+  // Never allow a shopper-entered delivery fee to override Fetch pricing.
+  // Legacy PRICE + DELIVERY FEE messages are rejected safely.
+  const legacyShopperPrice = parseShopperPriceAndDelivery(rawText);
+
+  if (legacyShopperPrice) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Please send only the product price like this: PRICE: 35\n\nFetch calculates the delivery fee automatically from the road distance."
+    );
+    return;
+  }
+
+  if (/^price\b/i.test(rawText)) {
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      "Please send the product price like this: PRICE: 35"
+    );
+    return;
+  }
+
+  /* SHOPPING */
+
+  if (
+    command === "SHOPPING" ||
+    command ===
+      "START SHOPPING"
+  ) {
+    if (
+      order.payment_status !==
+      "paid"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "Payment has not been verified yet. Please wait for the customer to pay and reply RECEIVED only after you see the money in your UPI account."
+      );
+
+      return;
+    }
+
+    await updateOrder(
+      order.id,
+      {
+        status:
+          "shopping",
+      }
+    );
+
+    await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId: order.id,
+        shopperId: shopper.id,
+        jobId: job.id,
+        status: "started",
+      }),
+      "assignment_started"
+    );
+
+    await atcSafe(
+      () => atcRecordEvent({
+        orderId: order.id,
+        eventType: "task_started",
+        actorType: "shopper",
+        actorId: shopper.id,
+        metadata: { job_id: job.id },
+      }),
+      "task_started_event"
+    );
+
+    await sendWhatsAppButtons(
+      normalizedPhone,
+      "Shopping started 🛒\n\nOnce you have collected the order from the partner store, select PICKED UP.",
+      [
+        {
+          id: "fetch_shopper_picked_up",
+          title: "PICKED UP",
+        },
+      ],
+      { footer: "Next step" }
+    );
+
+    await notifyCustomerForOrder(
+      order.id,
+
+      "🛒 Your Fetch shopper has started shopping for your order."
+    );
+
+    return;
+  }
+
+  /* PICKED UP */
+
+  if (
+    command === "PICKED UP" ||
+    command === "PICKEDUP" ||
+    command === "PICKED"
+  ) {
+    await updateOrder(
+      order.id,
+      {
+        status:
+          "picked_up",
+      }
+    );
+
+    await sendWhatsAppButtons(
+      normalizedPhone,
+      "Items picked up ✅\n\nSelect OUT FOR DELIVERY when you’re on the way to the customer.",
+      [
+        {
+          id: "fetch_shopper_out_for_delivery",
+          title: "OUT FOR DELIVERY",
+        },
+      ],
+      { footer: "Next step" }
+    );
+
+    await notifyCustomerForOrder(
+      order.id,
+
+      "📦 Your Fetch shopper has picked up your items."
+    );
+
+    return;
+  }
+
+  /* OUT FOR DELIVERY */
+
+  if (
+    command ===
+    "OUT FOR DELIVERY"
+  ) {
+    await updateOrder(
+      order.id,
+      {
+        status:
+          "out_for_delivery",
+      }
+    );
+
+    await sendWhatsAppButtons(
+      normalizedPhone,
+      "Out for delivery 🚴\n\nSelect DELIVERED once the customer has received the order.",
+      [
+        {
+          id: "fetch_shopper_delivered",
+          title: "DELIVERED",
+        },
+      ],
+      { footer: "Final step" }
+    );
+
+    await notifyCustomerForOrder(
+      order.id,
+
+      "🚴 Your Fetch order is on the way."
+    );
+
+    return;
+  }
+
+  /* DELIVERED */
+
+  if (
+    command === "DELIVERED" ||
+    command ===
+      "DELIVERED DONE"
+  ) {
+    if (
+      order.status !==
+        "out_for_delivery"
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        shopperStateMessage(
+          order.status
+        )
+      );
+      return;
+    }
+
+    const completedAt =
+      new Date().toISOString();
+
+    const receiptOrder =
+      await updateOrder(
+        order.id,
+        {
+          status:
+            "delivered",
+
+          receipt_sent_at:
+            completedAt,
+
+          shopper_delivery_earnings:
+            Number(
+              order.delivery_fee || 0
+            ),
+
+          customer_rating:
+            null,
+
+          rated_at:
+            null,
+        }
+      );
+
+    if (!receiptOrder) {
+      throw new Error(
+        "Could not complete Fetch order"
+      );
+    }
+
+    await moveCustomerToNextActiveOrder(
+      order.customer_id,
+      order.id
+    );
+
+    await updateShopperJob(
+      job.id,
+      {
+        status:
+          "completed",
+
+        completed_at:
+          completedAt,
+      }
+    );
+
+    await atcSafe(
+      () => atcUpdateAssignmentStatus({
+        orderId: order.id,
+        shopperId: shopper.id,
+        jobId: job.id,
+        status: "completed",
+      }),
+      "assignment_completed"
+    );
+
+    await atcSafe(
+      () => atcRecordEvent({
+        orderId: order.id,
+        eventType: "task_completed",
+        actorType: "shopper",
+        actorId: shopper.id,
+        metadata: { job_id: job.id },
+      }),
+      "task_completed_event"
+    );
+
+    await updateShopper(
+      shopper.id,
+      {
+        available:
+          true,
+
+        current_order_id:
+          null,
+
+        last_seen_at:
+          completedAt,
+      }
+    );
+
+    const nextDispatch =
+      await dispatchNextQueuedOrder(
+        shopper.id
+      );
+
+    await sendWhatsAppMessage(
+      normalizedPhone,
+      buildShopperCompletionMessage(
+        receiptOrder
+      )
+    );
+
+    if (
+      nextDispatch.success
+    ) {
+      await sendWhatsAppMessage(
+        normalizedPhone,
+        "I’ve also sent you the next waiting Fetch job."
+      );
+    }
+
+    /*
+      Safety check: the receipt must belong to the exact order
+      completed by this shopper job.
+    */
+    if (
+      receiptOrder.id !==
+      order.id
+    ) {
+      throw new Error(
+        "ORDER_BINDING_MISMATCH: completed order does not match receipt order"
+      );
+    }
+
+    await notifyCustomerForOrder(
+      order.id,
+      buildCustomerReceiptMessage(
+        receiptOrder
+      )
+    );
+
+    await notifyCustomerForOrder(
+      order.id,
+      buildCustomerRatingRequest()
+    );
+
+    return;
+  }
+
+  await sendWhatsAppMessage(
+    normalizedPhone,
+
+    "I didn’t recognise that command. You can send UPI/payment details, ACCEPT, DECLINE, PRICE, STORE + PRICE, RECEIVED, NOT RECEIVED, SHOPPING, SUBSTITUTE, PICKED UP, OUT FOR DELIVERY, DELIVERED, AVAILABLE, EARNINGS, PAYOUT, LAST ORDER or STATUS."
+  );
+}
+
+
+/* =========================================================
+   WEBHOOK IDEMPOTENCY
+========================================================= */
+
+async function recordWebhookEvent(
+  messageId,
+  phone
+) {
+  if (!messageId) {
+    return true;
+  }
+
+  try {
+    await supabaseRequest(
+      "webhook_events",
+      {
+        method:
+          "POST",
+
+        headers: {
+          Prefer:
+            "return=minimal",
+        },
+
+        body:
+          JSON.stringify({
+            message_id:
+              messageId,
+
+            phone:
+              normalizePhone(
+                phone
+              ),
+          }),
+      }
+    );
+
+    return true;
+  } catch (error) {
+    /*
+      Unique constraint violation means Meta delivered the same
+      WhatsApp message again. Treat the event as already processed.
+    */
+    if (
+      String(
+        error?.message ||
+          ""
+      ).includes(
+        "Supabase 409"
+      )
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function readRawRequestBody(req) {
+  if (Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
+
+  if (typeof req.body === "string") {
+    return Buffer.from(req.body, "utf8");
+  }
+
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function verifyWhatsAppSignature(rawBody, signatureHeader) {
+  const appSecret = String(process.env.WHATSAPP_APP_SECRET || "").trim();
+
+  // Keep the existing WhatsApp integration operational if the Meta App Secret
+  // has not yet been added to Vercel. Once WHATSAPP_APP_SECRET is configured,
+  // every webhook is verified normally.
+  if (!appSecret) {
+    console.warn(
+      "FETCH WHATSAPP SIGNATURE VERIFICATION DISABLED: WHATSAPP_APP_SECRET is not configured"
+    );
+    return true;
+  }
+
+  const signature = String(signatureHeader || "").trim();
+
+  if (!signature.startsWith("sha256=")) {
+    return false;
+  }
+
+  const provided = signature.slice("sha256=".length).trim();
+
+  if (!/^[a-f0-9]{64}$/i.test(provided)) {
+    return false;
+  }
+
+  const expected = crypto
+    .createHmac("sha256", appSecret)
+    .update(rawBody)
+    .digest("hex");
+
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const providedBuffer = Buffer.from(provided, "hex");
+
+  return (
+    expectedBuffer.length === providedBuffer.length &&
+    crypto.timingSafeEqual(expectedBuffer, providedBuffer)
+  );
+}
+
+/* =========================================================
+   WHATSAPP MESSAGE EXTRACTION
+========================================================= */
+
+function extractIncomingWhatsAppMessage(
+  body
+) {
+  const value =
+    body?.entry?.[0]?.changes?.[0]
+      ?.value;
+
+  const message =
+    value?.messages?.[0];
+
+  if (!message) {
+    return null;
+  }
+
+  const location =
+    message?.location ||
+    null;
+
+  const interactiveChoice =
+    extractInteractiveChoice(message);
+
+  const interactiveCommand =
+    interactiveChoiceToCommand(
+      interactiveChoice
+    );
+
+  return {
+    from:
+      normalizePhone(
+        message.from
+      ),
+
+    profileName:
+      String(
+        value?.contacts?.[0]?.profile?.name ||
+        ""
+      ).trim(),
+
+    text:
+      message?.text?.body?.trim() ||
+      interactiveCommand ||
+      "",
+
+    interactiveChoice,
+
+    messageId:
+      message.id ||
+      null,
+
+    type:
+      message.type ||
+      null,
+
+    location:
+      location
+        ? {
+            latitude:
+              location.latitude,
+
+            longitude:
+              location.longitude,
+
+            name:
+              location.name ||
+              "",
+
+            address:
+              location.address ||
+              "",
+          }
+        : null,
+  };
+}
+
+/* =========================================================
+   VERCEL NODE HANDLER
+========================================================= */
+
+export default async function handler(
+  req,
+  res
+) {
+  // Keep the persistent WhatsApp profile entry point aligned with Fetch connectors.
+  void ensureWhatsAppBusinessProfile();
+
+  try {
+    /* META VERIFICATION */
+
+    if (
+      req.method === "GET"
+    ) {
+      const url =
+        new URL(
+          req.url,
+          `https://${
+            req.headers.host ||
+            "localhost"
+          }`
+        );
+
+      const mode =
+        url.searchParams.get(
+          "hub.mode"
+        );
+
+      const token =
+        url.searchParams.get(
+          "hub.verify_token"
+        );
+
+      const challenge =
+        url.searchParams.get(
+          "hub.challenge"
+        );
+
+      if (
+        mode === "subscribe" &&
+        token ===
+          WHATSAPP_VERIFY_TOKEN
+      ) {
+        return res
+          .status(200)
+          .send(
+            challenge || ""
+          );
+      }
+
+      return res
+        .status(403)
+        .send(
+          "Forbidden"
+        );
+    }
+
+    if (
+      req.method !== "POST"
+    ) {
+      return res
+        .status(405)
+        .send(
+          "Method Not Allowed"
+        );
+    }
+
+    /*
+      Verify Meta's HMAC signature before parsing or processing anything.
+      The app secret never leaves the server.
+    */
+    const rawBody = await readRawRequestBody(req);
+    const signatureHeader =
+      req.headers["x-hub-signature-256"] ||
+      req.headers["X-Hub-Signature-256"] ||
+      "";
+
+    if (!verifyWhatsAppSignature(rawBody, signatureHeader)) {
+      console.warn("FETCH WHATSAPP SIGNATURE REJECTED");
+      return res.status(401).json({
+        success: false,
+        error: "invalid_signature",
+      });
+    }
+
+    let body = {};
+
+    if (rawBody.length) {
+      try {
+        body = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: "invalid_json",
+        });
+      }
+    }
+
+    console.log(
+      "FETCH WEBHOOK RECEIVED:",
+      JSON.stringify(
+        body,
+        null,
+        2
+      )
+    );
+
+    const incoming =
+      extractIncomingWhatsAppMessage(
+        body
+      );
+
+    if (
+      !incoming ||
+      !incoming.from ||
+      (!incoming.text && !incoming.location)
+    ) {
+      return res
+        .status(200)
+        .json({
+          success:
+            true,
+
+          ignored:
+            true,
+        });
+    }
+
+    const {
+      from,
+      profileName,
+      text,
+      location,
+      interactiveChoice,
+    } = incoming;
+
+    /*
+      Meta can retry webhook delivery. Only process the same
+      WhatsApp message ID once.
+    */
+    const shouldProcess =
+      await recordWebhookEvent(
+        incoming.messageId,
+        from
+      );
+
+    if (!shouldProcess) {
+      console.log(
+        "FETCH DUPLICATE WEBHOOK IGNORED:",
+        incoming.messageId
+      );
+
+      return res
+        .status(200)
+        .json({
+          success:
+            true,
+
+          duplicate:
+            true,
+        });
+    }
+
+    console.log(
+      "FETCH INCOMING:",
+      JSON.stringify({
+        from,
+        text,
+      })
+    );
+
+    // A WhatsApp location pin becomes persistent Fetch profile context.
+    // This lets future nearby-partner searches use the saved location.
+    if (location) {
+      try {
+        await saveWhatsAppCustomerLocation(from, location);
+      } catch (error) {
+        console.error("FETCH WHATSAPP PROFILE LOCATION SAVE ERROR:", error);
+      }
+    }
+
+    if (interactiveChoice?.id === "fetch_profile") {
+      const token = await createWhatsAppOnboardingToken(from);
+      await sendWhatsAppMessage(
+        from,
+        "Your Fetch profile:\n\nhttps://tryfetch.in/api/fetch/context?profile=1&token=" +
+          encodeURIComponent(token) +
+          "\n\nSave your details and location once. Fetch will use your saved location automatically for nearby partners."
+      );
+      return res.status(200).json({ success: true, action: "profile_link_sent" });
+    }
+
+    if (interactiveChoice?.id === "fetch_connectors") {
+      const token = await createWhatsAppOnboardingToken(from);
+      await sendWhatsAppMessage(
+        from,
+        "Fetch Connectors:\n\nhttps://tryfetch.in/api/fetch/context?token=" +
+          encodeURIComponent(token)
+      );
+      return res.status(200).json({ success: true, action: "connectors_link_sent" });
+    }
+
+    /*
+      =======================================================
+      PARTNER STORE ROUTING
+      Partner stores are procurement resources and must be
+      handled before shopper/customer routing.
+      =======================================================
+    */
+
+    const partnerStore =
+      await getPartnerStoreByPhone(from);
+
+    if (partnerStore) {
+      const partnerResult =
+        await handlePartnerStoreMessage({
+          phone: from,
+          text: text || "",
+        });
+
+      if (
+        partnerResult?.handled &&
+        partnerResult.action === "accepted_pending_price"
+      ) {
+        return res.status(200).json({
+          success: true,
+          partner_store: true,
+          action: "awaiting_partner_price",
+        });
+      }
+
+      if (
+        partnerResult?.handled &&
+        partnerResult.action === "accepted" &&
+        partnerResult.orderId
+      ) {
+        const partnerOrder =
+          await getOrderById(
+            partnerResult.orderId
+          );
+
+        if (partnerOrder) {
+          const quotedPrice =
+            Number(
+              partnerResult.quotedItemTotal
+            );
+
+          if (
+            Number.isFinite(quotedPrice) &&
+            quotedPrice > 0
+          ) {
+            const selectedPartnerStore =
+              partnerResult.partnerStore ||
+              partnerStore ||
+              null;
+
+            const customerLatitude =
+              Number(partnerOrder.customer_latitude);
+            const customerLongitude =
+              Number(partnerOrder.customer_longitude);
+            const storeLatitude =
+              Number(selectedPartnerStore?.latitude);
+            const storeLongitude =
+              Number(selectedPartnerStore?.longitude);
+
+            const hasCustomerCoordinates =
+              Number.isFinite(customerLatitude) &&
+              Number.isFinite(customerLongitude);
+            const hasStoreCoordinates =
+              Number.isFinite(storeLatitude) &&
+              Number.isFinite(storeLongitude);
+
+            if (!hasCustomerCoordinates || !hasStoreCoordinates) {
+              console.error(
+                "FETCH PARTNER PRICING MISSING COORDINATES:",
+                JSON.stringify({
+                  orderId: partnerOrder.id,
+                  customerLatitude,
+                  customerLongitude,
+                  storeLatitude,
+                  storeLongitude,
+                })
+              );
+
+              await sendWhatsAppMessage(
+                partnerStore.whatsapp_phone,
+                "The item price was received, but Fetch could not calculate the road distance to the customer. Please verify the store/customer location data before the shopper is dispatched."
+              );
+
+              return res.status(200).json({
+                success: true,
+                partner_store: true,
+                action: "awaiting_location_data",
+              });
+            }
+
+            const distanceKm =
+              await calculateRoadDistanceKmBetweenCoordinates(
+                storeLatitude,
+                storeLongitude,
+                customerLatitude,
+                customerLongitude
+              );
+
+            if (!Number.isFinite(distanceKm) || distanceKm > 100) {
+              throw new Error(
+                `PARTNER_STORE_DISTANCE_UNTRUSTED: ${distanceKm} km`
+              );
+            }
+
+            const deliveryFee =
+              calculateDeliveryFee(distanceKm);
+
+            const updated =
+              await updateOrder(
+                partnerOrder.id,
+                {
+                  item_total: quotedPrice,
+                  status: "awaiting_customer_price_confirmation",
+                  delivery_pricing_status: "calculated",
+                  delivery_pricing_source: "partner_store_osrm_mvp",
+                  distance_km: distanceKm,
+                  delivery_fee: deliveryFee,
+                  delivery_rate_per_km: DELIVERY_RATE_PER_KM,
+                  fetch_fee: FETCH_FEE,
+                  total_amount:
+                    quotedPrice + deliveryFee + FETCH_FEE,
+                  partner_store_id:
+                    selectedPartnerStore?.id ||
+                    partnerOrder.partner_store_id ||
+                    null,
+                  partner_request_id:
+                    partnerResult.request?.id ||
+                    partnerOrder.partner_request_id ||
+                    null,
+                  store_name:
+                    selectedPartnerStore?.business_name ||
+                    partnerOrder.store_name ||
+                    null,
+                }
+              );
+
+            if (updated) {
+              // IMPORTANT: do not dispatch the shopper until the customer
+              // approves the final product + delivery total.
+              await notifyCustomerForOrder(
+                updated.id,
+                buildCustomerPriceApprovalMessage(updated)
+              );
+            }
+          }
+        }
+      }
+
+      if (
+        partnerResult?.handled &&
+        partnerResult.action === "rejected" &&
+        partnerResult.orderId
+      ) {
+        const rejectedOrder =
+          await getOrderById(
+            partnerResult.orderId
+          );
+
+        if (rejectedOrder) {
+          const nextPartner =
+            await dispatchOrderToPartnerStore({
+              order: rejectedOrder,
+              excludedPartnerStoreIds: [
+                partnerResult.rejectedPartnerStoreId ||
+                  partnerStore.id,
+              ],
+            });
+
+          if (nextPartner.success) {
+            await updateOrder(
+              rejectedOrder.id,
+              {
+                status: "partner_offered",
+                partner_store_id:
+                  nextPartner.partnerStore?.id ||
+                  null,
+                partner_request_id:
+                  nextPartner.request?.id ||
+                  null,
+              }
+            );
+          } else {
+            const fallbackOrder =
+              await updateOrder(
+                rejectedOrder.id,
+                {
+                  status: "finding_shopper",
+                }
+              );
+
+            await offerOrderToShopper(
+              fallbackOrder || rejectedOrder
+            );
+          }
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        partner_store: true,
+        action:
+          partnerResult?.action ||
+          "handled",
+      });
+    }
+
+    /*
+      =======================================================
+      CRITICAL FETCH ROUTING
+
+      A shopper record alone does NOT make a number a shopper.
+
+      Only an APPROVED + ACTIVE shopper enters the shopper flow.
+      Rejected/inactive shopper records fall through to CUSTOMER.
+
+      This allows a former shopper to use the same WhatsApp
+      number as a normal Fetch customer without deleting their
+      historical shopper record.
+
+      There is NO automatic shopper creation here.
+      =======================================================
+    */
+
+    const shopper =
+      await getShopperByPhone(from);
+
+    const shopperIsActive =
+      Boolean(shopper) &&
+      String(shopper.approval_status || "pending").toLowerCase() === "approved" &&
+      String(shopper.onboarding_step || "inactive").toLowerCase() === "active";
+
+    /*
+      A WhatsApp number can be both a shopper and a customer.
+      When that dual-role user has an active customer order awaiting
+      delivery location, the location belongs to the customer task.
+      Only otherwise should a bare location be treated as shopper
+      operating-location traffic.
+    */
+    const routingCustomer =
+      location
+        ? await getOrCreateCustomer(from, profileName)
+        : null;
+
+    const routingCustomerOrder =
+      routingCustomer
+        ? await getActiveOrder(routingCustomer)
+        : null;
+
+    const customerLocationPending =
+      Boolean(
+        location &&
+        routingCustomerOrder &&
+        ["collecting_details", "awaiting_location", "intake"].includes(
+          String(routingCustomerOrder.status || "").toLowerCase()
+        )
+      );
+
+    if (customerLocationPending) {
+      console.log(
+        "FETCH ROUTING: location -> active customer task"
+      );
+
+      await handleCustomerMessage({
+        phone: from,
+        profileName,
+        userMessage:
+          text ||
+          "Shared a WhatsApp location pin",
+        location,
+        interactiveChoice,
+      });
+    } else if (
+      shopperIsActive &&
+      isExplicitShopperMessage(text || "", {
+        location: null,
+        shopper,
+      })
+    ) {
+      console.log(
+        "FETCH ROUTING: active shopper command -> shopper workflow"
+      );
+
+      await handleShopperMessage({
+        phone: from,
+        text: text || "LOCATION",
+        location,
+      });
+    } else if (isShopperJoinIntent(text || "")) {
+      const pendingShopper =
+        await getOrCreatePendingShopper(from);
+
+      await handleShopperOnboardingMessage({
+        phone: from,
+        shopper: pendingShopper,
+        text: text || "JOIN",
+      });
+    } else {
+      await handleCustomerMessage({
+        phone: from,
+        profileName,
+        userMessage:
+          text ||
+          (interactiveChoice?.title ? interactiveChoice.title : "Shared a WhatsApp location pin"),
+        location,
+        interactiveChoice,
+      });
+    }
+
+    return res
+      .status(200)
+      .json({
+        success:
+          true,
+      });
+  } catch (error) {
+    console.error(
+      "FETCH WEBHOOK ERROR:",
+      error
+    );
+
+    /*
+      Always return 200 to Meta so WhatsApp
+      does not repeatedly retry the event.
+    */
+
+    return res
+      .status(200)
+      .json({
+        success:
+          false,
+      });
+  }
+}
+/* =========================================================
+   WEB API EXPORTS
+   These existing Fetch backend functions are reused by
+   api/web/agent.mjs so the website uses the same order,
+   ATC, partner-store, and shopper engine as WhatsApp.
+   ========================================================= */
+export {
+  getOrCreateCustomer,
+  createOrder,
+  updateOrder,
+  getOrderById,
+  dispatchOrderToPartnerStore,
+  offerOrderToShopper,
+  getShopperById,
+  sendWhatsAppMessage,
+};
