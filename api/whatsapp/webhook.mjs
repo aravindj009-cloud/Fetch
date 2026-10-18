@@ -6882,10 +6882,10 @@ async function tryUniversalFetchCustomerRequest({
   activeOrder = null,
 } = {}) {
   const weatherIntentForGate =
-    /\\b(weather|forecast|temperature|will it rain|rain tomorrow|raining|humidity|wind speed)\\b/i.test(String(userMessage || "")) ||
-    (/\\bhow\\s+does\\s+it\\s+look(?:s)?(?:\\s+like)?\\b/i.test(String(userMessage || "")) &&
-     /\\b(?:today|tomorrow|tonight|right now|now|this morning|this afternoon|this evening)\\b/i.test(String(userMessage || "")) &&
-     /\\b(?:in|for|at)\\s+[a-z][a-z .'-]{1,60}\\b/i.test(String(userMessage || "")));
+    /\b(weather|forecast|temperature|will it rain|rain tomorrow|raining|humidity|wind speed)\b/i.test(String(userMessage || "")) ||
+    (/\bhow\s+does\s+it\s+look(?:s)?(?:\s+like)?\b/i.test(String(userMessage || "")) &&
+     /\b(?:today|tomorrow|tonight|right now|now|this morning|this afternoon|this evening)\b/i.test(String(userMessage || "")) &&
+     /\b(?:in|for|at)\s+[a-z][a-z .'-]{1,60}\b/i.test(String(userMessage || "")));
 
   // A deterministic weather request must enter this handler even if the
   // general V9 intent gate rejects it. Weather uses Open-Meteo directly and
@@ -6961,7 +6961,7 @@ async function tryUniversalFetchCustomerRequest({
       try {
         // Open-Meteo resolves the historic alias "Trivandrum" to the
         // airport. Prefer the canonical city name for city-level weather.
-        const geocodingLocation = /^trivandrum(?:\\s+city)?(?:,\\s*kerala)?$/i.test(location)
+        const geocodingLocation = /^trivandrum(?:\s+city)?(?:,\s*kerala)?$/i.test(location)
           ? "Thiruvananthapuram"
           : location;
         const geoResponse = await fetch(
