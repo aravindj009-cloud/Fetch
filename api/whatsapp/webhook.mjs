@@ -15044,6 +15044,15 @@ function extractIncomingWhatsAppMessage(
       message.type ||
       null,
 
+    errorCode:
+      Number(message?.errors?.[0]?.code) || null,
+
+    errorMessage:
+      String(message?.errors?.[0]?.message || message?.errors?.[0]?.title || "").trim(),
+
+    rawType:
+      String(message?.unsupported?.raw_type || "").trim() || null,
+
     location:
       location
         ? {
@@ -15179,6 +15188,49 @@ export default async function handler(
       extractIncomingWhatsAppMessage(
         body
       );
+
+    /*
+      Meta can deliver a message event whose content is unavailable to the
+      Cloud API. Previously Fetch silently returned ignored=true here. Respond
+      explicitly for Meta error 131060, without inventing or guessing content.
+    */
+    if (
+      incoming?.from &&
+      Number(incoming.errorCode) === 131060
+    ) {
+      const alreadyProcessed = await recordWebhookEvent(
+        incoming.messageId,
+        incoming.from
+      );
+
+      if (!alreadyProcessed) {
+        return res.status(200).json({
+          success: true,
+          duplicate: true,
+        });
+      }
+
+      console.warn(
+        "FETCH WHATSAPP MESSAGE CONTENT UNAVAILABLE:",
+        JSON.stringify({
+          from: incoming.from,
+          messageId: incoming.messageId,
+          errorCode: incoming.errorCode,
+          rawType: incoming.rawType,
+        })
+      );
+
+      const unavailableReply =
+        "WhatsApp marked your last message as unavailable, so I couldn't read the request. Please resend it as plain text and I'll try again.";
+
+      await sendWhatsAppMessage(incoming.from, unavailableReply);
+
+      return res.status(200).json({
+        success: true,
+        action: "unsupported_message_reply_sent",
+        errorCode: incoming.errorCode,
+      });
+    }
 
     if (
       !incoming ||
