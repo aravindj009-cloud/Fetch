@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tryfetch.in/schemas/ioi-capability-discovery-v1.schema.json",
+  "title": "Internet of Intelligence Capability Discovery Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "discovery_contract",
+    "status",
+    "strategy",
+    "required_capabilities",
+    "candidates_examined",
+    "candidates",
+    "selected_capability",
+    "selected_score"
+  ],
+  "properties": {
+    "discovery_contract": {
+      "const": "ioi-capability-discovery-v1"
+    },
+    "status": {
+      "enum": [
+        "candidate_selected",
+        "no_compatible_candidate",
+        "no_candidates"
+      ]
+    },
+    "strategy": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "required_capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "maxLength": 140
+      }
+    },
+    "candidates_examined": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capability",
+          "compatible",
+          "score",
+          "match_reasons"
+        ],
+        "properties": {
+          "capability": {
+            "$ref": "ioi-capability-v1.schema.json"
+          },
+          "compatible": {
+            "type": "boolean"
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "match_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          }
+        }
+      }
+    },
+    "selected_capability": {
+      "oneOf": [
+        {
+          "$ref": "ioi-capability-v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "selected_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  }
+}
