@@ -6950,9 +6950,14 @@ async function tryUniversalFetchCustomerRequest({
 
     if (location) {
       try {
+        // Open-Meteo resolves the historic alias "Trivandrum" to the
+        // airport. Prefer the canonical city name for city-level weather.
+        const geocodingLocation = /^trivandrum(?:\\s+city)?(?:,\\s*kerala)?$/i.test(location)
+          ? "Thiruvananthapuram"
+          : location;
         const geoResponse = await fetch(
           "https://geocoding-api.open-meteo.com/v1/search?name=" +
-          encodeURIComponent(location) + "&count=1&language=en&format=json"
+          encodeURIComponent(geocodingLocation) + "&count=1&language=en&format=json"
         );
         const geo = await geoResponse.json();
         const place = geo?.results?.[0];
