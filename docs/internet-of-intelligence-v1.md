@@ -35,7 +35,7 @@ A registry row is not automatically executable. A provider still needs a concret
 
 ## Task envelope
 
-The task envelope captures the goal, origin channel, conversation/workflow linkage, required capability alternatives, execution mode, region/deadline hints, authorization requirements, lifecycle state, and provenance. It carries the existing Fetch task ID and workflow ID when available.
+The task envelope captures the goal, origin channel, opaque conversation/workflow linkage, required capability alternatives, execution mode, region/deadline hints, authorization requirements, lifecycle state, and provenance. It carries the existing Fetch task ID and workflow ID when available. Raw channel identifiers (which can be phone numbers) are not copied into the envelope; a caller may supply a separately issued opaque conversation reference.
 
 `authorization.enforcement` references the existing Fetch risk engine. This is descriptive metadata, not an authorization grant. IoI must never treat `approval_granted` as true unless the existing trusted execution context explicitly supplies it.
 
