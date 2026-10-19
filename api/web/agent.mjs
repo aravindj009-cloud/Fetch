@@ -2134,7 +2134,7 @@ async function handlePost(req, res) {
   if (result?.ioi?.customer_response?.kind) {
     return sendJson(res, 200, {
       success: true,
-      status: "completed",
+      status: result.execution?.status || result.status || "completed",
       workflow_id: result.workflow_id || null,
       message: result.ioi.customer_response.text,
       fetch: result.fetch || { source_class: "ioi_local_service_discovery", build: FETCH_BUILD },
