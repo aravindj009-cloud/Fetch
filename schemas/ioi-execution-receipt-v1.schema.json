@@ -18,6 +18,7 @@
     "provider_id",
     "evidence",
     "evidence_count",
+    "resource_refs",
     "failure",
     "timing"
   ],
