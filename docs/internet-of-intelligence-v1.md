@@ -50,6 +50,17 @@ The task envelope captures the goal, origin channel, opaque conversation/workflo
 
 **Important limitation:** v1 does not yet perform federated discovery over independent third-party networks. The source candidates still come from Fetch's existing registries and ATC. Adding independently operated registries and provider adapters is the next phase.
 
+## Shared local-service discovery response
+
+Local-service discovery is a read-only directory lookup; it does not contact providers or book appointments. The same deterministic response projection is available to the website and WhatsApp after an approved public listing is returned.
+
+The rollout intentionally uses two independent Preview-only controls:
+
+- `FETCH_IOI_SHADOW_MODE=true` enables read-only IoI evaluation.
+- `FETCH_IOI_CUSTOMER_RESPONSE_MODE=true` allows a successful local-service directory result to become the customer-facing response.
+
+Both must be enabled for this response path. Keep both disabled in Production until the partner directory is populated and approved, its public-listing and contact-sharing rules are reviewed, and an end-to-end test has been completed. If the source is unavailable, the response projection fails closed and the existing Fetch result remains authoritative. Contact, acceptance, and appointment states remain `not_contacted`, `not_requested`, and `not_booked`.
+
 ## Execution receipt and evidence
 
 A receipt separates a route/status from an actually confirmed outcome.
