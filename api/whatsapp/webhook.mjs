@@ -7454,9 +7454,11 @@ async function tryUniversalFetchCustomerRequest({
       };
     }
 
-    // Deliver IoI's explicit location-pin clarification without falling into
+    // Deliver IoI clarification/source-unavailable replies without falling into
     // the old physical shopping classifier.
-    if (result?.ioi?.customer_response?.kind === "service_discovery_clarification") {
+    if (["service_discovery_clarification", "service_discovery_unavailable"].includes(
+      result?.ioi?.customer_response?.kind
+    )) {
       const reply = String(result.ioi.customer_response.text || "").trim();
       await saveMessage({
         customerId: customer.id,
