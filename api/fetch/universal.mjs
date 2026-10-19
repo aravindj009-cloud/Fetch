@@ -82,12 +82,12 @@ export default async function handler(req, res) {
         return res.status(400).json({
           success: false,
           status: evaluation.status,
-          message: "This test path supports only read-only weather and air-quality capabilities.",
+          message: "This test path supports read-only weather, air-quality, and local-service discovery capabilities.",
         });
       }
 
       return res.status(
-        evaluation.status === "completed" || evaluation.status === "needs_clarification"
+        evaluation.status === "completed" || evaluation.status === "needs_clarification" || evaluation.status === "source_unavailable"
           ? 200
           : 502
       ).json({
