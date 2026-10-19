@@ -80,7 +80,7 @@ These are read-only capabilities. They do not place orders, book services, send 
 
 The universal executor runs this only when `FETCH_IOI_SHADOW_MODE=true`. Set that variable on a dedicated Preview branch only while testing; it is not configured for Production. Shadow results include selected capability/provider, status, timing, evidence and a baseline-status comparison. They intentionally exclude raw phone identifiers, auth/session values and coordinates.
 
-The Preview-only endpoint `POST /api/fetch/ioi-shadow` directly exercises the built-in read-only adapter without calling the database-backed Fetch conversation path. It is hidden unless `FETCH_IOI_SHADOW_MODE=true`; it returns 404 when the flag is off, validates the request, and supports only weather/AQI. This helps test adapter behavior in Preview even when the normal Preview conversation path lacks Supabase configuration. The direct endpoint is a capability smoke test, not a replacement for full end-to-end tests against a healthy staging baseline.
+The Preview-only direct test uses `POST /api/fetch/universal` with `{ "shadow_only": true, "text": "Weather in Trivandrum tomorrow" }`. It runs inside the existing Vercel function to respect the Hobby plan's 12-function cap, bypasses database-backed baseline execution, and is hidden unless `FETCH_IOI_SHADOW_MODE=true`; it returns 404 when the flag is off. It only supports read-only weather/AQI requests. This helps test adapter behavior in Preview even when the normal Preview conversation path lacks Supabase configuration. It is a capability smoke test, not a replacement for full end-to-end tests against a healthy staging baseline.
 
 ## Migration strategy
 
