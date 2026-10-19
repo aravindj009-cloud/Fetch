@@ -176,6 +176,49 @@
           "minimum": 0
         }
       }
+    },
+    "resource_refs": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id",
+          "resource_type",
+          "source_registry",
+          "match_reason",
+          "observed_at"
+        ],
+        "properties": {
+          "resource_id": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "resource_type": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "source_registry": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "match_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      }
     }
   }
 }
