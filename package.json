@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test lib/fetch-ioi-contract.test.mjs lib/fetch-ioi-open-meteo-adapters.test.mjs"
+    "test": "node --test lib/fetch-ioi-contract.test.mjs lib/fetch-ioi-open-meteo-adapters.test.mjs api/fetch/ioi-shadow.test.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
