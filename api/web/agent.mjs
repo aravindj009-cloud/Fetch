@@ -2122,6 +2122,22 @@ async function handlePost(req, res) {
     },
   });
 
+  // IoI customer-facing service discovery is opt-in and uses the same
+  // deterministic projection as WhatsApp. Only a successful directory result
+  // can take this path; unavailable sources fall through to existing Fetch.
+  if (result?.ioi?.customer_response?.kind) {
+    return sendJson(res, 200, {
+      success: true,
+      status: "completed",
+      workflow_id: result.workflow_id || null,
+      message: result.ioi.customer_response.text,
+      fetch: result.fetch || { source_class: "ioi_local_service_discovery", build: FETCH_BUILD },
+      atc: result.atc || { resource_type: "local_service_directory" },
+      execution: result.execution,
+      ioi: result.ioi,
+    }, origin);
+  }
+
   console.log(
     "FETCH WEB UNIVERSAL RESULT:",
     JSON.stringify({
