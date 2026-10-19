@@ -69,18 +69,27 @@ An execution receipt records the provider only when the candidate is known from 
 
 - `weather_forecast`: Open-Meteo current conditions and date-labelled daily weather forecast.
 - `air_quality_current`: Open-Meteo/CAMS model-derived US AQI, European AQI and particulate estimates for a specific location.
+- `local_service_discovery`: searches explicitly public, approved service listings in the staging service directory and ranks by geographic distance when coordinates are available.
 
-These are read-only capabilities. They do not place orders, book services, send messages or mutate external systems. A state-only AQI request such as “AQI in Maharashtra” returns `needs_clarification`, even when a saved city coordinate exists; it must not silently substitute one city for an entire state. Missing provider values remain missing rather than being coerced into zero.
+All three capabilities are read-only. They do not place orders, book services, send messages or mutate external systems. A state-only AQI request such as “AQI in Maharashtra” returns `needs_clarification`, even when a saved city coordinate exists; it must not silently substitute one city for an entire state. Local service searches also ask for a city/area or shared location pin if no usable location is supplied; state names alone are not treated as nearby coordinates. Missing provider values remain missing rather than being coerced into zero.
 
 **AQI scope:** the Open-Meteo adapter is not an official CPCB monitoring-station adapter, and its US/EU indices are not India's National AQI. The answer labels modelled results and includes the provider time/source. Fetch must not present this as a verified official Indian station reading.
 
+## Local-service directory discovery
+
+`lib/fetch-ioi-service-discovery.mjs` implements the first non-weather IoI capability for approved local service listings. It supports electrician, plumber, carpenter, appliance repair, AC repair, pest control and cleaning searches. It queries only records whose status is `approved` and `metadata.public_listing=true`, applies a default 25 km radius (configurable up to 50 km), ranks location-backed candidates by Haversine distance, and returns up to five listings.
+
+The directory adapter is deliberately staging-only and fail-closed. It requires all of these server-side variables: `FETCH_IOI_SERVICE_DIRECTORY_ENV=staging`, `FETCH_IOI_SERVICE_DIRECTORY_SUPABASE_URL`, `FETCH_IOI_SERVICE_DIRECTORY_PROJECT_REF`, and `FETCH_IOI_SERVICE_DIRECTORY_KEY`. The project reference must match the Supabase URL host exactly. It does not fall back to `SUPABASE_SECRET_KEY`, `VITE_SUPABASE_URL`, or a general/Production Supabase project. Contact numbers are fetched only in a second restricted query for matched approved public listings whose metadata explicitly sets `share_contact_with_customers=true`. Public metadata is allowlisted before returning; private notes and arbitrary fields are not sent to the user.
+
+This is discovery, not transaction execution. Every result distinguishes `contact_status=not_contacted`, `acceptance_status=not_requested`, and `appointment_status=not_booked`. A listing is not independently verified unless separately verified; provider-marked verification is labelled as such. The receipt contains a registry resource reference as provenance plus any available public profile URLs, but a registry reference is not proof the provider is currently available.
+
 ## Shadow mode
 
-`lib/fetch-ioi-shadow.mjs` classifies only supported read-only weather/AQI requests, sanitizes location context to an allowlist, calls the appropriate built-in adapter through `executeIOITask`, and returns a compact shadow record. The existing Fetch response remains authoritative: shadow output never replaces the answer or performs a side effect.
+`lib/fetch-ioi-shadow.mjs` classifies supported read-only weather, AQI and local-service discovery requests, sanitizes location context to an allowlist, invokes the explicitly registered adapter through `executeIOITask`, and returns a compact shadow record. The existing Fetch response remains authoritative: shadow output never replaces the answer or performs a side effect.
 
 The universal executor runs this only when `FETCH_IOI_SHADOW_MODE=true`. Set that variable on a dedicated Preview branch only while testing; it is not configured for Production. Shadow results include selected capability/provider, status, timing, evidence and a baseline-status comparison. They intentionally exclude raw phone identifiers, auth/session values and coordinates.
 
-The Preview-only direct test uses `POST /api/fetch/universal` with `{ "shadow_only": true, "text": "Weather in Trivandrum tomorrow" }`. It runs inside the existing Vercel function to respect the Hobby plan's 12-function cap, bypasses database-backed baseline execution, and is hidden unless `FETCH_IOI_SHADOW_MODE=true`; it returns 404 when the flag is off. It only supports read-only weather/AQI requests. This helps test adapter behavior in Preview even when the normal Preview conversation path lacks Supabase configuration. It is a capability smoke test, not a replacement for full end-to-end tests against a healthy staging baseline.
+The Preview-only direct test uses `POST /api/fetch/universal` with `{ "shadow_only": true, "text": "Weather in Trivandrum tomorrow" }` or `{ "shadow_only": true, "text": "Find an electrician in Thiruvananthapuram", "supplied_context": { "city": "Thiruvananthapuram", "latitude": 8.5241, "longitude": 76.9366 } }`. It runs inside the existing Vercel function to respect the Hobby plan's 12-function cap, bypasses database-backed baseline execution, and is hidden unless `FETCH_IOI_SHADOW_MODE=true`; it returns 404 when the flag is off. Local service discovery also requires the four dedicated staging-only environment variables described above; without them, it returns `source_unavailable` and does not query a database. This is a capability smoke test, not a replacement for full end-to-end tests against a healthy staging baseline.
 
 ## Migration strategy
 
@@ -90,15 +99,15 @@ The current executor persists its normal result first. Shadow execution and trac
 
 ## Next steps
 
-1. Compare shadow results with production's current answers across real weather/AQI tasks; fix baseline failures and status mismatches.
-2. Add a first real non-weather task adapter only after the shadow path has reliable health, latency, fallback and outcome reporting.
-3. Add a registry interface that can query independently operated provider registries, validate their signed manifests, and return ranked candidates.
-4. Add evidence/verifier contracts for claim-to-source links and independently checked execution outcomes.
+1. Configure a dedicated staging directory with reviewed service listings, consent fields, and access policies; do not copy Production credentials into Preview.
+2. Compare shadow results with the existing Fetch baseline across weather/AQI and service discovery; fix baseline failures and status mismatches.
+3. Add explicit contact/acceptance/appointment workflows only as separate approval-gated capabilities with idempotency and evidence requirements.
+4. Add a registry interface that can query independently operated provider registries, validate their signed manifests, and return ranked candidates.
 5. Enable IoI-controlled routing for one read-only capability behind a rollout flag only after shadow metrics and regression tests pass.
 
 ## Validation
 
-`lib/fetch-ioi-contract.test.mjs`, `lib/fetch-ioi-open-meteo-adapters.test.mjs`, and `api/fetch/ioi-shadow.test.mjs` cover capability normalization, secret exclusion, strict capability matching, authorization gates, timeout behavior, evidence receipts, weather/AQI adapters, statewide-AQI clarification, null-value handling, privacy-safe shadow behavior, and the Preview endpoint safety gate.
+`lib/fetch-ioi-contract.test.mjs`, `lib/fetch-ioi-open-meteo-adapters.test.mjs`, `lib/fetch-ioi-shadow-endpoint.test.mjs`, and `lib/fetch-ioi-service-discovery.test.mjs` cover capability normalization, secret exclusion, strict capability matching, authorization gates, timeout behavior, receipts and registry references, weather/AQI adapters, statewide-AQI clarification, service-category/location clarification, staging-only database access, public-listing filters, distance ranking, contact-sharing consent, and the Preview endpoint safety gate.
 
 Run:
 
@@ -108,6 +117,7 @@ node --check lib/fetch-ioi-contract.mjs
 node --check lib/fetch-ioi-provider-runtime.mjs
 node --check lib/fetch-ioi-open-meteo-adapters.mjs
 node --check lib/fetch-ioi-shadow.mjs
+node --check lib/fetch-ioi-service-discovery.mjs
 node --check lib/fetch-universal-execution.mjs
-node --check api/fetch/ioi-shadow.mjs
+node --check api/fetch/universal.mjs
 ```
