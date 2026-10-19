@@ -1242,3 +1242,26 @@ aside > p {
     font-size: 13px;
   }
 }
+
+/* Short desktop screens: keep the composer inside the initial viewport. */
+@media (max-height: 760px) and (min-width: 881px) {
+  .app > main > .workspace {
+    align-items: start;
+  }
+
+  .app > main .chat {
+    height: calc(100vh - 270px);
+    min-height: 360px;
+    max-height: 520px;
+  }
+
+  .app > main .messages {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .app > main .composeArea {
+    flex-shrink: 0;
+  }
+}
