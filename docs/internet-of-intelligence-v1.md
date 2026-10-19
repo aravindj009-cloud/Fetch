@@ -50,6 +50,18 @@ The task envelope captures the goal, origin channel, opaque conversation/workflo
 
 **Important limitation:** v1 does not yet perform federated discovery over independent third-party networks. The source candidates still come from Fetch's existing registries and ATC. Adding independently operated registries and provider adapters is the next phase.
 
+## Federated public local-service discovery
+
+When the private Fetch directory is unavailable or returns no candidates, IoI can make one read-only query against the public OpenStreetMap Overpass endpoint. The current tag mapping is intentionally limited to electricians, plumbers, and carpenters. This public fallback requires shared latitude/longitude; with city-only context it asks the user to share a location pin instead of pretending a city centroid is the user's location.
+
+- Search radius is capped at 25 km and defaults to 10 km.
+- Results are limited to five named map objects, with element links, distance from the shared location, optional public phone/site fields, and © OpenStreetMap contributors attribution.
+- A process-local cache has a five-minute TTL and bounded size; there are no automatic retries for HTTP 429 or other failed responses.
+- OSM data is community-mapped and is not independently verified by Fetch. Listing presence does not confirm current operation, phone accuracy, service acceptance, or availability.
+- The adapter never messages a provider, requests acceptance, or books an appointment. Production traffic does not use the IoI response path.
+
+The public endpoint is suitable only for bounded Preview experiments. Before sustained/commercial traffic, review the OpenStreetMap/Overpass usage policy and select a service arrangement appropriate to the anticipated volume.
+
 ## Shared local-service discovery response
 
 Local-service discovery is a read-only directory lookup; it does not contact providers or book appointments. The same deterministic response projection is available to the website and WhatsApp after an approved public listing is returned.
