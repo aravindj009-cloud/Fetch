@@ -16,6 +16,7 @@
  */
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
+import { classifyIOIReadOnlyIntent } from "../../lib/fetch-ioi-shadow.mjs";
 import { answerFetchConversation } from "../../lib/fetch-conversation.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
 import { updateAgentTask, listAgentTasks, addAgentEvent } from "../../lib/fetch-agent-runtime.mjs";
@@ -1975,7 +1976,12 @@ async function handlePost(req, res) {
    *
    * Explicit side-effect requests continue to the execution stack.
    */
-  if (!isExplicitSideEffectRequest(effectiveText) && !isPhysicalResult({}, effectiveText)) {
+  const ioiReadOnlyIntent = classifyIOIReadOnlyIntent(effectiveText);
+  if (
+    !ioiReadOnlyIntent &&
+    !isExplicitSideEffectRequest(effectiveText) &&
+    !isPhysicalResult({}, effectiveText)
+  ) {
     try {
       const conversationMessage = await answerNormalConversation(
         effectiveText,
