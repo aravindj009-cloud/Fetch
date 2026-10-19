@@ -61,6 +61,18 @@ The rollout intentionally uses two independent Preview-only controls:
 
 Both must be enabled for this response path. Keep both disabled in Production until the partner directory is populated and approved, its public-listing and contact-sharing rules are reviewed, and an end-to-end test has been completed. If the source is unavailable, the response projection fails closed and the existing Fetch result remains authoritative. Contact, acceptance, and appointment states remain `not_contacted`, `not_requested`, and `not_booked`.
 
+## Cross-channel response contract
+
+The customer response projection is shared by both channels:
+
+- The website API returns the shared `ioi.customer_response.text` as its `message`.
+- WhatsApp's existing universal-execution success handler sends `execution.message`; the IoI projection fills that field with exactly the same text.
+- Physical shopping/order requests do not match the read-only discovery classifier and remain on the existing physical-order path.
+- If provider discovery is unavailable, needs clarification, fails validation, or is not successful, the projection returns no override and the established Fetch response remains authoritative.
+- Contact details are included only when the partner directory adapter returned them under the partner's explicit contact-sharing consent. The response never represents directory listing as a confirmed booking or confirmed provider availability.
+
+Minimum Preview validation sequence: test a weather/AQI read (existing adapters still work), test a local-service request with no staging source configured (must fail closed), then—with an approved staging directory and only after access policies are reviewed—test a listing with consented contact details through both the website and a test WhatsApp account. Compare the text and verify neither request creates a booking or contacts the listed provider.
+ 
 ## Execution receipt and evidence
 
 A receipt separates a route/status from an actually confirmed outcome.
