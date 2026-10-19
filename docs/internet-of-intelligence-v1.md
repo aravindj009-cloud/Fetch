@@ -6,7 +6,7 @@
 
 IoI is the interoperability layer underneath Fetch. Fetch is the first application; IoI normalizes how an application describes a task, discovers existing capabilities, hands work to a provider, and reports the outcome with evidence.
 
-This first implementation is deliberately incremental. It wraps the existing Fetch Universal Task Contract, capability registry, ATC route, risk gate, and execution result. It does not replace those systems, make new provider network calls, or grant permissions.
+This first implementation is deliberately incremental. It wraps the existing Fetch Universal Task Contract, capability registry, ATC route, risk gate, and execution result. The core contract is pure, while the separately injected built-in provider adapters make explicit read-only provider calls. IoI does not replace existing execution semantics or grant permissions.
 
 ## Contract files
 
@@ -80,6 +80,8 @@ These are read-only capabilities. They do not place orders, book services, send 
 
 The universal executor runs this only when `FETCH_IOI_SHADOW_MODE=true`. Set that variable on a dedicated Preview branch only while testing; it is not configured for Production. Shadow results include selected capability/provider, status, timing, evidence and a baseline-status comparison. They intentionally exclude raw phone identifiers, auth/session values and coordinates.
 
+The Preview-only endpoint `POST /api/fetch/ioi-shadow` directly exercises the built-in read-only adapter without calling the database-backed Fetch conversation path. It is hidden unless `FETCH_IOI_SHADOW_MODE=true`; it returns 404 when the flag is off, validates the request, and supports only weather/AQI. This helps test adapter behavior in Preview even when the normal Preview conversation path lacks Supabase configuration. The direct endpoint is a capability smoke test, not a replacement for full end-to-end tests against a healthy staging baseline.
+
 ## Migration strategy
 
 IoI is additive. Existing clients can continue reading the current Fetch response. Consumers that understand IoI can read `result.ioi.task_envelope`, `result.ioi.capability_discovery`, `result.ioi.execution_receipt`, and, when shadow mode is enabled, `result.ioi.shadow_evaluation`.
@@ -96,7 +98,7 @@ The current executor persists its normal result first. Shadow execution and trac
 
 ## Validation
 
-`lib/fetch-ioi-contract.test.mjs` and `lib/fetch-ioi-open-meteo-adapters.test.mjs` cover capability normalization, secret exclusion, strict capability matching, authorization gates, timeout behavior, evidence receipts, weather/AQI adapters, statewide-AQI clarification, null-value handling, and privacy-safe shadow behavior. Current suite: 27 tests passed.
+`lib/fetch-ioi-contract.test.mjs`, `lib/fetch-ioi-open-meteo-adapters.test.mjs`, and `api/fetch/ioi-shadow.test.mjs` cover capability normalization, secret exclusion, strict capability matching, authorization gates, timeout behavior, evidence receipts, weather/AQI adapters, statewide-AQI clarification, null-value handling, privacy-safe shadow behavior, and the Preview endpoint safety gate.
 
 Run:
 
@@ -107,4 +109,5 @@ node --check lib/fetch-ioi-provider-runtime.mjs
 node --check lib/fetch-ioi-open-meteo-adapters.mjs
 node --check lib/fetch-ioi-shadow.mjs
 node --check lib/fetch-universal-execution.mjs
+node --check api/fetch/ioi-shadow.mjs
 ```
