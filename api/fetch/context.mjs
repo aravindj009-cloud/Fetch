@@ -537,8 +537,15 @@ async function handleGoogleConnect(req, res) {
   const clientSecret = String(process.env.GOOGLE_CLIENT_SECRET || "").trim();
   if (!clientId || !clientSecret) return sendHtml(res, 503, onboardingPage("Email is not configured yet", "Fetch is ready for Gmail OAuth, but Google OAuth credentials have not been added to Vercel yet.", false));
   const url = new URL(req.url, FETCH_BASE);
-  const conversationId = String(url.searchParams.get("conversation_id") || "").trim();
-  if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open Fetch in this browser first, then return to Connectors.", false));
+  const signedToken = String(url.searchParams.get("token") || "").trim();
+  const onboarding = signedToken ? verifyOnboardingToken(signedToken) : null;
+  if (signedToken && !onboarding) {
+    return sendHtml(res, 400, onboardingPage("WhatsApp connection link expired", "Return to Fetch in WhatsApp and request a fresh email connection link.", false));
+  }
+  const conversationId = String(
+    onboarding?.conversationId || url.searchParams.get("conversation_id") || ""
+  ).trim();
+  if (!conversationId) return sendHtml(res, 400, onboardingPage("Fetch session missing", "Open the connector link from Fetch again.", false));
   const state = crypto.randomBytes(32).toString("base64url");
   const redirectUri = connectorCallbackUrl("google");
   await createOAuthState({ state, conversationId, providerId: "email", redirectUri, clientId });
