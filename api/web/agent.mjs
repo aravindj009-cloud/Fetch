@@ -1883,7 +1883,7 @@ async function handlePost(req, res) {
             success: true,
             status: rerun?.status || "running",
             message:
-              extractResponseText(rerun) ||
+              findResponseText(rerun) ||
               rerun?.execution?.message ||
               "Approved. Fetch is executing the task now.",
             workflow_id: rerun?.workflow_id || null,
