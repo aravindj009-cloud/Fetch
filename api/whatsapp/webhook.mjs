@@ -7349,6 +7349,9 @@ async function tryUniversalFetchCustomerRequest({
         ? `whatsapp:${normalizedPhone}:task:${Date.now()}`
         : `whatsapp:${normalizedPhone}`,
       channel: "whatsapp",
+      // This customer record was resolved from the verified inbound WhatsApp sender.
+      // It is the trusted owner identity for the permission-gated memory store.
+      identityVerified: true,
       // Never let a stale physical order become the task context for an
       // unrelated link, research request, or new conversational intent.
       activeTaskId: orderContextRelevant ? (activeOrder?.id || null) : null,
