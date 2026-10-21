@@ -112,21 +112,27 @@ jobs:
           if (!await page.getByRole("button", { name: "Save profile" }).isVisible()) throw new Error("Profile save button missing");
           await page.locator(".fetch-profile-header .fetch-drawer-close").click();
 
-          // Navigation drawer exposes recent chats and partner navigation.
-          await page.getByRole("button", { name: "Open Fetch menu" }).click();
-          if (!await page.getByRole("button", { name: /Recent chats/ }).isVisible()) throw new Error("Recent chats navigation missing");
-          if (!await page.getByRole("button", { name: "Fetch Partners" }).isVisible()) throw new Error("Fetch Partners navigation missing");
-          await page.getByRole("button", { name: /Recent chats/ }).click();
+          // Desktop navigation remains visible and the Recent chats panel is usable.
+          if (!await page.locator(".fetch-workspace-sidebar").isVisible()) throw new Error("Desktop persistent sidebar did not render");
+          if (!await page.locator(".fetch-sidebar-links").getByRole("button", { name: /Recent chats/ }).isVisible()) throw new Error("Recent chats navigation missing");
+          if (!await page.locator(".fetch-sidebar-links").getByRole("button", { name: "Fetch Partners" }).isVisible()) throw new Error("Fetch Partners navigation missing");
+          await page.locator(".fetch-sidebar-links").getByRole("button", { name: /Recent chats/ }).click();
           if (!await page.locator(".fetch-recent-list").isVisible()) throw new Error("Recent chats view did not render");
 
-          // Test partner page through the existing in-app routing flow.
-          await page.getByRole("button", { name: "Open Fetch menu" }).click();
-          await page.getByRole("button", { name: "Fetch Partners" }).click();
+          // Test partner page through existing in-app routing.
+          await page.locator(".fetch-sidebar-links").getByRole("button", { name: "Fetch Partners" }).click();
           await page.waitForFunction(() => window.location.pathname === "/partners");
           const partnerText = await page.locator("#root").innerText();
           for (const category of ["Local commerce", "Home services", "Mobility", "Assisted services"]) {
             if (!partnerText.includes(category)) throw new Error("Missing partner category: " + category);
           }
-          if (errors.length) throw new Error("Browser console/runtime errors: " + errors.join(" | "));
+
+          // Mobile uses the same navigation in a compact drawer.
+          await page.goto("http://127.0.0.1:5173/", { waitUntil: "networkidle" });
+          await page.setViewportSize({ width: 390, height: 850 });
+          if (await page.locator(".fetch-workspace-sidebar").isVisible()) throw new Error("Persistent desktop sidebar should be hidden on mobile");
+          await page.getByRole("button", { name: "Open Fetch menu" }).click();
+          if (!await page.getByRole("button", { name: "Fetch Partners" }).isVisible()) throw new Error("Mobile navigation drawer did not render");
+                    if (errors.length) throw new Error("Browser console/runtime errors: " + errors.join(" | "));
           await browser.close();
           NODE
