@@ -152,11 +152,12 @@ function navigateFetch(path) {
 
 function FetchDirectoryPage({ section = "connectors" }) {
   const isContact = section === "contact";
+  const isPartners = section === "partners";
   const [connectionStates, setConnectionStates] = useState({});
-  const [loadingConnections, setLoadingConnections] = useState(!isContact);
+  const [loadingConnections, setLoadingConnections] = useState(!isContact && !isPartners);
 
   useEffect(() => {
-    if (isContact) return;
+    if (isContact || isPartners) return;
 
     const conversationId = getConversationId();
     let cancelled = false;
@@ -179,7 +180,7 @@ function FetchDirectoryPage({ section = "connectors" }) {
     })();
 
     return () => { cancelled = true; };
-  }, [isContact]);
+  }, [isContact, isPartners]);
 
   function handleConnectorConnect(connector) {
     const conversationId = getConversationId();
@@ -218,7 +219,8 @@ function FetchDirectoryPage({ section = "connectors" }) {
           fetch<span>.</span>
         </button>
         <nav>
-          <button className={!isContact ? "active" : ""} onClick={() => navigateFetch("/connectors")}>Connectors</button>
+          <button className={!isContact && !isPartners ? "active" : ""} onClick={() => navigateFetch("/connectors")}>Plugins</button>
+          <button className={isPartners ? "active" : ""} onClick={() => navigateFetch("/partners")}>Fetch Partners</button>
           <button className={isContact ? "active" : ""} onClick={() => navigateFetch("/contact")}>Contact</button>
           <button className="directoryBack" onClick={() => navigateFetch("/")}>Open Fetch →</button>
         </nav>
@@ -245,6 +247,23 @@ function FetchDirectoryPage({ section = "connectors" }) {
                 <span className="contactIcon">@</span>
                 <div><strong>Email</strong><small>Coming soon</small></div><b>—</b>
               </div>
+            </div>
+          </>
+        ) : isPartners ? (
+          <>
+            <small className="directoryEyebrow">THE FETCH NETWORK</small>
+            <h1>Good people. <em>More things done.</em></h1>
+            <p className="directoryLead">
+              Fetch brings customers together with local stores, service professionals and trusted fulfilment partners. Join the network that helps Fetch complete real-world requests.
+            </p>
+            <div className="contactCards fetchPartnerCards">
+              <article className="contactCard"><span className="contactIcon">▦</span><div><strong>Local commerce</strong><small>Shops, supermarkets, bakeries and neighbourhood stores</small></div></article>
+              <article className="contactCard"><span className="contactIcon">⌂</span><div><strong>Home services</strong><small>Electricians, plumbers, cleaning and repair professionals</small></div></article>
+              <article className="contactCard"><span className="contactIcon">↗</span><div><strong>Mobility</strong><small>Transport, delivery and local movement providers</small></div></article>
+              <article className="contactCard"><span className="contactIcon">✦</span><div><strong>Assisted services</strong><small>People who help complete requests in the real world</small></div></article>
+            </div>
+            <div className="directoryCallout">
+              <span>F</span><div><strong>Interested in partnering with Fetch?</strong><p>Tell us about your business or service. Partner onboarding will be coordinated directly; a self-serve application portal is not connected on this Preview yet.</p><a className="directoryConnectorAction" href="https://wa.me/919074559146?text=Hi%20Fetch%2C%20I%27m%20interested%20in%20becoming%20a%20Fetch%20Partner." target="_blank" rel="noreferrer">Talk to Fetch on WhatsApp ↗</a></div>
             </div>
           </>
         ) : (
