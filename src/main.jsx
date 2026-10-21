@@ -859,7 +859,7 @@ class FetchCompanionLayerBoundary extends React.Component {
         >
           <strong>Fetch is still here.</strong>
           <p style={{ margin: "8px 0 12px", lineHeight: 1.5 }}>
-            The companion panel could not load. Your main Fetch assistant is still available.
+            Team Fetch could not load. Your main Fetch assistant is still available.
           </p>
           <button
             type="button"
@@ -1629,7 +1629,7 @@ function FetchMainApp({ companionInitiallyOpen = false } = {}) {
             Fetch is ready
           </span>
 
-          <button onClick={() => setCompanionOpen((open) => !open)} aria-expanded={companionOpen}>Companion</button>
+          <button onClick={() => setCompanionOpen((open) => !open)} aria-expanded={companionOpen}>Team Fetch</button>
           <button onClick={() => navigateFetch("/connectors")}>Connectors</button>
           <button onClick={() => navigateFetch("/contact")}>Contact</button>
           <button onClick={clearConversation}>New</button>
