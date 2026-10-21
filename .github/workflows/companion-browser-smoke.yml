@@ -1,0 +1,72 @@
+name: Fetch Companion browser smoke
+
+on:
+  push:
+    branches:
+      - feat/ioi-contract-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Install application dependencies
+        run: npm install --no-audit --no-fund
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start Vite
+        run: |
+          (npm run dev -- --host 127.0.0.1 > /tmp/fetch-vite.log 2>&1 &)
+          node --input-type=module -e '
+            const until = Date.now() + 60000;
+            while (Date.now() < until) {
+              try {
+                const response = await fetch("http://127.0.0.1:5173/companion");
+                if (response.ok) process.exit(0);
+              } catch {}
+              await new Promise((resolve) => setTimeout(resolve, 500));
+            }
+            console.error(await (await import("node:fs/promises")).readFile("/tmp/fetch-vite.log", "utf8"));
+            process.exit(1);
+          '
+      - name: Render Companion and collect browser failures
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from "playwright";
+          const browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
+          const errors = [];
+          page.on("pageerror", (error) => errors.push("pageerror: " + error.message));
+          page.on("console", (message) => {
+            if (message.type() === "error") errors.push("console: " + message.text());
+          });
+          const response = await page.goto("http://127.0.0.1:5173/companion", { waitUntil: "networkidle" });
+          await page.waitForTimeout(800);
+          await page.screenshot({ path: "/tmp/fetch-companion.png", fullPage: true });
+          const bodyText = await page.locator("body").innerText();
+          const rootText = await page.locator("#root").innerText();
+          console.log(JSON.stringify({
+            httpStatus: response?.status(),
+            title: await page.title(),
+            bodyText: bodyText.slice(0, 1600),
+            rootText: rootText.slice(0, 1600),
+            browserErrors: errors,
+          }, null, 2));
+          if (!response?.ok()) throw new Error("Companion route returned HTTP " + response?.status());
+          if (!rootText.includes("Tell me what you need done")) throw new Error("Original Fetch chat did not render");
+          if (!rootText.includes("What do you need done?")) throw new Error("Companion panel did not render");
+          if (errors.length) throw new Error("Browser console/runtime errors: " + errors.join(" | "));
+          await browser.close();
+          NODE
