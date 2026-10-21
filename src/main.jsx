@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import FetchOnboarding from "./FetchOnboarding.jsx";
 import ConnectorSetupPage from "./ConnectorSetupPage.jsx";
-import FetchCompanion from "./FetchCompanion.jsx";
+import FetchCompanionLayer from "./FetchCompanionLayer.jsx";
 
 const starters = [
   "Get me 2 KitKats and milk",
@@ -802,7 +802,7 @@ export default function App() {
   const inviteMatch = directoryPath.match(/^\/invite\/([^/]+)$/);
   if (inviteMatch) return <FetchInvitePage token={decodeURIComponent(inviteMatch[1])} />;
 
-  if (directoryPath === "/companion") return <FetchCompanion navigateFetch={navigateFetch} />;
+  if (directoryPath === "/companion") return <FetchMainApp companionInitiallyOpen />;
 
   if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
   if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
@@ -815,7 +815,8 @@ export default function App() {
   return <FetchMainApp />;
 }
 
-function FetchMainApp() {
+function FetchMainApp({ companionInitiallyOpen = false } = {}) {
+  const [companionOpen, setCompanionOpen] = useState(Boolean(companionInitiallyOpen));
   const [showOnboarding, setShowOnboarding] = useState(() => {
     try { return localStorage.getItem("fetch_onboarding_v2_complete") !== "1"; } catch { return true; }
   });
@@ -1543,7 +1544,7 @@ function FetchMainApp() {
             Fetch is ready
           </span>
 
-          <button onClick={() => navigateFetch("/companion")}>Companion</button>
+          <button onClick={() => setCompanionOpen((open) => !open)} aria-expanded={companionOpen}>Companion</button>
           <button onClick={() => navigateFetch("/connectors")}>Connectors</button>
           <button onClick={() => navigateFetch("/contact")}>Contact</button>
           <button onClick={clearConversation}>New</button>
@@ -1958,6 +1959,14 @@ function FetchMainApp() {
         </section>
 
       </main>
+
+      <FetchCompanionLayer
+        open={companionOpen}
+        onToggle={() => setCompanionOpen((open) => !open)}
+        onClose={() => setCompanionOpen(false)}
+        onRequest={send}
+        isBusy={busy}
+      />
 
     </div>
   );
