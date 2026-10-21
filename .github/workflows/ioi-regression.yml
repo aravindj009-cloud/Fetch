@@ -40,3 +40,5 @@ jobs:
           node --check lib/fetch-universal-execution.mjs
           node --check api/web/agent.mjs
           node --check api/whatsapp/webhook.mjs
+      - name: Build website
+        run: npm run build
