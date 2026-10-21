@@ -81,6 +81,12 @@ jobs:
           if (await page.locator("#fcl-request").count() !== 0) throw new Error("Duplicate request composer remains inside Team Fetch panel");
           const avatarCount = await page.locator(".fcl-agent-avatar").count();
           if (avatarCount !== 6) throw new Error("Expected six Team Fetch character portraits, found " + avatarCount);
+          for (const selector of [".fcl-identity .fcl-fetch-character", ".fcl-launcher .fcl-fetch-character"]) {
+            const character = page.locator(selector);
+            if (await character.count() !== 1) throw new Error("Fetch character portrait is missing from " + selector);
+            const usesSprite = await character.evaluate((element) => getComputedStyle(element).backgroundImage.includes("data:image/webp;base64,"));
+            if (!usesSprite) throw new Error("Fetch header/launcher does not use the real Fetch character sprite: " + selector);
+          }
           const spriteInfo = await page.locator(".fcl-agent-avatar").first().evaluate(async (element) => {
             const cssImage = getComputedStyle(element).backgroundImage;
             const match = cssImage.match(/^url\(["']?(.*?)["']?\)$/);
