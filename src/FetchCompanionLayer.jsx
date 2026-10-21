@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import "./FetchCompanionLayer.css";
-import { FETCH_AGENT_DOGS, resolveFetchAgentDog } from "../lib/fetch-agent-dog-registry.mjs";
+import { FETCH_AGENT_DOGS } from "../lib/fetch-agent-dog-registry.mjs";
 
 const STORAGE_KEY = "fetch_daily_minutes_layer_v1";
 const MAX_MINUTES = 300;
@@ -50,9 +50,7 @@ function DogMark({ size = 34, accent = "#2d8472", label = "Fetch dog companion" 
 }
 
 export default function FetchCompanionLayer({ open, onToggle, onClose, onRequest, isBusy = false }) {
-  const [tab, setTab] = useState("ask");
-  const [request, setRequest] = useState("");
-  const suggestedAgent = useMemo(() => resolveFetchAgentDog(request), [request]);
+  const [tab, setTab] = useState("team");
   const [minuteDraft, setMinuteDraft] = useState("");
   const [minutes, setMinutes] = useState(readMinutes);
   const today = localDayKey();
@@ -70,15 +68,6 @@ export default function FetchCompanionLayer({ open, onToggle, onClose, onRequest
     [minutes, today]
   );
 
-  function sendRequest(event) {
-    event?.preventDefault?.();
-    const text = request.trim();
-    if (!text || isBusy) return;
-    setRequest("");
-    onClose?.();
-    // Reuse Fetch's existing universal request handler, ATC, connectors and approvals.
-    onRequest?.(text);
-  }
 
   function saveMinute(event) {
     event?.preventDefault?.();
@@ -116,42 +105,17 @@ export default function FetchCompanionLayer({ open, onToggle, onClose, onRequest
   return (
     <div className="fcl-root">
       {open && (
-        <section className="fcl-panel" role="dialog" aria-label="Fetch companion">
+        <section className="fcl-panel" role="dialog" aria-label="Team Fetch">
           <header className="fcl-panel-head">
-            <div className="fcl-identity"><DogMark size={43}/><div><strong>Fetch</strong><span>Your companion. Same assistant.</span></div></div>
+            <div className="fcl-identity"><DogMark size={43}/><div><strong>Team Fetch</strong><span>One assistant. A team of specialists.</span></div></div>
             <button type="button" className="fcl-close" onClick={onClose} aria-label="Close companion">×</button>
           </header>
-          <div className="fcl-tabs" role="tablist" aria-label="Companion tools">
-            <button type="button" role="tab" aria-selected={tab === "ask"} className={tab === "ask" ? "active" : ""} onClick={() => setTab("ask")}>Ask Fetch</button>
+          <div className="fcl-tabs" role="tablist" aria-label="Team Fetch tools">
+            <button type="button" role="tab" aria-selected={tab === "team"} className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>Team Fetch</button>
             <button type="button" role="tab" aria-selected={tab === "minutes"} className={tab === "minutes" ? "active" : ""} onClick={() => setTab("minutes")}>Daily minutes <span>{todayMinutes.length}</span></button>
-            <button type="button" role="tab" aria-selected={tab === "team"} className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>Dog team</button>
           </div>
 
-          {tab === "ask" ? (
-            <div className="fcl-ask">
-              <div className="fcl-greeting"><DogMark size={54}/><div><strong>What do you need done?</strong><p>Ask the way you always ask Fetch. I’ll use the same task flow and intelligence layer.</p></div></div>
-              <form onSubmit={sendRequest}>
-                <label className="fcl-sr-only" htmlFor="fcl-request">Ask Fetch to complete a request</label>
-                <textarea id="fcl-request" value={request} onChange={(e) => setRequest(e.target.value)} rows={3} maxLength={4000} placeholder="Find an electrician, get groceries, research something…" disabled={isBusy}/>
-                <div className="fcl-actions"><span>{isBusy ? "Fetch is working…" : "Uses your existing Fetch assistant"}</span><button type="submit" disabled={!request.trim() || isBusy}>Send to Fetch ↗</button></div>
-              </form>
-              <div className="fcl-agent-suggestion" style={{ "--fcl-agent-accent": suggestedAgent.accent }}>
-                <DogMark size={32} accent={suggestedAgent.accent} label={suggestedAgent.name + " specialist dog"} />
-                <div>
-                  <span>BEST-FIT SPECIALIST · ADVISORY</span>
-                  <strong>{suggestedAgent.name} <small>{suggestedAgent.title}</small></strong>
-                  <p>{suggestedAgent.status_label}. Fetch still routes the request through its usual task flow and IoI checks.</p>
-                </div>
-              </div>
-              <div className="fcl-examples">
-                <span>TRY ASKING</span>
-                <button type="button" disabled={isBusy} onClick={() => { setRequest("Find an electrician near me"); }}>Find an electrician</button>
-                <button type="button" disabled={isBusy} onClick={() => { setRequest("Get me milk and bread"); }}>Get groceries</button>
-                <button type="button" disabled={isBusy} onClick={() => { setRequest("Research the latest developments in AI agents"); }}>Research a topic</button>
-              </div>
-              <p className="fcl-footnote">Fetch's main chat remains the source of truth for progress, questions and approvals.</p>
-            </div>
-          ) : tab === "minutes" ? (
+          {tab === "minutes" ? (
             <div className="fcl-minutes">
               <p className="fcl-minute-intro">Capture meeting minutes, decisions, quick updates or promises as they happen. They stay in this browser for now.</p>
               <form onSubmit={saveMinute}>
@@ -174,34 +138,33 @@ export default function FetchCompanionLayer({ open, onToggle, onClose, onRequest
           ) : (
             <div className="fcl-agent-team">
               <div className="fcl-team-intro">
-                <strong>One Fetch. A team of specialist dogs.</strong>
-                <p>These specialists describe the best-fit role for a request. Fetch remains the coordinator; ATC/IoI picks the actual provider, checks permissions and handles execution.</p>
+                <strong>One chat. A whole team working behind Fetch.</strong>
+                <p>Tell Fetch what you need in the main chat. The right specialist supports the task behind the scenes; ATC/IoI selects the actual provider, checks permissions and coordinates execution.</p>
               </div>
               {FETCH_AGENT_DOGS.map((agent) => {
-                const isSuggested = suggestedAgent.id === agent.id;
                 const example = agent.examples?.[0] || "Help me with this task";
                 return (
-                  <article className={"fcl-agent-card " + (isSuggested ? "is-suggested" : "")} key={agent.id} style={{ "--fcl-agent-accent": agent.accent }}>
-                    <DogMark size={43} accent={agent.accent} label={agent.name + " dog"} />
+                  <article className="fcl-agent-card" key={agent.id} style={{ "--fcl-agent-accent": agent.accent }}>
+                    <DogMark size={43} accent={agent.accent} label={agent.name + " specialist"} />
                     <div className="fcl-agent-card-copy">
-                      <div className="fcl-agent-title"><strong>{agent.name}</strong>{isSuggested && <span>BEST FIT</span>}</div>
+                      <div className="fcl-agent-title"><strong>{agent.name}</strong>{agent.id === "fetch" && <span>COORDINATOR</span>}</div>
                       <small>{agent.title}</small>
                       <p>{agent.mission}</p>
                       <div className={"fcl-agent-status fcl-agent-status-" + agent.status}>{agent.status_label}</div>
-                      <button type="button" onClick={() => { setTab("ask"); setRequest(example); }}>Try an example ↗</button>
+                      <button type="button" disabled={isBusy} onClick={() => { onClose?.(); onRequest?.(example); }}>Try with Fetch ↗</button>
                     </div>
                   </article>
                 );
               })}
-              <p className="fcl-footnote">Specialist profiles share Fetch's request context. This v1 uses deterministic intent labels—not five separate autonomous models—and never claims a planned capability is already connected.</p>
+              <p className="fcl-footnote">One shared conversation and task flow. Specialist roles are coordinated through Fetch/ATC/IoI; availability labels show what is connected today.</p>
             </div>
           )}
         </section>
       )}
-      <button type="button" className={"fcl-launcher " + (open ? "is-open" : "")} onClick={onToggle} aria-expanded={open} aria-label={open ? "Close Fetch companion" : "Open Fetch companion"}>
+      <button type="button" className={"fcl-launcher " + (open ? "is-open" : "")} onClick={onToggle} aria-expanded={open} aria-label={open ? "Close Team Fetch" : "Open Team Fetch"}>
         <DogMark size={46}/>
         {!open && <span className="fcl-launcher-dot"/>}
-        <span className="fcl-launcher-label">{open ? "Close" : "Fetch companion"}</span>
+        <span className="fcl-launcher-label">{open ? "Close" : "Team Fetch"}</span>
       </button>
     </div>
   );
