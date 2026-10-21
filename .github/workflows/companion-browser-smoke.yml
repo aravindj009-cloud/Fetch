@@ -118,6 +118,7 @@ jobs:
           if (!await page.locator(".fetch-sidebar-links").getByRole("button", { name: "Fetch Partners" }).isVisible()) throw new Error("Fetch Partners navigation missing");
           await page.locator(".fetch-sidebar-links").getByRole("button", { name: /Recent chats/ }).click();
           if (!await page.locator(".fetch-recent-list").isVisible()) throw new Error("Recent chats view did not render");
+          await page.locator(".fetch-navigation-drawer .fetch-drawer-close").click();
 
           // Test partner page through existing in-app routing.
           await page.locator(".fetch-sidebar-links").getByRole("button", { name: "Fetch Partners" }).click();
