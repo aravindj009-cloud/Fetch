@@ -79,6 +79,20 @@ jobs:
           }
           if (!rootText.includes("Daily minutes")) throw new Error("Daily minutes tab did not render");
           if (await page.locator("#fcl-request").count() !== 0) throw new Error("Duplicate request composer remains inside Team Fetch panel");
+          const avatarCount = await page.locator(".fcl-agent-avatar").count();
+          if (avatarCount !== 6) throw new Error("Expected six Team Fetch character portraits, found " + avatarCount);
+          const spriteInfo = await page.locator(".fcl-agent-avatar").first().evaluate(async (element) => {
+            const cssImage = getComputedStyle(element).backgroundImage;
+            const match = cssImage.match(/^url\(["']?(.*?)["']?\)$/);
+            if (!match) throw new Error("Character sprite background image is missing");
+            const image = new Image();
+            image.src = match[1];
+            await image.decode();
+            return { width: image.naturalWidth, height: image.naturalHeight };
+          });
+          if (spriteInfo.width !== 384 || spriteInfo.height !== 256) throw new Error("Unexpected Team Fetch sprite dimensions: " + JSON.stringify(spriteInfo));
+          const avatarPositions = await page.locator(".fcl-agent-avatar").evaluateAll((elements) => elements.map((element) => getComputedStyle(element).backgroundPosition));
+          if (new Set(avatarPositions).size !== 6) throw new Error("Team Fetch characters do not have six distinct sprite positions");
           if (errors.length) throw new Error("Browser console/runtime errors: " + errors.join(" | "));
           await browser.close();
           NODE
