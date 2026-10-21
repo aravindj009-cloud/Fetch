@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test lib/fetch-ioi-contract.test.mjs lib/fetch-ioi-open-meteo-adapters.test.mjs lib/fetch-ioi-shadow-endpoint.test.mjs lib/fetch-ioi-service-discovery.test.mjs lib/fetch-ioi-customer-response.test.mjs lib/fetch-ioi-openstreetmap-adapter.test.mjs lib/fetch-agent-dog-registry.test.mjs lib/fetch-agent-memory-policy.test.mjs lib/fetch-agent-memory-store.test.mjs lib/fetch-agent-coordination.test.mjs lib/fetch-ioi-recovery.test.mjs lib/fetch-digital-agent-memory.test.mjs lib/fetch-agent-messaging.test.mjs"
+    "test": "node --test lib/fetch-ioi-contract.test.mjs lib/fetch-ioi-open-meteo-adapters.test.mjs lib/fetch-ioi-shadow-endpoint.test.mjs lib/fetch-ioi-service-discovery.test.mjs lib/fetch-ioi-customer-response.test.mjs lib/fetch-ioi-openstreetmap-adapter.test.mjs lib/fetch-agent-dog-registry.test.mjs lib/fetch-agent-memory-policy.test.mjs lib/fetch-agent-memory-store.test.mjs lib/fetch-agent-coordination.test.mjs lib/fetch-ioi-recovery.test.mjs lib/fetch-digital-agent-memory.test.mjs lib/fetch-agent-messaging.test.mjs lib/fetch-agent-collaboration.test.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
