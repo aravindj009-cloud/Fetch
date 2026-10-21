@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import FetchOnboarding from "./FetchOnboarding.jsx";
 import ConnectorSetupPage from "./ConnectorSetupPage.jsx";
+import FetchCompanion from "./FetchCompanion.jsx";
 
 const starters = [
   "Get me 2 KitKats and milk",
@@ -801,6 +802,8 @@ export default function App() {
   const inviteMatch = directoryPath.match(/^\/invite\/([^/]+)$/);
   if (inviteMatch) return <FetchInvitePage token={decodeURIComponent(inviteMatch[1])} />;
 
+  if (directoryPath === "/companion") return <FetchCompanion navigateFetch={navigateFetch} />;
+
   if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
   if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
   if (/^\/connectors\/(swiggy|instamart|email)$/.test(directoryPath)) {
@@ -1540,6 +1543,7 @@ function FetchMainApp() {
             Fetch is ready
           </span>
 
+          <button onClick={() => navigateFetch("/companion")}>Companion</button>
           <button onClick={() => navigateFetch("/connectors")}>Connectors</button>
           <button onClick={() => navigateFetch("/contact")}>Contact</button>
           <button onClick={clearConversation}>New</button>
