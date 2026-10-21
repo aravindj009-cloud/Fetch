@@ -1,4 +1,4 @@
-name: Fetch Companion browser smoke
+name: Team Fetch single-interface browser smoke
 
 on:
   push:
@@ -41,7 +41,7 @@ jobs:
             console.error(await (await import("node:fs/promises")).readFile("/tmp/fetch-vite.log", "utf8"));
             process.exit(1);
           '
-      - name: Render Companion and collect browser failures
+      - name: Render Team Fetch and collect browser failures
         run: |
           node --input-type=module <<'NODE'
           import { chromium } from "playwright";
@@ -71,9 +71,14 @@ jobs:
             rootText: rootText.slice(0, 1600),
             browserErrors: errors,
           }, null, 2));
-          if (!response?.ok()) throw new Error("Companion route returned HTTP " + response?.status());
+          if (!response?.ok()) throw new Error("Team Fetch route returned HTTP " + response?.status());
           if (!rootText.includes("Tell me what you need done")) throw new Error("Original Fetch chat did not render");
-          if (!rootText.includes("What do you need done?")) throw new Error("Companion panel did not render");
+          if (!rootText.includes("Team Fetch")) throw new Error("Team Fetch panel/navigation did not render");
+          for (const specialist of ["Scout", "Rover", "Patch", "Scribe", "Trek"]) {
+            if (!rootText.includes(specialist)) throw new Error("Missing Team Fetch specialist: " + specialist);
+          }
+          if (!rootText.includes("Daily minutes")) throw new Error("Daily minutes tab did not render");
+          if (await page.locator("#fcl-request").count() !== 0) throw new Error("Duplicate request composer remains inside Team Fetch panel");
           if (errors.length) throw new Error("Browser console/runtime errors: " + errors.join(" | "));
           await browser.close();
           NODE
