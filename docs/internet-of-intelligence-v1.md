@@ -62,6 +62,15 @@ When the private Fetch directory is unavailable or returns no candidates, IoI ca
 
 The public endpoint is suitable only for bounded Preview experiments. Before sustained/commercial traffic, review the OpenStreetMap/Overpass usage policy and select a service arrangement appropriate to the anticipated volume.
 
+## Fetch specialist dog registry (v1)
+
+Fetch may present specialist dog identities—Scout (research), Rover (shopping/errands), Patch (local services), Scribe (daily minutes/memory), and Trek (travel)—under the Fetch Coordinator. The registry lives in `lib/fetch-agent-dog-registry.mjs`.
+
+- The initial specialist resolver is deterministic and advisory. It labels a likely role from the request but does not select a connector, call a provider, grant permission, or claim a task succeeded.
+- `executeUniversalFetchRequest` attaches a safe `agent_dog` descriptor to the result for UI/trace attribution. Existing Fetch/ATC/IoI routing remains authoritative; we do not create parallel execution pipelines.
+- Every profile carries explicit capabilities and a readiness label. Travel tracking is marked planned until the necessary location/mobility integration exists; local service discovery remains experimental; daily minutes are still browser-local in this prototype.
+- This version uses six specialist profiles, not six separate autonomous model instances. Future model/provider delegation should be added only behind the existing IoI task contract, shared memory/context controls, risk checks, confirmations and execution receipts.
+
 ## Shared local-service discovery response
 
 Local-service discovery is a read-only directory lookup; it does not contact providers or book appointments. The same deterministic response projection is available to the website and WhatsApp after an approved public listing is returned.
