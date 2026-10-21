@@ -48,6 +48,9 @@ jobs:
           const browser = await chromium.launch({ headless: true });
           const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
           const errors = [];
+          await page.addInitScript(() => {
+            try { localStorage.setItem("fetch_onboarding_v2_complete", "1"); } catch {}
+          });
           // Vite does not execute Vercel serverless functions. Stub this read-only
           // task-ledger request so the smoke test measures client rendering only.
           await page.route("**/api/fetch/tasks**", (route) => route.fulfill({
@@ -99,6 +102,31 @@ jobs:
           if (spriteInfo.width !== 384 || spriteInfo.height !== 256) throw new Error("Unexpected Team Fetch sprite dimensions: " + JSON.stringify(spriteInfo));
           const avatarPositions = await page.locator(".fcl-agent-avatar").evaluateAll((elements) => elements.map((element) => getComputedStyle(element).backgroundPosition));
           if (new Set(avatarPositions).size !== 6) throw new Error("Team Fetch characters do not have six distinct sprite positions");
+
+          // Profile drawer: form controls and save action are present.
+          await page.getByRole("button", { name: "Open your profile" }).click();
+          if (!await page.getByRole("heading", { name: "Your profile" }).isVisible()) throw new Error("Profile drawer did not open");
+          for (const placeholder of ["Your name", "+91…", "you@example.com", "House, street, locality", "City"]) {
+            if (await page.getByPlaceholder(placeholder).count() !== 1) throw new Error("Missing profile field: " + placeholder);
+          }
+          if (!await page.getByRole("button", { name: "Save profile" }).isVisible()) throw new Error("Profile save button missing");
+          await page.locator(".fetch-profile-header .fetch-drawer-close").click();
+
+          // Navigation drawer exposes recent chats and partner navigation.
+          await page.getByRole("button", { name: "Open Fetch menu" }).click();
+          if (!await page.getByRole("button", { name: /Recent chats/ }).isVisible()) throw new Error("Recent chats navigation missing");
+          if (!await page.getByRole("button", { name: "Fetch Partners" }).isVisible()) throw new Error("Fetch Partners navigation missing");
+          await page.getByRole("button", { name: /Recent chats/ }).click();
+          if (!await page.locator(".fetch-recent-list").isVisible()) throw new Error("Recent chats view did not render");
+
+          // Test partner page through the existing in-app routing flow.
+          await page.getByRole("button", { name: "Open Fetch menu" }).click();
+          await page.getByRole("button", { name: "Fetch Partners" }).click();
+          await page.waitForFunction(() => window.location.pathname === "/partners");
+          const partnerText = await page.locator("#root").innerText();
+          for (const category of ["Local commerce", "Home services", "Mobility", "Assisted services"]) {
+            if (!partnerText.includes(category)) throw new Error("Missing partner category: " + category);
+          }
           if (errors.length) throw new Error("Browser console/runtime errors: " + errors.join(" | "));
           await browser.close();
           NODE
