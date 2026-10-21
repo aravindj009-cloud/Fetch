@@ -4,6 +4,7 @@ import "./styles.css";
 import FetchOnboarding from "./FetchOnboarding.jsx";
 import ConnectorSetupPage from "./ConnectorSetupPage.jsx";
 import FetchCompanionLayer from "./FetchCompanionLayer.jsx";
+import FetchWorkspaceShell from "./FetchWorkspaceShell.jsx";
 
 const starters = [
   "Get me 2 KitKats and milk",
@@ -890,6 +891,7 @@ export default function App() {
   if (directoryPath === "/companion") return <FetchMainApp companionInitiallyOpen />;
 
   if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
+  if (directoryPath === "/partners" || directoryPath === "/partneronboarding") return <FetchDirectoryPage section="partners" />;
   if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
   if (/^\/connectors\/(swiggy|instamart|email)$/.test(directoryPath)) {
     const connectorId = directoryPath.split("/")[2];
@@ -901,7 +903,10 @@ export default function App() {
 }
 
 function FetchMainApp({ companionInitiallyOpen = false } = {}) {
-  const [companionOpen, setCompanionOpen] = useState(Boolean(companionInitiallyOpen));
+  const [companionOpen, setCompanionOpen] = useState(() => {
+    if (companionInitiallyOpen) return true;
+    try { return JSON.parse(localStorage.getItem("fetch_ui_preferences_v1") || "{}").openTeamFetchOnLaunch === true; } catch { return false; }
+  });
   const [showOnboarding, setShowOnboarding] = useState(() => {
     try { return localStorage.getItem("fetch_onboarding_v2_complete") !== "1"; } catch { return true; }
   });
@@ -1615,26 +1620,28 @@ function FetchMainApp({ companionInitiallyOpen = false } = {}) {
         .approvalButton:disabled { opacity: .5; cursor: default; }
       `}</style>
 
-      <header>
-        <button
-          className="brand"
-          onClick={clearConversation}
-        >
-          fetch<span>.</span>
-        </button>
-
-        <div className="top">
-          <span className="ready">
-            <i />
-            Fetch is ready
-          </span>
-
-          <button onClick={() => setCompanionOpen((open) => !open)} aria-expanded={companionOpen}>Team Fetch</button>
-          <button onClick={() => navigateFetch("/connectors")}>Connectors</button>
-          <button onClick={() => navigateFetch("/contact")}>Contact</button>
-          <button onClick={clearConversation}>New</button>
-        </div>
-      </header>
+      <FetchWorkspaceShell
+        messages={messages}
+        conversationId={conversationRef.current}
+        companionOpen={companionOpen}
+        onNewChat={clearConversation}
+        onOpenChat={(chat) => {
+          if (!chat?.id || !Array.isArray(chat.messages)) return;
+          conversationRef.current = chat.id;
+          try { localStorage.setItem("fetch_conversation_id", chat.id); } catch {}
+          setMessages(chat.messages);
+          setTask(null);
+          setAgentTaskId(null);
+          setAgentTasks([]);
+          setSelectedAgentTask(null);
+          setTaskCenterOpen(false);
+          setCompanionOpen(false);
+          refreshAgentTasks();
+        }}
+        onNavigate={navigateFetch}
+        onToggleTeamFetch={() => setCompanionOpen((open) => !open)}
+        onCloseCompanion={() => setCompanionOpen(false)}
+      />
 
       <main>
 
