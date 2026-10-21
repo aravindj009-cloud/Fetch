@@ -19,6 +19,23 @@ This first implementation is deliberately incremental. It wraps the existing Fet
 
 Runtime helpers live in `lib/fetch-ioi-contract.mjs`. The public universal executor adds the object under `result.ioi`; all previous top-level response fields remain unchanged.
 
+## Agent-to-agent messaging (experimental v1)
+
+The specialist dog registry is a display/intent hint; it is not, by itself, an agent runtime. The separate `lib/fetch-agent-messaging.mjs` module adds a server-side request/reply protocol for real specialist handoffs:
+
+- Each message has a protocol version, message ID, parent message ID, task ID, trace ID, sender/recipient, capability, message type, status, and a bounded JSON payload.
+- An explicit handoff allowlist controls which specialist can ask which other specialist for work. The coordinator remains the entry point.
+- Each agent receives only the payload explicitly forwarded to its capability handler. Context and user memory are not automatically copied between agents.
+- Timeouts, message-count/depth limits, duplicate-route detection, cycle detection, output validation, and a structured audit trace bound the workflow.
+- Capabilities declare a side-effect class. Read-only calls may proceed when registered; other classes fail closed unless the server-provided `authorizeSideEffect` gate returns approval. Client-provided flags are not authoritative.
+- Handler exceptions are converted into non-sensitive failure statuses; a failed or timed-out handoff is never reported as a success.
+
+The first concrete collaboration path lives in `lib/fetch-agent-collaboration.mjs`: Patch receives the result of IoI local-service discovery and explicitly delegates a source-metadata assessment to Scout. Scout checks whether a public source reference exists and preserves the difference between a source claim and independent verification. It does not browse or contact the provider. The returned IoI shadow result includes the two-message trace and the assessments; the existing Fetch customer response remains authoritative.
+
+This collaboration path is currently wired into the IoI **Preview/shadow** path for local-service discovery. It is not turned on as the production request executor, and other capabilities do not yet use this bus. Adding more agent capabilities requires registering trusted handler implementations and tests for each capability, not simply adding a name to the roster.
+
+Test coverage is in `lib/fetch-agent-messaging.test.mjs`, `lib/fetch-agent-collaboration.test.mjs`, and the IoI service-discovery integration test. The tests cover successful handoffs, trace parentage, approval-gated side effects, timeouts, cycles, duplicate routes, bounded payloads and disclosure limits.
+
 ## Capability manifest
 
 Every capability uses a stable `capability_key`, a version, provider identity, supported domains/tags, execution modes, input/output schema references, policy signals, trust signals, and health state.
