@@ -73,7 +73,12 @@
   border: 1px solid #eceee5; border-radius: 15px; background: #fffefa;
 }
 .fcl-agent-card.is-suggested { border-color: color-mix(in srgb, var(--fcl-agent-accent) 55%, #eceee5); background: #fbfcf7; }
-.fcl-agent-card > .fcl-dog { flex: 0 0 auto; padding: 4px; border-radius: 13px; background: #f5f2e7; }
+.fcl-agent-avatar {
+  flex: 0 0 62px; width: 62px; height: 62px; border-radius: 15px;
+  background-color: #f5f2e7; background-size: 300% 200%; background-repeat: no-repeat;
+  border: 1px solid #ede8db; box-shadow: inset 0 0 0 3px #fff8;
+}
+.fcl-agent-card.is-suggested .fcl-agent-avatar { border-color: color-mix(in srgb, var(--fcl-agent-accent) 45%, #ede8db); }
 .fcl-agent-card-copy { flex: 1; min-width: 0; }
 .fcl-agent-title { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .fcl-agent-title > strong { color: #35483a; font-size: 12px; }
