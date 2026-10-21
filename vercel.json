@@ -41,6 +41,14 @@
       "destination": "/"
     },
     {
+      "source": "/partners",
+      "destination": "/"
+    },
+    {
+      "source": "/partners/",
+      "destination": "/"
+    },
+    {
       "source": "/partneronboarding",
       "destination": "/api/fetch/context?partner=1"
     },
