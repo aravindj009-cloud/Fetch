@@ -31,6 +31,10 @@ jobs:
       - name: Check IoI module syntax
         run: |
           node --check lib/fetch-agent-dog-registry.mjs
+          node --check lib/fetch-agent-memory-policy.mjs
+          node --check lib/fetch-agent-memory-store.mjs
+          node --check lib/fetch-agent-coordination.mjs
+          node --check lib/fetch-ioi-recovery.mjs
           node --check lib/fetch-ioi-contract.mjs
           node --check lib/fetch-ioi-provider-runtime.mjs
           node --check lib/fetch-ioi-shadow.mjs
