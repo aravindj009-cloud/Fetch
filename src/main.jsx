@@ -790,6 +790,58 @@ function FetchInvitePage({ token }) {
   );
 }
 
+class FetchCompanionLayerBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("FETCH COMPANION LAYER RENDER ERROR:", error, info?.componentStack || "");
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            right: 20,
+            bottom: 20,
+            zIndex: 9999,
+            maxWidth: 340,
+            padding: 16,
+            border: "1px solid #d8dfd3",
+            borderRadius: 16,
+            background: "#fffdf7",
+            color: "#25372e",
+            boxShadow: "0 12px 40px #0002",
+            fontSize: 13,
+          }}
+        >
+          <strong>Fetch is still here.</strong>
+          <p style={{ margin: "8px 0 12px", lineHeight: 1.5 }}>
+            The companion panel could not load. Your main Fetch assistant is still available.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.assign("/")}
+            style={{ border: 0, borderRadius: 9, padding: "9px 12px", background: "#286f5e", color: "#fff", cursor: "pointer" }}
+          >
+            Return to Fetch chat
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [directoryPath, setDirectoryPath] = useState(() => window.location.pathname);
 
@@ -1960,13 +2012,15 @@ function FetchMainApp({ companionInitiallyOpen = false } = {}) {
 
       </main>
 
-      <FetchCompanionLayer
-        open={companionOpen}
-        onToggle={() => setCompanionOpen((open) => !open)}
-        onClose={() => setCompanionOpen(false)}
-        onRequest={send}
-        isBusy={busy}
-      />
+      <FetchCompanionLayerBoundary>
+        <FetchCompanionLayer
+          open={companionOpen}
+          onToggle={() => setCompanionOpen((open) => !open)}
+          onClose={() => setCompanionOpen(false)}
+          onRequest={send}
+          isBusy={busy}
+        />
+      </FetchCompanionLayerBoundary>
 
     </div>
   );
