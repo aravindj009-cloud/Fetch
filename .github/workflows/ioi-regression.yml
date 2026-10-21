@@ -30,6 +30,7 @@ jobs:
         run: npm test
       - name: Check IoI module syntax
         run: |
+          node --check lib/fetch-agent-dog-registry.mjs
           node --check lib/fetch-ioi-contract.mjs
           node --check lib/fetch-ioi-provider-runtime.mjs
           node --check lib/fetch-ioi-shadow.mjs
