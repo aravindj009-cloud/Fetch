@@ -285,6 +285,7 @@ function SummaryPanel({ entries, generatedAt, onGenerate }) {
             <div className="fc-brief-section">
               <span>IDEAS TO REVISIT</span>
               {ideas.slice(0, 2).map((entry) => <div key={entry.id}>✦ {entry.text}</div>)}
+            </div>
           )}
           {notes.length > 0 && (
             <div className="fc-brief-section">
