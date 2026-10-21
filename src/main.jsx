@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import FetchOnboarding from "./FetchOnboarding.jsx";
 import ConnectorSetupPage from "./ConnectorSetupPage.jsx";
+import FetchWorkspaceShell from "./FetchWorkspaceShell.jsx";
+import FetchCompanionLayer from "./FetchCompanionLayer.jsx";
 
 const starters = [
   "Get me 2 KitKats and milk",
@@ -150,11 +152,12 @@ function navigateFetch(path) {
 
 function FetchDirectoryPage({ section = "connectors" }) {
   const isContact = section === "contact";
+  const isPartners = section === "partners";
   const [connectionStates, setConnectionStates] = useState({});
-  const [loadingConnections, setLoadingConnections] = useState(!isContact);
+  const [loadingConnections, setLoadingConnections] = useState(!isContact && !isPartners);
 
   useEffect(() => {
-    if (isContact) return;
+    if (isContact || isPartners) return;
 
     const conversationId = getConversationId();
     let cancelled = false;
@@ -177,7 +180,7 @@ function FetchDirectoryPage({ section = "connectors" }) {
     })();
 
     return () => { cancelled = true; };
-  }, [isContact]);
+  }, [isContact, isPartners]);
 
   function handleConnectorConnect(connector) {
     const conversationId = getConversationId();
@@ -216,7 +219,8 @@ function FetchDirectoryPage({ section = "connectors" }) {
           fetch<span>.</span>
         </button>
         <nav>
-          <button className={!isContact ? "active" : ""} onClick={() => navigateFetch("/connectors")}>Connectors</button>
+          <button className={!isContact && !isPartners ? "active" : ""} onClick={() => navigateFetch("/connectors")}>Plugins</button>
+          <button className={isPartners ? "active" : ""} onClick={() => navigateFetch("/partners")}>Fetch Partners</button>
           <button className={isContact ? "active" : ""} onClick={() => navigateFetch("/contact")}>Contact</button>
           <button className="directoryBack" onClick={() => navigateFetch("/")}>Open Fetch →</button>
         </nav>
@@ -243,6 +247,23 @@ function FetchDirectoryPage({ section = "connectors" }) {
                 <span className="contactIcon">@</span>
                 <div><strong>Email</strong><small>Coming soon</small></div><b>—</b>
               </div>
+            </div>
+          </>
+        ) : isPartners ? (
+          <>
+            <small className="directoryEyebrow">THE FETCH NETWORK</small>
+            <h1>Good people. <em>More things done.</em></h1>
+            <p className="directoryLead">
+              Fetch brings customers together with local stores, service professionals and trusted fulfilment partners. Join the network that helps Fetch complete real-world requests.
+            </p>
+            <div className="contactCards fetchPartnerCards">
+              <article className="contactCard"><span className="contactIcon">▦</span><div><strong>Local commerce</strong><small>Shops, supermarkets, bakeries and neighbourhood stores</small></div></article>
+              <article className="contactCard"><span className="contactIcon">⌂</span><div><strong>Home services</strong><small>Electricians, plumbers, cleaning and repair professionals</small></div></article>
+              <article className="contactCard"><span className="contactIcon">↗</span><div><strong>Mobility</strong><small>Transport, delivery and local movement providers</small></div></article>
+              <article className="contactCard"><span className="contactIcon">✦</span><div><strong>Assisted services</strong><small>People who help complete requests in the real world</small></div></article>
+            </div>
+            <div className="directoryCallout">
+              <span>F</span><div><strong>Interested in partnering with Fetch?</strong><p>Tell us about your business or service. Partner onboarding is coordinated directly; a self-service application portal is not connected yet.</p><a className="directoryConnectorAction" href="https://wa.me/919074559146?text=Hi%20Fetch%2C%20I%27m%20interested%20in%20becoming%20a%20Fetch%20Partner." target="_blank" rel="noreferrer">Talk to Fetch on WhatsApp ↗</a></div>
             </div>
           </>
         ) : (
@@ -822,6 +843,58 @@ function FetchInvitePage({ token }) {
   );
 }
 
+class FetchCompanionLayerBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("FETCH COMPANION LAYER RENDER ERROR:", error, info?.componentStack || "");
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            right: 20,
+            bottom: 20,
+            zIndex: 9999,
+            maxWidth: 340,
+            padding: 16,
+            border: "1px solid #d8dfd3",
+            borderRadius: 16,
+            background: "#fffdf7",
+            color: "#25372e",
+            boxShadow: "0 12px 40px #0002",
+            fontSize: 13,
+          }}
+        >
+          <strong>Fetch is still here.</strong>
+          <p style={{ margin: "8px 0 12px", lineHeight: 1.5 }}>
+            Team Fetch could not load. Your main Fetch assistant is still available.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.assign("/")}
+            style={{ border: 0, borderRadius: 9, padding: "9px 12px", background: "#286f5e", color: "#fff", cursor: "pointer" }}
+          >
+            Return to Fetch chat
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [directoryPath, setDirectoryPath] = useState(() => window.location.pathname);
 
@@ -834,7 +907,9 @@ export default function App() {
   const inviteMatch = directoryPath.match(/^\/invite\/([^/]+)$/);
   if (inviteMatch) return <FetchInvitePage token={decodeURIComponent(inviteMatch[1])} />;
 
+  if (directoryPath === "/companion") return <FetchMainApp companionInitiallyOpen />;
   if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
+  if (directoryPath === "/partners") return <FetchDirectoryPage section="partners" />;
   if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
   if (/^\/connectors\/(swiggy|instamart|email)$/.test(directoryPath)) {
     const connectorId = directoryPath.split("/")[2];
@@ -845,7 +920,11 @@ export default function App() {
   return <FetchMainApp />;
 }
 
-function FetchMainApp() {
+function FetchMainApp({ companionInitiallyOpen = false } = {}) {
+  const [companionOpen, setCompanionOpen] = useState(() => {
+    if (companionInitiallyOpen) return true;
+    try { return JSON.parse(localStorage.getItem("fetch_ui_preferences_v1") || "{}").openTeamFetchOnLaunch === true; } catch { return false; }
+  });
   const [showOnboarding, setShowOnboarding] = useState(() => {
     try { return localStorage.getItem("fetch_onboarding_v2_complete") !== "1"; } catch { return true; }
   });
@@ -1559,25 +1638,28 @@ function FetchMainApp() {
         .approvalButton:disabled { opacity: .5; cursor: default; }
       `}</style>
 
-      <header>
-        <button
-          className="brand"
-          onClick={clearConversation}
-        >
-          fetch<span>.</span>
-        </button>
-
-        <div className="top">
-          <span className="ready">
-            <i />
-            Fetch is ready
-          </span>
-
-          <button onClick={() => navigateFetch("/connectors")}>Connectors</button>
-          <button onClick={() => navigateFetch("/contact")}>Contact</button>
-          <button onClick={clearConversation}>New</button>
-        </div>
-      </header>
+      <FetchWorkspaceShell
+        messages={messages}
+        conversationId={conversationRef.current}
+        companionOpen={companionOpen}
+        onNewChat={clearConversation}
+        onOpenChat={(chat) => {
+          if (!chat?.id || !Array.isArray(chat.messages)) return;
+          conversationRef.current = chat.id;
+          try { localStorage.setItem("fetch_conversation_id", chat.id); } catch {}
+          setMessages(chat.messages);
+          setTask(null);
+          setAgentTaskId(null);
+          setAgentTasks([]);
+          setSelectedAgentTask(null);
+          setTaskCenterOpen(false);
+          setCompanionOpen(false);
+          refreshAgentTasks();
+        }}
+        onNavigate={navigateFetch}
+        onToggleTeamFetch={() => setCompanionOpen((open) => !open)}
+        onCloseCompanion={() => setCompanionOpen(false)}
+      />
 
       <main>
 
@@ -1987,6 +2069,16 @@ function FetchMainApp() {
         </section>
 
       </main>
+
+      <FetchCompanionLayerBoundary>
+        <FetchCompanionLayer
+          open={companionOpen}
+          onToggle={() => setCompanionOpen((open) => !open)}
+          onClose={() => setCompanionOpen(false)}
+          onRequest={send}
+          isBusy={busy}
+        />
+      </FetchCompanionLayerBoundary>
 
     </div>
   );
