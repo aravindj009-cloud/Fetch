@@ -71,6 +71,24 @@ Fetch may present specialist dog identities—Scout (research), Rover (shopping/
 - Every profile carries explicit capabilities and a readiness label. Travel tracking is marked planned until the necessary location/mobility integration exists; local service discovery remains experimental; daily minutes are still browser-local in this prototype.
 - This version uses six specialist profiles, not six separate autonomous model instances. Future model/provider delegation should be added only behind the existing IoI task contract, shared memory/context controls, risk checks, confirmations and execution receipts.
 
+## Specialist coordination, shared memory and recovery (v1)
+
+### Specialist coordination receipts
+`lib/fetch-agent-coordination.mjs` attaches an audit-safe receipt with the suggested specialist, actual Fetch/ATC route, reported execution outcome, bounded source references, memory-access counts and safe recovery attempts. It does not copy the user's original request or memory values into the receipt. The specialist suggestion remains advisory; the actual route and provider result are authoritative.
+
+### Permission-aware memory
+`supabase/migrations/20261021_fetch_agent_memory_v1.sql` defines private-by-default memory and per-agent/per-purpose grant tables. Both tables enable RLS, define no public/authenticated-role policies, and grant table access only to the server `service_role`. The server-only store is in `lib/fetch-agent-memory-store.mjs`.
+
+- Memory access is off unless `FETCH_AGENT_MEMORY_V1=true` and the server handler marks the customer identity as verified.
+- Sharing memory requires explicit save confirmation plus separate sharing consent, an ordinary-sensitivity item, selected agent IDs and allowed purposes.
+- Each use validates owner, agent, purpose, task scope, expiry and revocation. Missing config/schema, missing consent, or errors fail closed and do not stop the underlying Fetch task.
+- The digital agent receives only items whose IDs appear in a verified allowlist receipt. The prompt instructs the model to treat them as data, not instructions.
+- Website guest chat currently has no verified persistent customer identity, so this memory path is not enabled for guests. WhatsApp uses the server-resolved customer record. Cross-device/web memory needs a proper user sign-in/session identity before activation.
+- The SQL migration is committed but is **not applied to the connected Supabase database**. Apply it to a non-production branch first, review RLS/security, and test before enabling the environment flag.
+
+### Bounded provider recovery
+`lib/fetch-ioi-recovery.mjs` allows at most one alternative provider attempt for a failed task whose selected capability explicitly declares `side_effect_class: read_only`. It excludes the failed provider, re-runs discovery only over already-injected adapters for the same capability, and includes a separate `fetch-agent-recovery-receipt-v1`. Shopping, messages, bookings, payments and other side effects are not automatically retried.
+
 ## Shared local-service discovery response
 
 Local-service discovery is a read-only directory lookup; it does not contact providers or book appointments. The same deterministic response projection is available to the website and WhatsApp after an approved public listing is returned.
