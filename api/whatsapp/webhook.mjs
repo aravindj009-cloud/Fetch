@@ -7454,6 +7454,30 @@ async function tryUniversalFetchCustomerRequest({
       };
     }
 
+    // Deliver IoI clarification/source-unavailable replies without falling into
+    // the old physical shopping classifier.
+    if (["service_discovery_clarification", "service_discovery_unavailable"].includes(
+      result?.ioi?.customer_response?.kind
+    )) {
+      const reply = String(result.ioi.customer_response.text || "").trim();
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "user",
+        message: userMessage,
+      });
+      await saveMessage({
+        customerId: customer.id,
+        orderId: activeOrder?.id || null,
+        phone: normalizedPhone,
+        role: "assistant",
+        message: reply,
+      });
+      await sendWhatsAppMessage(normalizedPhone, reply);
+      return { handled: true, result };
+    }
+
     /*
       A successful digital-agent execution is a real universal Fetch
       execution. Return its result to WhatsApp and do not send it into

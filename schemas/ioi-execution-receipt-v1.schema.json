@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tryfetch.in/schemas/ioi-execution-receipt-v1.schema.json",
+  "title": "Internet of Intelligence Execution Receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "trace_id",
+    "task_id",
+    "workflow_id",
+    "reported_status",
+    "execution_success_reported",
+    "outcome_confirmed",
+    "side_effect_completed",
+    "confirmation_required",
+    "capability_key",
+    "provider_id",
+    "evidence",
+    "evidence_count",
+    "resource_refs",
+    "failure",
+    "timing"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": "ioi-execution-receipt-v1"
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "task_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workflow_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reported_status": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "execution_success_reported": {
+      "type": "boolean"
+    },
+    "outcome_confirmed": {
+      "type": "boolean"
+    },
+    "side_effect_completed": {
+      "type": "boolean"
+    },
+    "confirmation_required": {
+      "type": "boolean"
+    },
+    "capability_key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provider_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "uri",
+          "title",
+          "publisher",
+          "published_at",
+          "evidence_type"
+        ],
+        "properties": {
+          "uri": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 160
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "evidence_type": {
+            "type": "string",
+            "maxLength": 80
+          }
+        }
+      }
+    },
+    "evidence_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20
+    },
+    "failure": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 500
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "started_at",
+        "completed_at",
+        "duration_ms"
+      ],
+      "properties": {
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "resource_refs": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id",
+          "resource_type",
+          "source_registry",
+          "match_reason",
+          "observed_at"
+        ],
+        "properties": {
+          "resource_id": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "resource_type": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "source_registry": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "match_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

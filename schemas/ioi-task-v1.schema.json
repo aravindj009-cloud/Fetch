@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tryfetch.in/schemas/ioi-task-v1.schema.json",
+  "title": "Internet of Intelligence Task Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "protocol_version",
+    "trace_id",
+    "created_at",
+    "origin",
+    "task",
+    "requirements",
+    "authorization",
+    "lifecycle",
+    "provenance"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "internet-of-intelligence"
+    },
+    "protocol_version": {
+      "const": "ioi-task-v1"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "application",
+        "channel",
+        "conversation_id",
+        "workflow_id",
+        "upstream_contract"
+      ],
+      "properties": {
+        "application": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "channel": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "conversation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "workflow_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "upstream_contract": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id",
+        "parent_task_id",
+        "user_request",
+        "goal",
+        "objective",
+        "intent",
+        "priority"
+      ],
+      "properties": {
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "parent_task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "user_request": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "goal": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "objective": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "intent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "domain",
+            "action"
+          ],
+          "properties": {
+            "domain": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            },
+            "action": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            }
+          }
+        },
+        "priority": {
+          "type": "string",
+          "maxLength": 40
+        }
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_alternatives",
+        "execution_mode",
+        "region",
+        "deadline"
+      ],
+      "properties": {
+        "capability_alternatives": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 30,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          }
+        },
+        "execution_mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "region": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "deadline": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confirmation_required",
+        "approval_granted",
+        "enforcement",
+        "side_effect_policy"
+      ],
+      "properties": {
+        "confirmation_required": {
+          "type": "boolean"
+        },
+        "approval_granted": {
+          "type": "boolean"
+        },
+        "enforcement": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "side_effect_policy": {
+          "type": "string",
+          "maxLength": 100
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reported_status",
+        "current_step",
+        "attempt"
+      ],
+      "properties": {
+        "reported_status": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "current_step": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "created_by",
+        "source",
+        "routing_source"
+      ],
+      "properties": {
+        "created_by": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "routing_source": {
+          "type": "string",
+          "maxLength": 120
+        }
+      }
+    }
+  }
+}

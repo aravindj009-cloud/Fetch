@@ -16,6 +16,7 @@
  */
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
+import { classifyIOIReadOnlyIntent } from "../../lib/fetch-ioi-shadow.mjs";
 import { answerFetchConversation } from "../../lib/fetch-conversation.mjs";
 import { executeDigitalAgent } from "../../lib/fetch-digital-agent.mjs";
 import { updateAgentTask, listAgentTasks, addAgentEvent } from "../../lib/fetch-agent-runtime.mjs";
@@ -1975,7 +1976,12 @@ async function handlePost(req, res) {
    *
    * Explicit side-effect requests continue to the execution stack.
    */
-  if (!isExplicitSideEffectRequest(effectiveText) && !isPhysicalResult({}, effectiveText)) {
+  const ioiReadOnlyIntent = classifyIOIReadOnlyIntent(effectiveText);
+  if (
+    !ioiReadOnlyIntent &&
+    !isExplicitSideEffectRequest(effectiveText) &&
+    !isPhysicalResult({}, effectiveText)
+  ) {
     try {
       const conversationMessage = await answerNormalConversation(
         effectiveText,
@@ -2121,6 +2127,22 @@ async function handlePost(req, res) {
       conversation_history: conversationHistory,
     },
   });
+
+  // IoI customer-facing service discovery is opt-in and uses the same
+  // deterministic projection as WhatsApp. Only a successful directory result
+  // can take this path; unavailable sources fall through to existing Fetch.
+  if (result?.ioi?.customer_response?.kind) {
+    return sendJson(res, 200, {
+      success: true,
+      status: result.execution?.status || result.status || "completed",
+      workflow_id: result.workflow_id || null,
+      message: result.ioi.customer_response.text,
+      fetch: result.fetch || { source_class: "ioi_local_service_discovery", build: FETCH_BUILD },
+      atc: result.atc || { resource_type: "local_service_directory" },
+      execution: result.execution,
+      ioi: result.ioi,
+    }, origin);
+  }
 
   console.log(
     "FETCH WEB UNIVERSAL RESULT:",

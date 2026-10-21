@@ -1,0 +1,44 @@
+name: IoI regression tests
+
+on:
+  push:
+    branches:
+      - feat/ioi-contract-v1
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Fetch and IoI regression suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Install locked dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run regression tests
+        run: npm test
+      - name: Check IoI module syntax
+        run: |
+          node --check lib/fetch-ioi-contract.mjs
+          node --check lib/fetch-ioi-provider-runtime.mjs
+          node --check lib/fetch-ioi-shadow.mjs
+          node --check lib/fetch-ioi-open-meteo-adapters.mjs
+          node --check lib/fetch-ioi-service-discovery.mjs
+          node --check lib/fetch-ioi-openstreetmap-adapter.mjs
+          node --check lib/fetch-ioi-customer-response.mjs
+          node --check lib/fetch-universal-execution.mjs
+          node --check api/web/agent.mjs
+          node --check api/whatsapp/webhook.mjs
+      - name: Build website
+        run: npm run build

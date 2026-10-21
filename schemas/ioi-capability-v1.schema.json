@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tryfetch.in/schemas/ioi-capability-v1.schema.json",
+  "title": "Internet of Intelligence Capability Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "capability_key",
+    "version",
+    "provider",
+    "display_name",
+    "resource_type",
+    "status",
+    "domains",
+    "tags",
+    "execution_modes",
+    "input_schema",
+    "output_schema",
+    "policy",
+    "trust",
+    "cost_band",
+    "latency_ms",
+    "region",
+    "source_registry"
+  ],
+  "properties": {
+    "manifest_version": {
+      "const": "ioi-capability-v1"
+    },
+    "capability_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      }
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180
+    },
+    "resource_type": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 100
+    },
+    "status": {
+      "enum": [
+        "active",
+        "degraded",
+        "disabled",
+        "planned",
+        "unknown"
+      ]
+    },
+    "domains": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "string",
+        "maxLength": 120
+      }
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "string",
+        "maxLength": 120
+      }
+    },
+    "execution_modes": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "string",
+        "maxLength": 120
+      }
+    },
+    "input_schema": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "output_schema": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requires_confirmation",
+        "supports_idempotency",
+        "side_effect_class"
+      ],
+      "properties": {
+        "requires_confirmation": {
+          "type": "boolean"
+        },
+        "supports_idempotency": {
+          "type": "boolean"
+        },
+        "side_effect_class": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "verified",
+        "evidence_count"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "evidence_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "cost_band": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40
+    },
+    "latency_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "region": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 80
+    },
+    "source_registry": {
+      "type": "string",
+      "maxLength": 80
+    }
+  }
+}

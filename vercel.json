@@ -17,6 +17,14 @@
       "destination": "/"
     },
     {
+      "source": "/companion",
+      "destination": "/"
+    },
+    {
+      "source": "/companion/",
+      "destination": "/"
+    },
+    {
       "source": "/connectors",
       "destination": "/"
     },

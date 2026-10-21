@@ -9,6 +9,7 @@ Physical shopping remains owned by the existing WhatsApp physical order engine.
 */
 
 import { executeUniversalFetchRequest } from "../../lib/fetch-universal-execution.mjs";
+import { runIOIShadowEvaluation } from "../../lib/fetch-ioi-shadow.mjs";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -45,6 +46,55 @@ export default async function handler(req, res) {
       return res.status(400).json({
         error: "text_required",
         message: "text is required",
+      });
+    }
+
+    /*
+     * Optional direct IoI smoke test, routed through this existing Vercel
+     * function to respect the Hobby 12-function deployment limit.
+     * The flag is Preview-branch-only; disabled deployments return 404.
+     * This path intentionally bypasses Supabase-backed baseline execution.
+     */
+    if (body.shadow_only === true || body.shadowOnly === true) {
+      const enabled =
+        typeof process !== "undefined" &&
+        String(process.env.FETCH_IOI_SHADOW_MODE || "").toLowerCase() === "true";
+
+      if (!enabled) {
+        return res.status(404).json({ error: "not_found" });
+      }
+
+      const suppliedContext = body.supplied_context || body.suppliedContext || {};
+      const evaluation = await runIOIShadowEvaluation({
+        request: {
+          text: text.slice(0, 4000),
+          channel: "preview_test",
+          suppliedContext,
+        },
+        existingResult: {
+          status: "not_run",
+          task: { status: "not_run" },
+        },
+        timeoutMs: 12000,
+      });
+
+      if (evaluation.status === "not_applicable") {
+        return res.status(400).json({
+          success: false,
+          status: evaluation.status,
+          message: "This test path supports read-only weather, air-quality, and local-service discovery capabilities.",
+        });
+      }
+
+      return res.status(
+        evaluation.status === "completed" || evaluation.status === "needs_clarification" || evaluation.status === "source_unavailable"
+          ? 200
+          : 502
+      ).json({
+        success: evaluation.success === true,
+        status: evaluation.status,
+        mode: "preview_ioi_direct_test",
+        result: evaluation,
       });
     }
 

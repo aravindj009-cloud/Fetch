@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import FetchOnboarding from "./FetchOnboarding.jsx";
 import ConnectorSetupPage from "./ConnectorSetupPage.jsx";
+import FetchCompanionLayer from "./FetchCompanionLayer.jsx";
 
 const starters = [
   "Get me 2 KitKats and milk",
@@ -822,6 +823,58 @@ function FetchInvitePage({ token }) {
   );
 }
 
+class FetchCompanionLayerBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("FETCH COMPANION LAYER RENDER ERROR:", error, info?.componentStack || "");
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            right: 20,
+            bottom: 20,
+            zIndex: 9999,
+            maxWidth: 340,
+            padding: 16,
+            border: "1px solid #d8dfd3",
+            borderRadius: 16,
+            background: "#fffdf7",
+            color: "#25372e",
+            boxShadow: "0 12px 40px #0002",
+            fontSize: 13,
+          }}
+        >
+          <strong>Fetch is still here.</strong>
+          <p style={{ margin: "8px 0 12px", lineHeight: 1.5 }}>
+            The companion panel could not load. Your main Fetch assistant is still available.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.assign("/")}
+            style={{ border: 0, borderRadius: 9, padding: "9px 12px", background: "#286f5e", color: "#fff", cursor: "pointer" }}
+          >
+            Return to Fetch chat
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [directoryPath, setDirectoryPath] = useState(() => window.location.pathname);
 
@@ -834,6 +887,8 @@ export default function App() {
   const inviteMatch = directoryPath.match(/^\/invite\/([^/]+)$/);
   if (inviteMatch) return <FetchInvitePage token={decodeURIComponent(inviteMatch[1])} />;
 
+  if (directoryPath === "/companion") return <FetchMainApp companionInitiallyOpen />;
+
   if (directoryPath === "/connectors") return <FetchDirectoryPage section="connectors" />;
   if (directoryPath === "/contact") return <FetchDirectoryPage section="contact" />;
   if (/^\/connectors\/(swiggy|instamart|email)$/.test(directoryPath)) {
@@ -845,7 +900,8 @@ export default function App() {
   return <FetchMainApp />;
 }
 
-function FetchMainApp() {
+function FetchMainApp({ companionInitiallyOpen = false } = {}) {
+  const [companionOpen, setCompanionOpen] = useState(Boolean(companionInitiallyOpen));
   const [showOnboarding, setShowOnboarding] = useState(() => {
     try { return localStorage.getItem("fetch_onboarding_v2_complete") !== "1"; } catch { return true; }
   });
@@ -1573,6 +1629,7 @@ function FetchMainApp() {
             Fetch is ready
           </span>
 
+          <button onClick={() => setCompanionOpen((open) => !open)} aria-expanded={companionOpen}>Companion</button>
           <button onClick={() => navigateFetch("/connectors")}>Connectors</button>
           <button onClick={() => navigateFetch("/contact")}>Contact</button>
           <button onClick={clearConversation}>New</button>
@@ -1987,6 +2044,16 @@ function FetchMainApp() {
         </section>
 
       </main>
+
+      <FetchCompanionLayerBoundary>
+        <FetchCompanionLayer
+          open={companionOpen}
+          onToggle={() => setCompanionOpen((open) => !open)}
+          onClose={() => setCompanionOpen(false)}
+          onRequest={send}
+          isBusy={busy}
+        />
+      </FetchCompanionLayerBoundary>
 
     </div>
   );
