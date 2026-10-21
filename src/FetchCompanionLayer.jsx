@@ -52,20 +52,20 @@ function shortTime(value) {
   return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
-function DogMark({ size = 34, accent = "#2d8472", label = "Fetch dog companion" }) {
+function DogMark({ size = 34, label = "Fetch dog companion" }) {
   return (
-    <svg className="fcl-dog" width={size} height={size} viewBox="0 0 100 100" role="img" aria-label={label}>
-      <path d="M29 28 C13 7 5 22 10 43 C13 56 21 61 31 56 Z" fill="#a66b43"/>
-      <path d="M71 28 C87 7 95 22 90 43 C87 56 79 61 69 56 Z" fill="#a66b43"/>
-      <ellipse cx="50" cy="53" rx="31" ry="34" fill="#edc68e"/>
-      <ellipse cx="39" cy="47" rx="3.5" ry="5" fill="#26362f"/>
-      <ellipse cx="61" cy="47" rx="3.5" ry="5" fill="#26362f"/>
-      <ellipse cx="50" cy="60" rx="14" ry="11" fill="#fff0d9"/>
-      <ellipse cx="50" cy="57" rx="5.5" ry="4" fill="#26362f"/>
-      <path d="M44 64 Q50 70 56 64" fill="none" stroke="#805038" strokeWidth="2.5" strokeLinecap="round"/>
-      <path d="M22 76 Q50 88 78 76 L75 84 Q50 97 25 84 Z" fill={accent}/>
-      <path d="M50 83 L57 90 L50 97 L43 90 Z" fill="#f3b26f"/>
-    </svg>
+    <div
+      className="fcl-dog fcl-fetch-character"
+      role="img"
+      aria-label={label}
+      title="Fetch"
+      style={{
+        width: size,
+        height: size,
+        backgroundImage: "url(" + TEAM_FETCH_MASCOT_SPRITE + ")",
+        backgroundPosition: TEAM_FETCH_MASCOT_POSITIONS.fetch,
+      }}
+    />
   );
 }
 
