@@ -9,6 +9,14 @@
 }
 .fcl-launcher:hover { transform: translateY(-2px); box-shadow: 0 16px 42px #1c35252c; }
 .fcl-launcher .fcl-dog { flex: 0 0 auto; }
+.fcl-fetch-character {
+  display: block; flex: 0 0 auto; background-color: #f5f2e7;
+  background-image: none; background-size: 300% 200%; background-repeat: no-repeat;
+  border-radius: 13px; overflow: hidden;
+}
+.fcl-identity .fcl-fetch-character { border-radius: 12px; background-color: transparent; }
+.fcl-launcher .fcl-fetch-character { border-radius: 50%; background-color: #f1eddf; }
+.fcl-close ~ .fcl-fetch-character { border-radius: 12px; }
 .fcl-launcher-label { white-space: nowrap; }
 .fcl-launcher-dot { position: absolute; right: 7px; top: 7px; width: 8px; height: 8px; border: 2px solid #fdfcf7; background: #57a17f; border-radius: 50%; }
 .fcl-launcher.is-open { padding-right: 15px; }
