@@ -104,6 +104,39 @@ const fetchConnectors = [
 ];
 
 const PENDING_CONNECTOR_TASK_KEY = "fetch_pending_connector_task_v1";
+const CONNECTOR_STATES_KEY = "fetch_connector_states_v1";
+
+// Browser-local UI cache only. Provider credentials and authoritative
+// connection status remain server-side; this cache keeps the UI in sync
+// while an OAuth callback returns to the same browser.
+function getStoredConnectorStates() {
+  try {
+    const stored = localStorage.getItem(CONNECTOR_STATES_KEY);
+    if (!stored) return {};
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([connectorId, connected]) =>
+        /^[a-z0-9_-]{1,80}$/i.test(connectorId) && typeof connected === "boolean"
+      )
+    );
+  } catch {
+    return {};
+  }
+}
+
+function saveConnectorState(connectorId, status) {
+  const id = String(connectorId || "").trim().toLowerCase();
+  const current = getStoredConnectorStates();
+  if (!/^[a-z0-9_-]{1,80}$/.test(id)) return current;
+  const next = { ...current, [id]: status === true || status === "connected" };
+  try {
+    localStorage.setItem(CONNECTOR_STATES_KEY, JSON.stringify(next));
+  } catch {
+    // Private browsing or storage restrictions must not crash Fetch's UI.
+  }
+  return next;
+}
 
 function getConnectorForRequest(text) {
   return fetchConnectors.find((connector) =>
