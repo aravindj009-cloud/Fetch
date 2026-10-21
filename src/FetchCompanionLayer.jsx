@@ -1,6 +1,26 @@
 import React, { useEffect, useMemo, useState } from "react";
 import "./FetchCompanionLayer.css";
 import { FETCH_AGENT_DOGS } from "../lib/fetch-agent-dog-registry.mjs";
+import mascotPart1 from "./assets/team-fetch-mascot-part-1.js";
+import mascotPart2 from "./assets/team-fetch-mascot-part-2.js";
+import mascotPart3 from "./assets/team-fetch-mascot-part-3.js";
+import mascotPart4 from "./assets/team-fetch-mascot-part-4.js";
+import mascotPart5 from "./assets/team-fetch-mascot-part-5.js";
+import mascotPart6 from "./assets/team-fetch-mascot-part-6.js";
+import mascotPart7 from "./assets/team-fetch-mascot-part-7.js";
+
+const TEAM_FETCH_MASCOT_SPRITE = "data:image/webp;base64," + [
+  mascotPart1, mascotPart2, mascotPart3, mascotPart4, mascotPart5, mascotPart6, mascotPart7,
+].join("");
+
+const TEAM_FETCH_MASCOT_POSITIONS = Object.freeze({
+  fetch: "0% 0%",
+  scout: "50% 0%",
+  shopper: "100% 0%",
+  local_helper: "0% 100%",
+  scribe: "50% 100%",
+  journey: "100% 100%",
+});
 
 const STORAGE_KEY = "fetch_daily_minutes_layer_v1";
 const MAX_MINUTES = 300;
@@ -145,7 +165,16 @@ export default function FetchCompanionLayer({ open, onToggle, onClose, onRequest
                 const example = agent.examples?.[0] || "Help me with this task";
                 return (
                   <article className="fcl-agent-card" key={agent.id} style={{ "--fcl-agent-accent": agent.accent }}>
-                    <DogMark size={43} accent={agent.accent} label={agent.name + " specialist"} />
+                    <div
+                      className="fcl-agent-avatar"
+                      role="img"
+                      aria-label={agent.name + " — " + agent.title}
+                      title={agent.name}
+                      style={{
+                        backgroundImage: "url(" + TEAM_FETCH_MASCOT_SPRITE + ")",
+                        backgroundPosition: TEAM_FETCH_MASCOT_POSITIONS[agent.id] || "0% 0%",
+                      }}
+                    />
                     <div className="fcl-agent-card-copy">
                       <div className="fcl-agent-title"><strong>{agent.name}</strong>{agent.id === "fetch" && <span>COORDINATOR</span>}</div>
                       <small>{agent.title}</small>
